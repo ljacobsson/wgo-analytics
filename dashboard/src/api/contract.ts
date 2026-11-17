@@ -24,6 +24,12 @@ export interface RuntimeConfig {
   allowedEmailDomains?: string[];
   /** False when self sign-up is off (AllowSelfSignup=false) and accounts are created in Cognito; the sign-in page then hides "Create account". Absent = on. */
   selfSignup?: boolean;
+  /** When this install was deployed (ISO time), and the git commit it was built from with that commit's date; empty when not deployed from a git checkout. */
+  deployedAt?: string;
+  commit?: string;
+  commitDate?: string;
+  /** False turns off the dashboard's check for newer commits on GitHub (UPDATE_CHECK=false). Absent = on. */
+  updateCheck?: boolean;
   /** The MCP server for AI assistants (the McpUrl stack output, e.g. https://wgo.example.com/mcp); empty or absent when MCP is turned off. */
   mcpUrl?: string;
 }

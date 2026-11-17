@@ -234,6 +234,7 @@ change them later by re-running the deploy.
 | `WRITE_BUFFER_SECONDS` | `30` | How long incoming events, logs, spans and metrics are collected before they are written as one Parquet file (1–300). Shorter means fresher charts, longer means fewer files. The Live page and triggers don't wait for it |
 | `CLUSTER_METRICS_PROJECT_ID` | none | Project that receives hourly Aurora DSQL storage and DPU numbers, as metrics and as a `wgo.cluster` event you can create triggers on |
 | `BUILD_ANDROID` | `false` | `true` = rebuild the Android app (needs JDK 17 and the Android SDK) instead of deploying the prebuilt APK from the repo |
+| `UPDATE_CHECK` | `true` | The dashboard checks GitHub every few hours and shows a dismissable note with the update command when `main` has commits newer than your install. The request goes from the signed-in user's browser to `api.github.com`; `false` turns it off |
 | `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` | none | One Slack app for "Add to Slack" in every project's [triggers](#filters-and-triggers); otherwise each project sets it up from its Triggers page |
 | `PARAMS` | none | Extra raw `sam deploy --parameter-overrides` |
 

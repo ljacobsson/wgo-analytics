@@ -160,6 +160,7 @@ export function Docs() {
               [<C>WRITE_BUFFER_SECONDS</C>, <C>30</C>, 'How long incoming data is collected before it is written as one Parquet file (1–300). Shorter means fresher charts, longer means fewer files. The Live page and triggers don\'t wait for it'],
               [<C>CLUSTER_METRICS_PROJECT_ID</C>, 'none', <>Project that receives hourly Aurora DSQL storage and DPU numbers, as metrics and as a <C>wgo.cluster</C> event you can create triggers on</>],
               [<C>BUILD_ANDROID</C>, <C>false</C>, <><C>true</C>: rebuild the Android app (needs JDK 17 and the Android SDK) instead of deploying the prebuilt APK</>],
+              [<C>UPDATE_CHECK</C>, <C>true</C>, <>The dashboard checks GitHub every few hours and shows a dismissable note with the update command when <C>main</C> has commits newer than your install. The request goes from the signed-in user's browser to <C>api.github.com</C>. <C>false</C> turns it off</>],
               [<C>SLACK_CLIENT_ID</C>, 'none', <>With <C>SLACK_CLIENT_SECRET</C>: one Slack app for "Add to Slack" in every project's <Doc to="triggers">triggers</Doc></>],
               [<C>PARAMS</C>, 'none', <>Extra raw <C>sam deploy --parameter-overrides</C></>],
             ]} />

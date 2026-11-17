@@ -11,6 +11,7 @@
 #   CERTIFICATE_ARN        bring your own ACM certificate (us-east-1) when the DNS is not in Route 53
 #   ALLOWED_EMAIL_DOMAINS  comma-separated, e.g. "example.com,*.example.org": only these can sign up / sign in
 #   ALLOW_SELF_SIGNUP      true (default) | false
+#   UPDATE_CHECK           true (default) | false: the dashboard tells you when GitHub has a newer version
 #   DELETION_PROTECTION    false (default) | true  (DSQL cluster)
 #   MCP_ENABLED            true (default) | false: the MCP server at /mcp and Cognito MCP auth (open client registration)
 #   MAX_RETENTION_DAYS     400 (default): the longest raw-data retention project owners can pick (default retention: 90 days)
@@ -149,6 +150,11 @@ ALLOWLIST_JSON="$(printf '%s' "$DEPLOYED_ALLOWLIST" | tr ',' '\n' | sed '/^$/d; 
 SELF_SIGNUP="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$AWS_REGION" \
   --query "Stacks[0].Parameters[?ParameterKey=='AllowSelfSignup'].ParameterValue" --output text 2>/dev/null || true)"
 [ "$SELF_SIGNUP" = "false" ] || SELF_SIGNUP=true
+# what is being deployed, so the dashboard can tell when main on GitHub has moved on (UPDATE_CHECK=false turns that off)
+DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+DEPLOY_COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+DEPLOY_COMMIT_DATE="$(git -C "$ROOT" log -1 --format=%cI 2>/dev/null || true)"
+if [ "${UPDATE_CHECK:-true}" = false ]; then UPDATE_CHECK=false; else UPDATE_CHECK=true; fi
 
 step "SDK: build"
 cd "$ROOT/sdk"
@@ -180,6 +186,10 @@ cat > dist/config.json <<JSON
   "userPoolClientId": "$USER_POOL_CLIENT_ID",
   "allowedEmailDomains": [$ALLOWLIST_JSON],
   "selfSignup": $SELF_SIGNUP,
+  "deployedAt": "$DEPLOYED_AT",
+  "commit": "$DEPLOY_COMMIT",
+  "commitDate": "$DEPLOY_COMMIT_DATE",
+  "updateCheck": $UPDATE_CHECK,
   "mcpUrl": "$MCP_CONFIG_URL"
 }
 JSON

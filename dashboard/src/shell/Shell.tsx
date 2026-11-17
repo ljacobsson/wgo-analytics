@@ -9,6 +9,7 @@ import { prefetchPage } from '../api/hooks';
 import { PageIcon } from './icons';
 import { TimePicker } from './TimePicker';
 import { CommandPalette } from './CommandPalette';
+import { UpdateNotice } from './UpdateNotice';
 import { ShowOnKioskButton } from '../kiosk/ShowOnKiosk';
 import { signOut } from '../auth/cognito';
 import { Kbd, Switch } from '../ui/kit';
@@ -170,6 +171,7 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
         </div>
       </div>
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} toggleTheme={toggleTheme} />
+      <UpdateNotice />
     </TimeCtx.Provider>
   );
 }
