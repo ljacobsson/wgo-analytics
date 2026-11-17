@@ -1,14 +1,16 @@
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import * as A from '../analytics';
+import * as CA from '../clickAliases';
 import * as G from '../goals';
 import * as GF from '../funnel';
 import { HttpError } from '../http';
 import * as P from '../projects';
 
 /**
- * WGO's MCP tools: read-only views over the same queries the dashboard uses. Every tool that takes a
- * `projectId` checks membership for the signed-in user first, exactly like /api/projects/{pid}/*.
+ * WGO's MCP tools: read-only views over the same queries the dashboard uses, plus naming click targets (aliases),
+ * which any project member can also do in the dashboard. Every tool that takes a `projectId` checks membership for
+ * the signed-in user first, exactly like /api/projects/{pid}/*.
  */
 
 type Q = Record<string, string | undefined>;
@@ -23,7 +25,9 @@ either, product analytics tools cover the last 24 hours and trace/log tools the 
 Raw data is kept per project (default 14 days). Overview stats, top pages and breakdowns over longer windows
 come from hourly aggregates (sessions/users are estimates, about ±2%); other tools only see the raw data.
 Start broad (get_overview, list_errors, list_failed_requests, list_services) and drill down
-(search_events with a fingerprint or sessionId, get_trace, search_logs with a traceId).`;
+(search_events with a fingerprint or sessionId, get_trace, search_logs with a traceId).
+Clicks are captured automatically with a CSS selector. When a selector is hard to read, give it an alias with
+set_click_alias (the dashboard and top_clicks then show the alias); it changes labels only, never data.`;
 
 const RANGE_RE = /^(\d+)\s*(m|h|d)$/i;
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
@@ -66,21 +70,24 @@ function fail(err: unknown): CallToolResult {
 }
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
+/** Changes a label shared with the project's members; setting the same value twice changes nothing more. */
+const LABEL_WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
 /** A fresh server for one request, acting as `email`. */
 export function buildMcpServer(email: string): McpServer {
   const server = new McpServer({ name: 'wgo', title: 'WGO analytics', version: '1.0.0' }, { instructions: INSTRUCTIONS });
 
-  /** Registers a read-only tool whose handler runs after the project membership check. */
+  /** Registers a tool (read-only unless `hints` say otherwise) whose handler runs after the project membership check. */
   const projectTool = <S extends z.ZodRawShape>(
     name: string,
     title: string,
     description: string,
     shape: S,
     run: (pid: string, args: z.infer<z.ZodObject<S>>) => Promise<unknown>,
+    hints: typeof READ_ONLY | typeof LABEL_WRITE = READ_ONLY,
   ) => {
     const inputSchema = z.object({ projectId, ...shape });
-    server.registerTool(name, { title, description, inputSchema, annotations: { title, ...READ_ONLY } }, (async (args: { projectId: string }) => {
+    server.registerTool(name, { title, description, inputSchema, annotations: { title, ...hints } }, (async (args: { projectId: string }) => {
       try {
         const project = await P.getProject(email, args.projectId); // 404 unless the user is a member
         return ok(await run(project.id, args as unknown as z.infer<z.ZodObject<S>>));
@@ -119,9 +126,35 @@ export function buildMcpServer(email: string): McpServer {
   projectTool(
     'top_clicks',
     'Top clicked elements',
-    'Most clicked elements with their tracked name (data-track), selector, text and page.',
+    'Most clicked elements with their alias (set_click_alias), tracked name (data-track), selector, text and tag.',
     { ...windowShape, limit: limit(50, 200) },
     (pid, a) => A.clicks(pid, { ...windowParams(a), limit: str(a.limit) }),
+  );
+
+  projectTool(
+    'list_click_aliases',
+    'Click aliases',
+    'The readable names the project gave its click selectors, with who set each one and when.',
+    {},
+    (pid) => CA.listAliases(pid),
+  );
+
+  projectTool(
+    'set_click_alias',
+    'Name a click target',
+    'Gives an autocaptured click selector a readable name (alias) that the dashboard and top_clicks show instead of its text or selector, shared with all project members. Use the exact selector from top_clicks or search_events. Pass an empty alias to remove it. Changes labels only, never the recorded clicks.',
+    {
+      selector: z.string().min(1).max(512).describe('Exact CSS selector as captured, from top_clicks or search_events'),
+      alias: z.string().max(80).describe('Readable name, 1-80 characters, e.g. "Pricing: start trial button". Empty string removes the alias.'),
+    },
+    async (pid, a) => {
+      if (!a.alias.trim()) {
+        await CA.deleteAlias(pid, a.selector);
+        return { selector: a.selector.trim(), alias: null };
+      }
+      return CA.setAlias(pid, email, { selector: a.selector, alias: a.alias });
+    },
+    LABEL_WRITE,
   );
 
   projectTool(

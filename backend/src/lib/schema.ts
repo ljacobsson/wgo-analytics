@@ -265,4 +265,14 @@ export const SCHEMA_STATEMENTS: string[] = [
      PRIMARY KEY (project_id, anon_id)
    )`,
   `CREATE INDEX ASYNC IF NOT EXISTS identities_created_idx ON identities (project_id, created_at)`,
+
+  // readable names for autocaptured click targets (lib/clickAliases.ts), keyed by the captured selector
+  `CREATE TABLE IF NOT EXISTS click_aliases (
+     project_id uuid NOT NULL,
+     selector text NOT NULL,
+     alias text NOT NULL,
+     updated_by text NOT NULL,
+     updated_at timestamptz NOT NULL DEFAULT now(),
+     PRIMARY KEY (project_id, selector)
+   )`,
 ];

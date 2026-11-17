@@ -1063,7 +1063,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt MigrateFunction.Arn
       SchemaVersion: !Ref SchemaVersion
-      SchemaHash: '2026-11-17-1' # bump when src/lib/schema.ts changes
+      SchemaHash: '2026-11-17-2' # bump when src/lib/schema.ts changes
 
   # ---------------------------------------------------------------- dashboard + SDK hosting
   WebBucket:

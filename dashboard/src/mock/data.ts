@@ -49,7 +49,7 @@ export function clicks(from: number, to: number, limit: number): ClickRow[] {
   const tw = CLICKS.reduce((a, c) => a + c.w, 0);
   return CLICKS.map((c, i) => {
     const count = Math.round((total * c.w / tw) * (0.85 + rnd(i, Math.floor(from / 6e4)) * 0.3));
-    return { selector: c.selector, elementText: c.text, trackName: c.track, elementTag: c.tag, count, sessions: Math.round(count * 0.7), rageClicks: Math.round(count * c.rage), lastSeen: iso(to - Math.floor(rnd(i, 9) * Math.min(to - from, 3600_000))) };
+    return { selector: c.selector, elementText: c.text, trackName: c.track, elementTag: c.tag, alias: null, count, sessions: Math.round(count * 0.7), rageClicks: Math.round(count * c.rage), lastSeen: iso(to - Math.floor(rnd(i, 9) * Math.min(to - from, 3600_000))) };
   }).filter((r) => r.count > 0).sort((a, b) => b.count - a.count).slice(0, limit);
 }
 export function pages(from: number, to: number, limit: number): PageRow[] {

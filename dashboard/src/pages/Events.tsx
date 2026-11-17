@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { BellPlus, ChevronRight, ListTree, Search, Target, X } from 'lucide-react';
 import { eventConditions } from '../lib/rowFilters';
 import { newGoalHref, newTriggerHref, RowActions } from '../ui/RowActions';
-import { useEvents } from '../api/hooks';
+import { useClickAliases, useEvents } from '../api/hooks';
 import type { AnalyticsEvent, EventType, Filter } from '../api/contract';
 import { useProject } from '../lib/project';
 import { useTime } from '../lib/time';
@@ -57,6 +57,7 @@ function EventRowActions({ e }: { e: AnalyticsEvent }) {
 
 export function EventsPage() {
   const { project } = useProject(); const { range } = useTime(); const route = useRoute(); const set = useSetParams();
+  const aliases = useClickAliases(project.id).data;
   const type = route.params.get('type') ?? '', sessionId = route.params.get('sessionId') ?? '';
   const [qIn, setQIn] = useState(route.params.get('q') ?? '');
   const q = useDebounced(qIn, 300);
@@ -87,7 +88,7 @@ export function EventsPage() {
             <div onClick={() => toggle(e.id)} className={`group flex h-10 cursor-pointer items-center gap-3 border-b border-line/60 px-4 text-[12.5px] transition-colors hover:bg-[var(--hl)] ${open.has(e.id) ? 'bg-[var(--hl)]' : ''}`}>
               <ChevronRight size={13} className={`shrink-0 text-faint transition-transform ${open.has(e.id) ? 'rotate-90' : ''}`} />
               <span className="w-[68px] shrink-0 tnum text-faint">{fmtTime(e.ts)}</span><TypeBadge type={e.type} />
-              <span className="min-w-[160px] flex-1 truncate">{eventTitle(e)}</span>
+              <span className="min-w-[160px] flex-1 truncate">{eventTitle(e, aliases)}</span>
               {cols.map((c) => <EventCell key={c} col={c} e={e} onUser={() => showUser(e)} onSession={(sid) => set({ sessionId: sid })} />)}
               <EventRowActions e={e} />
             </div>

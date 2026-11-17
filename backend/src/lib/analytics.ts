@@ -4,6 +4,7 @@ import type {
   MetricSeriesResponse, PageRow, ServiceRow, Span, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse,
 } from '../contract';
 import { rawQuery, inList, type Window as Win } from './store/duck';
+import { aliasMap } from './clickAliases';
 import { stacksFor } from './errorStacks';
 import { toApiEvent, type EventRow } from './events';
 import { COLUMNS, fieldExpression, filtersFrom, includeBots, jsonPath, parseFilters } from './filters';
@@ -197,7 +198,7 @@ export async function clicks(pid: string, p: Params): Promise<ClickRow[]> {
   const r = parseRange(p);
   const params: unknown[] = [pid, r.from, r.to, limitParam(p.limit, 50, 500)];
   const F = filtersFrom(p, 'events', params);
-  const rows = await rawQuery<{ selector: string; element_text: string | null; track_name: string | null; element_tag: string | null; count: number; sessions: number; rage: number; last_seen: Date }>(pid, r,
+  const [names, rows] = await Promise.all([aliasMap(pid), rawQuery<{ selector: string; element_text: string | null; track_name: string | null; element_tag: string | null; count: number; sessions: number; rage: number; last_seen: Date }>(pid, r,
     `SELECT selector, element_text, track_name, max(element_tag) AS element_tag,
             count(*)::int AS count, count(DISTINCT session_id)::int AS sessions,
             sum(CASE WHEN props->>'rage' IS NOT NULL THEN 1 ELSE 0 END)::int AS rage, max(ts) AS last_seen
@@ -206,9 +207,9 @@ export async function clicks(pid: string, p: Params): Promise<ClickRow[]> {
       GROUP BY selector, element_text, track_name
       ORDER BY count DESC LIMIT $4`,
     params,
-  );
+  )]);
   return rows.map((x) => ({
-    selector: x.selector, elementText: x.element_text, trackName: x.track_name, elementTag: x.element_tag,
+    selector: x.selector, elementText: x.element_text, trackName: x.track_name, elementTag: x.element_tag, alias: names.get(x.selector) ?? null,
     count: x.count, sessions: x.sessions, rageClicks: x.rage, lastSeen: iso(x.last_seen)!,
   }));
 }

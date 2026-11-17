@@ -114,7 +114,10 @@ describe('MCP bearer auth', () => {
     const names = msg.result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain('list_projects');
     expect(names).toContain('get_trace');
-    expect(msg.result.tools.every((t: { annotations?: { readOnlyHint?: boolean } }) => t.annotations?.readOnlyHint)).toBe(true);
+    // the only tool that writes is naming a click target, and it's marked as such
+    const writes = msg.result.tools.filter((t: { annotations?: { readOnlyHint?: boolean } }) => !t.annotations?.readOnlyHint);
+    expect(writes.map((t: { name: string }) => t.name)).toEqual(['set_click_alias']);
+    expect(writes[0].annotations).toMatchObject({ destructiveHint: false, idempotentHint: true });
   });
 
   it('only accepts browser origins of its own host or localhost', async () => {

@@ -23,6 +23,8 @@ Add one script tag and WGO records every click, pageview, JavaScript error, fail
 without any extra code. Events show up within seconds.
 
 - 👀 Watch a button, page or error and see each hit arrive, with an optional toast or browser notification.
+- 🏷️ Give a captured click a readable name, like "Pricing: start trial" instead of `div.w-full > button`. Everyone
+  in the project sees the name on the Clicks, Events and Live pages, and so does your AI assistant.
 - 🎯 Make any event a conversion goal: a signup click, a visit to /thank-you or a custom event. WGO shows the
   share of sessions that convert, how that changed since the previous period, and the trend.
 - 🪜 Open a goal to see how people reach it. Add the steps you expect (Pricing → Signup form → goal) to see
@@ -118,9 +120,10 @@ plain language. The assistant looks up the numbers itself, so you don't have to 
 chat.
 
 - 🔑 You sign in with your WGO account in the browser. There is no API key to copy.
-- 🔒 Access is read-only and limited to the projects you are a member of.
-- 🧰 Eighteen tools cover the overview, top pages and clicks, conversion goals and funnels, errors, failed
-  requests, Web Vitals, visitor locations, traces, logs and metrics.
+- 🔒 Access is limited to the projects you are a member of. It's read-only, except that the assistant can give
+  click targets readable names.
+- 🧰 Twenty tools cover the overview, top pages and clicks, click names, conversion goals and funnels, errors,
+  failed requests, Web Vitals, visitor locations, traces, logs and metrics.
 
 ```sh
 claude mcp add --transport http wgo https://wgo.example.com/mcp

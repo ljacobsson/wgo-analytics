@@ -13,6 +13,7 @@ import { cn, fmtNum, relTime } from '../lib/format';
 import { eventTitle } from '../lib/events';
 import { navigate, pageHref, useRoute } from '../lib/router';
 import { useProject } from '../lib/project';
+import { useClickAliases } from '../api/hooks';
 import { isKiosk } from '../lib/kiosk';
 import { ColumnsMenu, EventCell, useEventColumns, userFilter, type EventColumn } from '../ui/EventColumns';
 import { currentFilters, mergeFilters } from '../lib/filters';
@@ -152,6 +153,7 @@ function LiveMap({ store }: { store: LiveStore }) {
 
 function Firehose({ store }: { store: LiveStore }) {
   const { project } = useProject(); const route = useRoute();
+  const aliases = useClickAliases(project.id).data;
   useTick(1000);
   const feed = store.viewFeed;
   const boxRef = useRef<HTMLDivElement>(null);
@@ -183,7 +185,7 @@ function Firehose({ store }: { store: LiveStore }) {
                 <div key={e.id} className="absolute inset-x-0" style={{ top: y, height: RH }}>
                   <div className={cn('flex h-full items-center gap-3 border-b border-line/60 px-4 text-[12.5px] hover:bg-[var(--hl)]', now - it.at < 700 && 'row-new')}>
                     <TypeBadge type={e.type} />
-                    <span className="min-w-[140px] flex-1 truncate">{eventTitle(e)}</span>
+                    <span className="min-w-[140px] flex-1 truncate">{eventTitle(e, aliases)}</span>
                     {e.matches?.length > 0 && <Badge tone="cyan"><Zap size={10} />{e.matches.length}</Badge>}
                     {cols.map((c) => <EventCell key={c} col={c} e={e}
                       onUser={() => { const f = userFilter(e); if (f) toEvents({ f: JSON.stringify(mergeFilters(currentFilters('events'), [f])) }); }}

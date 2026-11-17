@@ -363,10 +363,24 @@ export interface ClickRow {
   elementText: string | null;
   trackName: string | null;
   elementTag: string | null;
+  alias: string | null; // the project's readable name for this selector (click aliases), if set
   count: number;
   sessions: number;
   rageClicks: number;
   lastSeen: string;
+}
+
+// Click aliases: a readable name for an autocaptured click target, keyed by its selector.
+// GET    /api/projects/{pid}/click-aliases                → ClickAlias[]
+// POST   /api/projects/{pid}/click-aliases  ClickAliasInput → ClickAlias (creates or renames)
+// DELETE /api/projects/{pid}/click-aliases?selector=…      → { ok: true }
+export interface ClickAliasInput {
+  selector: string; // 1-512 characters, as captured
+  alias: string; // 1-80 characters
+}
+export interface ClickAlias extends ClickAliasInput {
+  updatedBy: string;
+  updatedAt: string;
 }
 
 // GET /api/projects/{pid}/pages?from&to&limit=50

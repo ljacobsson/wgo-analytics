@@ -50,7 +50,7 @@ next to your web analytics, in the same project.
 
 Connect Claude, VS Code, Cursor or any other MCP client and ask about traffic, errors, traces and metrics in
 plain language. You sign in with your WGO account in the browser, so there is no API key to copy. Access is
-read-only and limited to the projects you are a member of.
+limited to the projects you are a member of and is read-only, except that the assistant can name click targets.
 
 ### A home-screen widget for Android
 
@@ -433,8 +433,9 @@ claude mcp add --transport http wgo https://wgo.example.com/mcp
 ```
 
 There is no key to copy. The client registers itself, opens a browser, and you sign in with your WGO account.
-It then sees exactly the projects you're a member of, read-only. The tools are:
+It then sees exactly the projects you're a member of. The tools are:
 - **Product analytics:** `list_projects`, `get_overview`, `top_clicks`, `top_pages`, `goal_conversions`, `goal_funnel`, `list_errors`, `list_failed_requests`, `breakdown`, `web_vitals`, `visitor_locations`, `search_events`
+- **Click aliases:** `list_click_aliases`, and `set_click_alias`, which gives an autocaptured selector a readable name. It's the only tool that changes anything, and it only changes labels that any project member can also edit in the dashboard.
 - **OpenTelemetry:** `list_services`, `list_traces`, `get_trace`, `search_logs`, `list_metrics`, `get_metric_series`
 
 Use the dashboard's host (the `McpUrl` stack output). The raw API Gateway URL has no OAuth resource of its own.

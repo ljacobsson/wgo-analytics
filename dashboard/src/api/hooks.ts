@@ -4,7 +4,7 @@ import type {
   Device, DeviceCreated, Kiosk, KioskConfig,
   BreakdownRow, ClickRow, ErrorGroup, EventsResponse, GeoResponse, HttpErrorGroup, LogsResponse, Me, Member, MetricInfo,
   MetricSeriesResponse, PageRow, Project, ServiceRow, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse, FieldsResponse, FieldValuesResponse, FilterScope, SlackIntegration, Trigger, TriggerInput, TriggerTestResult, SlackSetup,
-  SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, ConversionsResponse,
+  SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, ConversionsResponse, ClickAlias,
 } from './contract';
 import { previousWindow, type TimeRange } from '../lib/time';
 import { botsParam, filtersParam } from '../lib/filters';
@@ -234,6 +234,27 @@ export function useDeleteView(pid: string) {
       qc.setQueryData<SavedView[]>(viewsKey(pid), (cur) => cur?.filter((v) => v.id !== id));
     },
     onSettled: () => qc.invalidateQueries({ queryKey: viewsKey(pid) }),
+  });
+}
+
+// ---------- click aliases ----------
+const aliasesKey = (pid: string) => ['click-aliases', pid] as const;
+/** selector → alias, for labelling clicks in event lists. */
+export function useClickAliases(pid: string) {
+  return useQuery({
+    queryKey: aliasesKey(pid), queryFn: () => api<ClickAlias[]>(`${base(pid)}/click-aliases`), staleTime: 5 * 60_000,
+    select: (list) => new Map(list.map((a) => [a.selector, a.alias])),
+  });
+}
+/** Sets a selector's alias, or removes it when `alias` is blank. Click rows carry the alias, so they refetch too. */
+export function useSetClickAlias(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ selector, alias }: { selector: string; alias: string }): Promise<unknown> =>
+      alias.trim()
+        ? api<ClickAlias>(`${base(pid)}/click-aliases`, { method: 'POST', body: { selector, alias } })
+        : api<{ ok: true }>(`${base(pid)}/click-aliases`, { method: 'DELETE', params: { selector } }),
+    onSettled: () => Promise.all([qc.invalidateQueries({ queryKey: aliasesKey(pid) }), qc.invalidateQueries({ queryKey: ['clicks', pid] })]),
   });
 }
 

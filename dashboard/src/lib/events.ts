@@ -16,15 +16,19 @@ export function shortSelector(sel: string | null): string {
   return [tag, ...meaningful].join('.');
 }
 
-/** What to call a click target, best first: data-track name, captured label, then a short element description. */
-export function clickLabel(c: { trackName: string | null; elementText: string | null; selector: string | null }): string {
-  return c.trackName || c.elementText || `‹${shortSelector(c.selector)}›`;
+/**
+ * What to call a click target, best first: the project's alias for its selector, data-track name, captured label,
+ * then a short element description.
+ */
+export function clickLabel(c: { trackName: string | null; elementText: string | null; selector: string | null; alias?: string | null }): string {
+  return c.alias || c.trackName || c.elementText || `‹${shortSelector(c.selector)}›`;
 }
 
-export function eventTitle(e: AnalyticsEvent): string {
+/** One line describing an event. `aliases` (selector → alias, from useClickAliases) names click targets. */
+export function eventTitle(e: AnalyticsEvent, aliases?: Map<string, string>): string {
   switch (e.type) {
     case 'pageview': return e.path ?? e.url ?? '';
-    case 'click': return e.selector ? clickLabel(e) : e.path || '';
+    case 'click': return e.selector ? clickLabel({ ...e, alias: aliases?.get(e.selector) }) : e.path || '';
     case 'error': return e.errorMessage ?? '';
     case 'http_error': return `${e.httpMethod ?? ''} ${e.httpRoute ?? e.httpUrl ?? ''} → ${e.httpStatus ?? ''}`;
     case 'custom': return e.name ?? '';

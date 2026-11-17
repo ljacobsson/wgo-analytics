@@ -1,10 +1,10 @@
-import type { Device, Goal, GoalInput, Kiosk, KioskConfig, KioskState, Member, Project, SavedView, SavedViewInput, SlackIntegration, Trigger, TriggerInput } from '../api/contract';
+import type { ClickAlias, ClickAliasInput, Device, Goal, GoalInput, Kiosk, KioskConfig, KioskState, Member, Project, SavedView, SavedViewInput, SlackIntegration, Trigger, TriggerInput } from '../api/contract';
 import * as D from './data';
 import { funnel } from './funnel';
 import { hex } from './rng';
 import * as F from './filters';
 
-interface Db { projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]> }
+interface Db { projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]> }
 const KEY = 'wgo.mock.db';
 const newKey = () => 'ak_' + hex(28, Date.now(), Math.floor(Math.random() * 1e9));
 
@@ -190,7 +190,23 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     }
     case 'stats': { const r = D.stats(from, to); return qp('compare') === '0' ? { ...r, previous: null } : r; }
     case 'totals': return D.totalsFor(from, to);
-    case 'clicks': return D.clicks(from, to, limit);
+    case 'clicks': {
+      const names = new Map((db.clickAliases?.[pid] ?? []).map((a) => [a.selector, a.alias]));
+      return D.clicks(from, to, limit).map((r) => ({ ...r, alias: names.get(r.selector) ?? null }));
+    }
+    case 'click-aliases': {
+      const list = ((db.clickAliases ??= {})[pid] ??= []);
+      if (method === 'POST') {
+        const input = (body ?? {}) as Partial<ClickAliasInput>;
+        const selector = (input.selector ?? '').trim(), alias = (input.alias ?? '').replace(/\s+/g, ' ').trim();
+        if (!selector || selector.length > 512) throw new MockHttpError(400, 'selector must be 1-512 characters');
+        if (!alias || alias.length > 80) throw new MockHttpError(400, 'Alias must be 1-80 characters');
+        const a: ClickAlias = { selector, alias, updatedBy: email, updatedAt: new Date().toISOString() };
+        db.clickAliases![pid] = [...list.filter((x) => x.selector !== selector), a]; save(db); return a;
+      }
+      if (method === 'DELETE') { db.clickAliases![pid] = list.filter((x) => x.selector !== (qp('selector') ?? '').trim()); save(db); return { ok: true }; }
+      return list;
+    }
     case 'pages': return D.pages(from, to, limit);
     case 'errors': return D.errors(from, to, limit);
     case 'http-errors': return D.httpErrors(from, to, limit);
@@ -231,7 +247,7 @@ export function handleKiosk(url: URL, token: string): unknown {
       const project = db.projects.find((p) => p.id === pid)!;
       return { kiosk: { id: k.id, name: k.name }, project: { id: pid, name: project.name }, config: k.config, reloadAt: k.reloadAt, version: `${k.updatedAt}.${k.reloadAt}` } satisfies KioskState;
     }
-    if (/^(kiosks|members|triggers|goals|integrations|slack|rotate-key)(\/|$)/.test(rest)) throw new MockHttpError(404, 'Not found');
+    if (/^(kiosks|members|triggers|goals|integrations|slack|rotate-key|click-aliases)(\/|$)/.test(rest)) throw new MockHttpError(404, 'Not found');
     return handleApi('GET', new URL(`/api/projects/${pid}/${rest}${url.search}`, url.origin), undefined, 'demo@wgo.dev');
   }
   throw new MockHttpError(401, 'This kiosk link was removed or replaced. Get the current one from the dashboard.');

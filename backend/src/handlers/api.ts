@@ -1,6 +1,7 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { allowlistMessage, emailAllowed } from '../lib/allowlist';
 import { handleError, HttpError, json, jsonBody } from '../lib/http';
+import * as CA from '../lib/clickAliases';
 import * as D from '../lib/devices';
 import * as G from '../lib/goals';
 import * as GF from '../lib/funnel';
@@ -82,6 +83,14 @@ async function route(method: string, parts: string[], q: Q, email: string, event
     if (!id && method === 'POST') return V.createView(pid, email, jsonBody(event));
     if (id && method === 'PATCH') return V.updateView(pid, id, jsonBody(event));
     if (id && method === 'DELETE') { await V.deleteView(pid, id); return { ok: true }; }
+    throw new HttpError(405, 'Method not allowed');
+  }
+
+  if (sub === 'click-aliases') {
+    await P.getProject(email, pid); // authorization: caller must be a member
+    if (method === 'GET') return CA.listAliases(pid);
+    if (method === 'POST') return CA.setAlias(pid, email, jsonBody(event));
+    if (method === 'DELETE') { await CA.deleteAlias(pid, q.selector); return { ok: true }; }
     throw new HttpError(405, 'Method not allowed');
   }
 
