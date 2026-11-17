@@ -26,6 +26,9 @@ function PasswordHints({ value }: { value: string }) {
   );
 }
 
+/** The project's documentation site. */
+const DOCS_URL = 'https://wgo-analytics.com';
+
 /** The last choice of the "Keep me signed in" box, so it doesn't reset on every sign-in. */
 const REMEMBER_KEY = 'wgo.remember';
 
@@ -105,7 +108,7 @@ function AuthForms({ initial }: { initial: 'signin' | 'signup' }) {
   return (
     <div className="relative isolate flex h-full flex-col overflow-y-auto overflow-x-hidden">
       <Backdrop />
-      <main className="flex flex-1 flex-col items-center justify-center px-6 pb-[14vh] pt-12">
+      <main className="flex flex-1 flex-col items-center justify-center px-6 pb-[10vh] pt-12">
         <div className="brand-rise flex flex-col items-center text-center">
           <Float radius={170} strength={2.4} tilt={0.35}><BrandMark size={60} /></Float>
           <p className="mt-5 text-[28px] font-semibold leading-none tracking-[-0.03em]" aria-label="WGO">
@@ -126,6 +129,11 @@ function AuthForms({ initial }: { initial: 'signin' | 'signup' }) {
           </div>
         </div>
       </main>
+      <footer className="shrink-0 pb-6 text-center text-[12.5px]">
+        <a href={DOCS_URL} target="_blank" rel="noreferrer" className="text-muted transition-colors hover:text-fg">
+          wgo-analytics.com
+        </a>
+      </footer>
     </div>
   );
 }
