@@ -22,6 +22,11 @@ export function hex(len: number, ...seed: number[]): string {
   for (let i = 0; out.length < len; i++) out += hash(...seed, i).toString(16).padStart(8, '0');
   return out.slice(0, len);
 }
+/** A deterministic UUID v4 lookalike, the shape of the SDK's anonymous ids (crypto.randomUUID). */
+export function uuidOf(...seed: number[]): string {
+  const h = hex(32, ...seed);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
 /** Events per second at a given time: diurnal + weekly curve. */
 export function rate(tMs: number): number {
   const d = new Date(tMs);

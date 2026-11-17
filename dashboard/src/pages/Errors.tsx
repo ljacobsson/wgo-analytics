@@ -8,6 +8,7 @@ import { Badge, Card, Drawer, EmptyState, ErrorState, Mono, Skeleton } from '../
 import { Sparkline } from '../charts/Sparkline';
 import { RowsSkeleton, TableHead, Dl } from './common';
 import { fmtNum, fmtDateTime, relTime, shortId } from '../lib/format';
+import { UserCell } from '../ui/EventColumns';
 import { eventTitle } from '../lib/events';
 
 import { FilterBar } from '../ui/FilterBar';
@@ -51,7 +52,7 @@ function ErrorDrawer({ g, onClose }: { g: ErrorGroup | null; onClose: () => void
             {occ.isPending ? <div className="space-y-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-9" />)}</div> : (
               <div className="divide-y divide-line/60 rounded-xl border border-line">{events.map((e) => (
                 <div key={e.id} className="flex items-center gap-3 px-3 py-2 text-[12.5px]"><span className="w-28 shrink-0 tnum text-faint">{fmtDateTime(e.ts)}</span><span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-muted">{e.path ?? eventTitle(e)}</span>
-                  <span className="text-faint">{e.browser}</span><Mono className="text-faint">{shortId(e.sessionId)}</Mono></div>))}</div>)}</div>
+                  <span className="text-faint">{e.browser}</span><UserCell e={e} className="w-[132px] shrink-0 justify-end" /></div>))}</div>)}</div>
         </div>
       )}
     </Drawer>

@@ -32,6 +32,18 @@ export function eventTitle(e: AnalyticsEvent): string {
     default: return e.userId ?? e.name ?? '';
   }
 }
+/**
+ * Who an event came from: the user id when the app identified the visitor (`WGO.identify`, or the JWT
+ * auto-identify), else the last part of the anonymous id. The SDK's anonymous ids are UUIDs, so that is the
+ * group after the last dash; ids without dashes show their last 8 characters.
+ */
+export function userLabel(e: Pick<AnalyticsEvent, 'userId' | 'anonId'>): { text: string; identified: boolean } | null {
+  if (e.userId) return { text: e.userId, identified: true };
+  if (!e.anonId) return null;
+  const dash = e.anonId.lastIndexOf('-');
+  return { text: dash >= 0 ? e.anonId.slice(dash + 1) : e.anonId.slice(-8), identified: false };
+}
+
 export function eventDetail(e: AnalyticsEvent): string {
   if (e.type === 'click') return e.selector ?? '';
   if (e.type === 'error') return e.errorSource ?? e.path ?? '';

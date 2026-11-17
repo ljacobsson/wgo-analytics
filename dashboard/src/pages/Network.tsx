@@ -6,7 +6,8 @@ import { useTime } from '../lib/time';
 import { useRoute, useSetParams } from '../lib/router';
 import { Card, Drawer, EmptyState, ErrorState, Mono, MethodBadge, Skeleton, StatusPill } from '../ui/kit';
 import { Dl, RowsSkeleton, TableHead, useSort } from './common';
-import { fmtDateTime, fmtMs, fmtNum, relTime, shortId } from '../lib/format';
+import { fmtDateTime, fmtMs, fmtNum, relTime } from '../lib/format';
+import { UserCell } from '../ui/EventColumns';
 
 import { FilterBar } from '../ui/FilterBar';
 import { RowActions } from '../ui/RowActions';
@@ -36,7 +37,7 @@ function NetDrawer({ g, onClose }: { g: HttpErrorGroup | null; onClose: () => vo
             {occ.isPending ? <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-9" />)}</div> : events.length === 0 ? <p className="text-[13px] text-muted">No recent occurrences loaded.</p> : (
               <div className="divide-y divide-line/60 rounded-xl border border-line">{events.map((e) => (
                 <div key={e.id} className="flex items-center gap-3 px-3 py-2 text-[12.5px]"><span className="w-28 shrink-0 tnum text-faint">{fmtDateTime(e.ts)}</span><span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-muted">{e.httpUrl}</span>
-                  <span className="tnum text-faint">{fmtMs(e.durationMs)}</span><Mono className="text-faint">{shortId(e.sessionId)}</Mono></div>))}</div>)}</div>
+                  <span className="tnum text-faint">{fmtMs(e.durationMs)}</span><UserCell e={e} className="w-[132px] shrink-0 justify-end" /></div>))}</div>)}</div>
         </div>
       )}
     </Drawer>

@@ -4,7 +4,7 @@ import type {
 } from '../api/contract';
 import type { ConversionsResponse, Filter, Goal } from '../api/contract';
 import { matches } from './filters';
-import { hash, hex, pick, rate, rnd, weighted } from './rng';
+import { hash, hex, pick, rate, rnd, uuidOf, weighted } from './rng';
 import { BROWSERS, CLICKS, CUSTOM, DEVICES, ERRORS, HTTP_ERRORS, OSES, PAGES, PLACES, REFERRERS, SERVICES } from './universe';
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -101,7 +101,7 @@ export function eventAt(s: number, k = 0): AnalyticsEvent | null {
   const e = empty();
   const block = Math.floor(s / BLOCK), sk = Math.floor(rnd(s, k, 13) * 4);
   e.id = `ev_${s.toString(36)}${k}`; e.type = type; e.ts = iso(s * SEC + Math.floor(rnd(s, k, 14) * 999));
-  e.sessionId = `s${block.toString(36)}${sk}`; e.anonId = `a${hex(10, block, sk)}`; e.userId = rnd(block, sk, 15) > 0.8 ? `user_${hash(block, sk) % 900}` : null;
+  e.sessionId = `s${block.toString(36)}${sk}`; e.anonId = uuidOf(block, sk, 98); e.userId = rnd(block, sk, 15) > 0.8 ? `user_${hash(block, sk) % 900}` : null;
   const page = weighted(PAGES, block, sk, 16).path;
   e.path = page; e.url = 'https://shop.acme.dev' + page;
   e.browser = weighted(BROWSERS.map((b) => ({ ...b })), block, sk, 17).k; e.os = weighted(OSES, block, sk, 18).k; e.device = weighted(DEVICES, block, sk, 19).k;

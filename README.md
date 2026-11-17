@@ -609,6 +609,7 @@ its development. Sponsorships pay for the time that goes into new features, fixe
 <a href="https://github.com/sponsors/ljacobsson"><img src="https://img.shields.io/badge/Sponsor-❤-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor WGO on GitHub"></a>
 
 Not in a position to sponsor? Starring the repo, reporting bugs and telling others about WGO help too.
+See [SPONSORS.md](SPONSORS.md) for what sponsorship pays for and the people who support WGO.
 
 ## License
 

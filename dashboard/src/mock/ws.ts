@@ -1,6 +1,6 @@
 import type { AnalyticsEvent, LiveEvent, Watch } from '../api/contract';
 import { CLICKS, ERRORS, HTTP_ERRORS, PAGES, CUSTOM, BROWSERS, OSES, DEVICES, PLACES } from './universe';
-import { weighted, pick, hex } from './rng';
+import { weighted, pick, hex, hash, uuidOf } from './rng';
 
 const sub = (hay: string | null, needle?: string) => !needle || (hay ?? '').toLowerCase().includes(needle.toLowerCase());
 function matches(w: Watch, e: AnalyticsEvent): boolean {
@@ -13,13 +13,13 @@ function matches(w: Watch, e: AnalyticsEvent): boolean {
 }
 const TYPES = [{ t: 'click', w: 48 }, { t: 'pageview', w: 30 }, { t: 'custom', w: 8 }, { t: 'error', w: 4 }, { t: 'http_error', w: 6 }, { t: 'vitals', w: 4 }] as const;
 let seq = 0;
-const sessions = Array.from({ length: 24 }, (_, i) => { const pl = weighted(PLACES, i, 97); return { sessionId: 's' + hex(7, i, 99), anonId: 'a' + hex(10, i, 98), browser: pick(BROWSERS, i).k, os: pick(OSES, i + 3).k, device: weighted(DEVICES, i, 5).k, country: pl.c, region: pl.r, city: pl.city, lat: pl.lat, lon: pl.lon }; });
+const sessions = Array.from({ length: 24 }, (_, i) => { const pl = weighted(PLACES, i, 97); return { sessionId: 's' + hex(7, i, 99), anonId: uuidOf(i, 98), userId: i % 3 === 0 ? `user_${hash(i, 96) % 900}` : null, browser: pick(BROWSERS, i).k, os: pick(OSES, i + 3).k, device: weighted(DEVICES, i, 5).k, country: pl.c, region: pl.r, city: pl.city, lat: pl.lat, lon: pl.lon }; });
 
 function makeEvent(): AnalyticsEvent {
   seq++;
   const type = weighted(TYPES.map((t) => ({ ...t })), seq, Date.now()).t;
   const s = pick(sessions, seq, 3);
-  const base: AnalyticsEvent = { id: 'live_' + hex(10, seq, Date.now()), type, ts: new Date().toISOString(), sessionId: s.sessionId, anonId: s.anonId, userId: null, url: null, path: weighted(PAGES, seq, 4).path, title: null, referrer: null,
+  const base: AnalyticsEvent = { id: 'live_' + hex(10, seq, Date.now()), type, ts: new Date().toISOString(), sessionId: s.sessionId, anonId: s.anonId, userId: s.userId, url: null, path: weighted(PAGES, seq, 4).path, title: null, referrer: null,
     selector: null, elementText: null, elementTag: null, trackName: null, errorMessage: null, errorStack: null, errorSource: null, fingerprint: null, httpMethod: null, httpUrl: null, httpRoute: null, httpStatus: null, durationMs: null, name: null, props: {}, browser: s.browser, os: s.os, device: s.device, country: s.country, region: s.region, city: s.city, lat: s.lat, lon: s.lon, bot: null };
   base.url = 'https://shop.acme.dev' + base.path;
   if (type === 'click') { const c = weighted(CLICKS, seq, 5); Object.assign(base, { selector: c.selector, elementText: c.text, elementTag: c.tag, trackName: c.track, path: c.path }); }

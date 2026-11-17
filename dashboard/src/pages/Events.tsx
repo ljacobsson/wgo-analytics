@@ -11,10 +11,15 @@ import { Badge, Card, EmptyState, ErrorState, Mono, Skeleton, TypeBadge, useDebo
 import { FilterBar } from '../ui/FilterBar';
 import { AttributeTable, eventAttributeRows } from './EventAttributes';
 import { useSentinel } from '../ui/useSentinel';
+import { ColumnsMenu, EventCell, useEventColumns, userFilter, type EventColumn } from '../ui/EventColumns';
+import { mergeFilters, useFilters } from '../lib/filters';
 import { RowsSkeleton } from './common';
 import { Stack } from './Errors';
 import { eventTitle } from '../lib/events';
 import { fmtDateTime, fmtTime, shortId } from '../lib/format';
+
+/** Columns shown until someone picks their own (saved per browser). */
+const DEFAULT_COLUMNS: EventColumn[] = ['user', 'path', 'browser'];
 
 const TYPES: Array<EventType | ''> = ['', 'pageview', 'click', 'error', 'http_error', 'custom', 'vitals', 'identify'];
 
@@ -56,6 +61,9 @@ export function EventsPage() {
   const [qIn, setQIn] = useState(route.params.get('q') ?? '');
   const q = useDebounced(qIn, 300);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const [cols, setCols] = useEventColumns('events', DEFAULT_COLUMNS);
+  const [pageFilters, setPageFilters] = useFilters('events');
+  const showUser = (e: AnalyticsEvent) => { const f = userFilter(e); if (f) setPageFilters(mergeFilters(pageFilters, [f])); };
   const toggle = (id: string) => setOpen((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const filters = useMemo(() => ({ type: type || undefined, q: q || undefined, sessionId: sessionId || undefined }), [type, q, sessionId]);
   const ev = useEvents(project.id, range, filters);
@@ -68,7 +76,8 @@ export function EventsPage() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap gap-1.5">{TYPES.map((t) => (
           <button key={t || 'all'} onClick={() => set({ type: t || null })} className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-all cursor-pointer ${type === t ? 'border-accent/50 bg-accent/15 text-fg' : 'border-line text-muted hover:text-fg hover:border-[var(--line-strong)]'}`}>{t || 'All'}</button>))}</div>
-        <div className="relative ml-auto w-72"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Search path, selector, message…" value={qIn} onChange={(e) => { setQIn(e.target.value); }} onBlur={() => set({ q: qIn || null })} /></div>
+        <div className="ml-auto flex items-center gap-2"><ColumnsMenu value={cols} onChange={setCols} defaults={DEFAULT_COLUMNS} />
+          <div className="relative w-72"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Search path, selector, message…" value={qIn} onChange={(e) => { setQIn(e.target.value); }} onBlur={() => set({ q: qIn || null })} /></div></div>
       </div>
       {sessionId && <div className="flex items-center gap-2 text-[13px]"><Badge tone="accent" className="!py-1 !text-[12px]">Session timeline <Mono>{shortId(sessionId, 12)}</Mono><button onClick={() => set({ sessionId: null })} className="cursor-pointer"><X size={12} /></button></Badge><span className="text-muted">Showing every event from this session, newest first.</span></div>}
       <Card className="overflow-hidden">
@@ -78,10 +87,8 @@ export function EventsPage() {
             <div onClick={() => toggle(e.id)} className={`group flex h-10 cursor-pointer items-center gap-3 border-b border-line/60 px-4 text-[12.5px] transition-colors hover:bg-[var(--hl)] ${open.has(e.id) ? 'bg-[var(--hl)]' : ''}`}>
               <ChevronRight size={13} className={`shrink-0 text-faint transition-transform ${open.has(e.id) ? 'rotate-90' : ''}`} />
               <span className="w-[68px] shrink-0 tnum text-faint">{fmtTime(e.ts)}</span><TypeBadge type={e.type} />
-              <span className="min-w-0 flex-1 truncate">{eventTitle(e)}</span>
-              {e.path && e.type !== 'pageview' && <Mono className="hidden max-w-[200px] truncate text-faint xl:block">{e.path}</Mono>}
-              <span className="hidden w-16 text-faint lg:block">{e.browser}</span>
-              {e.sessionId && <button onClick={(x) => { x.stopPropagation(); set({ sessionId: e.sessionId }); }} title="Filter by session" className="font-mono text-[11.5px] text-faint hover:text-accent cursor-pointer">{shortId(e.sessionId)}</button>}
+              <span className="min-w-[160px] flex-1 truncate">{eventTitle(e)}</span>
+              {cols.map((c) => <EventCell key={c} col={c} e={e} onUser={() => showUser(e)} onSession={(sid) => set({ sessionId: sid })} />)}
               <EventRowActions e={e} />
             </div>
             {open.has(e.id) && <EventDetails e={e} onSession={(sid) => set({ sessionId: sid })} />}

@@ -3,7 +3,7 @@ import { Bell, BellOff, Pause, Play, Plus, Pencil, Radio, Trash2, Zap, Eraser } 
 import type { EventType, Watch } from '../api/contract';
 import { useFirehose, useLive, type LiveStore } from '../live/store';
 import { LIVE_PREFS, readPrefs } from '../live/LiveProvider';
-import { Badge, Button, Card, CardHeader, Dialog, EmptyState, Field, Mono, Segmented, Switch, TypeBadge, TYPE_COLOR } from '../ui/kit';
+import { Badge, Button, Card, CardHeader, Dialog, EmptyState, Field, Segmented, Switch, TypeBadge, TYPE_COLOR } from '../ui/kit';
 import { countryName, flag } from '../lib/geo';
 import { cellKey, type CalloutGroup, type CalloutMode, type GeoMapPing, type GeoMapPoint } from '../charts/geoTypes';
 import { MapCallout } from '../charts/MapCallout';
@@ -14,6 +14,11 @@ import { eventTitle } from '../lib/events';
 import { navigate, pageHref, useRoute } from '../lib/router';
 import { useProject } from '../lib/project';
 import { isKiosk } from '../lib/kiosk';
+import { ColumnsMenu, EventCell, useEventColumns, userFilter, type EventColumn } from '../ui/EventColumns';
+import { currentFilters, mergeFilters } from '../lib/filters';
+
+/** Firehose columns until someone picks their own (saved per browser). */
+const FIREHOSE_COLUMNS: EventColumn[] = ['user', 'path'];
 
 function useTick(ms = 1000) {
   const [, set] = useState(0);
@@ -156,12 +161,15 @@ function Firehose({ store }: { store: LiveStore }) {
   const now = Date.now();
   const slice = useMemo(() => feed.slice(start, end), [feed, start, end]);
   const pending = store.paused ? store.feed.length - store.frozen!.length : 0;
+  const [cols, setCols] = useEventColumns('firehose', FIREHOSE_COLUMNS);
+  const toEvents = (extra: Record<string, string>) => navigate(pageHref(project.id, 'events', route.params, extra));
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
         <div className="flex items-center gap-3"><h3 className="text-[13px] font-semibold">Firehose</h3>
           <span className="text-[12px] text-faint tnum">{fmtNum(feed.length)} / 500 events{pending > 0 && <span className="ml-2 text-warn">+{pending} held</span>}</span></div>
         {!isKiosk() && <div className="flex items-center gap-2">
+          <ColumnsMenu value={cols} onChange={setCols} defaults={FIREHOSE_COLUMNS} />
           <Button size="sm" onClick={() => store.clearFeed()}><Eraser size={13} />Clear</Button>
           <Button size="sm" variant={store.paused ? 'primary' : 'secondary'} onClick={() => store.setPaused(!store.paused)}>{store.paused ? <><Play size={13} />Resume</> : <><Pause size={13} />Pause</>}</Button>
         </div>}
@@ -175,12 +183,12 @@ function Firehose({ store }: { store: LiveStore }) {
                 <div key={e.id} className="absolute inset-x-0" style={{ top: y, height: RH }}>
                   <div className={cn('flex h-full items-center gap-3 border-b border-line/60 px-4 text-[12.5px] hover:bg-[var(--hl)]', now - it.at < 700 && 'row-new')}>
                     <TypeBadge type={e.type} />
-                    <span className="min-w-0 flex-1 truncate">{eventTitle(e)}</span>
-                    {e.path && e.type !== 'pageview' && <Mono className="hidden max-w-[160px] truncate text-faint xl:block">{e.path}</Mono>}
-                    {e.type === 'click' && e.selector && <Mono className="hidden max-w-[220px] truncate text-muted 2xl:block">{e.selector}</Mono>}
+                    <span className="min-w-[140px] flex-1 truncate">{eventTitle(e)}</span>
                     {e.matches?.length > 0 && <Badge tone="cyan"><Zap size={10} />{e.matches.length}</Badge>}
-                    {e.sessionId && <button onClick={() => navigate(pageHref(project.id, 'events', route.params, { sessionId: e.sessionId! }))} className="font-mono text-[11.5px] text-faint hover:text-accent cursor-pointer" title="Session timeline">{e.sessionId.slice(0, 8)}</button>}
-                    <span className="w-16 text-right tnum text-[11.5px] text-faint">{relTime(it.at, now)}</span>
+                    {cols.map((c) => <EventCell key={c} col={c} e={e}
+                      onUser={() => { const f = userFilter(e); if (f) toEvents({ f: JSON.stringify(mergeFilters(currentFilters('events'), [f])) }); }}
+                      onSession={(sid) => toEvents({ sessionId: sid })} />)}
+                    <span className="w-16 shrink-0 whitespace-nowrap text-right tnum text-[11.5px] text-faint">{relTime(it.at, now)}</span>
                   </div>
                 </div>
               );
