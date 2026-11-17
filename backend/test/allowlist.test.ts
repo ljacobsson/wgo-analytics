@@ -23,7 +23,8 @@ describe('email allowlist', () => {
     process.env.ALLOWED_EMAIL_DOMAINS = 'example.org';
     const ev = (email: string, triggerSource = 'PreSignUp_SignUp') => ({ triggerSource, request: { userAttributes: { email } }, response: {} }) as never;
     await expect(preSignUp(ev('me@example.org'))).resolves.toBeTruthy();
-    await expect(preSignUp(ev('me@gmail.com'))).rejects.toThrow('Only @example.org');
+    // no full stop: Cognito wraps it as "PreSignUp failed with error <message>." and adds its own
+    await expect(preSignUp(ev('me@gmail.com'))).rejects.toThrow(/^Only @example\.org email addresses can use this WGO instance$/);
     await expect(preSignUp(ev('me@gmail.com', 'PreSignUp_AdminCreateUser'))).resolves.toBeTruthy();
     delete process.env.ALLOWED_EMAIL_DOMAINS;
   });

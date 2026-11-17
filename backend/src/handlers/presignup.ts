@@ -5,6 +5,7 @@ import { allowlistMessage, emailAllowed } from '../lib/allowlist';
 export async function handler(event: PreSignUpTriggerEvent): Promise<PreSignUpTriggerEvent> {
   // users an admin creates in the console are deliberate exceptions
   if (event.triggerSource === 'PreSignUp_AdminCreateUser') return event;
-  if (!emailAllowed(event.request.userAttributes.email ?? '')) throw new Error(allowlistMessage());
+  // Cognito reports this as "PreSignUp failed with error <message>." and adds its own full stop, so leave ours off
+  if (!emailAllowed(event.request.userAttributes.email ?? '')) throw new Error(allowlistMessage().replace(/\.$/, ''));
   return event;
 }
