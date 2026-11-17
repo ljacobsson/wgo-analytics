@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generates docs/architecture-light.svg and docs/architecture-dark.svg, the architecture diagram in README.md.
+// Generates dashboard/public/docs/architecture-{light,dark}.svg, the architecture diagram in README.md.
 //
 // The AWS icons come from the aws-icons npm package (the official AWS Architecture Icons as SVG) and are
 // inlined, so the output is self-contained (GitHub serves README images through <img>, which blocks
@@ -19,7 +19,7 @@ if (!iconDir) {
   console.error('usage: node scripts/architecture-diagram.mjs <aws-icons>/icons');
   process.exit(1);
 }
-const outDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'docs');
+const outDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'dashboard', 'public', 'docs');
 
 const THEMES = {
   light: {

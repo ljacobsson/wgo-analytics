@@ -1,5 +1,5 @@
-import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
-import { BookOpen, Github, Menu, X } from 'lucide-react';
+import { useEffect, type MouseEvent, type ReactNode } from 'react';
+import { BookOpen, Github } from 'lucide-react';
 import { useAuth } from '../auth/cognito';
 import { Logo } from '../ui/Logo';
 import { Button } from '../ui/kit';
@@ -7,7 +7,7 @@ import { CodeBlock } from '../ui/CodeBlock';
 import { navigate, useRoute } from '../lib/router';
 import { cn } from '../lib/format';
 
-/** The public pages: the project homepage (auth/Landing.tsx), the docs (docs/Docs.tsx) and the OpenTelemetry guide. */
+/** The public pages: the docs (docs/Docs.tsx) and the OpenTelemetry guide. Signed out, `#/` is the sign-in screen (auth/AuthScreens.tsx). */
 
 export const REPO_URL = 'https://github.com/ljacobsson/wgo-analytics';
 export const SPONSOR_URL = 'https://github.com/sponsors/ljacobsson';
@@ -17,8 +17,8 @@ export const repoFile = (path: string) => `${REPO_URL}/blob/main/${path}`;
  * Links to a section of a public page. The app routes on the hash (`#/docs`), so a section is a `?s=` param instead of
  * a `#fragment`. When the section is already on screen, scroll to it without a navigation.
  */
-export function sectionHref(page: '' | 'docs', id: string) { return `#/${page}?s=${id}`; }
-export function onSectionClick(page: '' | 'docs', id: string) {
+export function sectionHref(page: 'docs', id: string) { return `#/${page}?s=${id}`; }
+export function onSectionClick(page: 'docs', id: string) {
   return (e: MouseEvent) => {
     const el = document.getElementById(id);
     const here = (window.location.hash.replace(/^#\/?/, '').split('?')[0] || '') === page;
@@ -42,29 +42,25 @@ export function useTitle(title: string) {
   useEffect(() => { const prev = document.title; document.title = title; return () => { document.title = prev; }; }, [title]);
 }
 
-const NAV: Array<{ label: string; page: '' | 'docs'; id?: string }> = [
-  { label: 'Features', page: '', id: 'features' },
-  { label: 'Self-hosting', page: '', id: 'install' },
-  { label: 'How it works', page: '', id: 'architecture' },
-  { label: 'Docs', page: 'docs' },
+const NAV: Array<{ label: string; href: string; page: string }> = [
+  { label: 'Docs', href: '#/docs', page: '' },
+  { label: 'OpenTelemetry', href: '#/docs/opentelemetry', page: 'opentelemetry' },
 ];
 
 export function SiteHeader() {
   const { signedIn } = useAuth();
-  const [open, setOpen] = useState(false);
-  const page = useRoute().segments[0] ?? '';
-  const link = (n: (typeof NAV)[number], cls: string) => (
-    <a key={n.label} href={n.id ? sectionHref(n.page, n.id) : `#/${n.page}`}
-      onClick={(e) => { setOpen(false); if (n.id) onSectionClick(n.page, n.id)(e); }}
-      className={cn(cls, !n.id && page === n.page && 'text-fg')}>{n.label}</a>
-  );
+  const sub = useRoute().segments[1] ?? '';
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-[color-mix(in_srgb,var(--bg)_78%,transparent)] backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between gap-4 px-6">
-        <a href="#/" aria-label="WGO home" onClick={(e) => { if (!page) { e.preventDefault(); document.getElementById('top')?.scrollIntoView({ behavior: 'smooth' }); } }}><Logo size={28} /></a>
-        <nav className="hidden items-center gap-0.5 text-[13.5px] md:flex">
-          {NAV.map((n) => link(n, 'rounded-lg px-3 py-1.5 text-muted transition-colors hover:bg-[var(--hl)] hover:text-fg'))}
-        </nav>
+        <div className="flex items-center gap-6">
+          <a href="#/docs" aria-label="WGO docs"><Logo size={28} /></a>
+          <nav className="flex items-center gap-0.5 text-[13.5px]">
+            {NAV.map((n) => (
+              <a key={n.label} href={n.href} className={cn('rounded-lg px-3 py-1.5 transition-colors hover:bg-[var(--hl)] hover:text-fg', sub === n.page ? 'text-fg' : 'text-muted')}>{n.label}</a>
+            ))}
+          </nav>
+        </div>
         <div className="flex items-center gap-1.5">
           <a href={REPO_URL} target="_blank" rel="noreferrer" aria-label="WGO on GitHub"
             className="inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-[var(--hl)] hover:text-fg">
@@ -73,15 +69,8 @@ export function SiteHeader() {
           {signedIn
             ? <Button variant="primary" onClick={() => navigate('/')}>Open dashboard</Button>
             : <Button onClick={() => navigate('/signin')}>Sign in</Button>}
-          <button className="grid size-9 cursor-pointer place-items-center rounded-lg text-muted hover:bg-[var(--hl)] hover:text-fg md:hidden"
-            aria-label="Menu" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? <X size={18} /> : <Menu size={18} />}</button>
         </div>
       </div>
-      {open && (
-        <nav className="anim-fade border-t border-line px-4 py-2 md:hidden">
-          {NAV.map((n) => link(n, 'block rounded-lg px-3 py-2.5 text-[14px] text-muted hover:bg-[var(--hl)] hover:text-fg'))}
-        </nav>
-      )}
     </header>
   );
 }

@@ -7,7 +7,7 @@ Add one script tag to a web app and WGO records every click, pageview, JavaScrip
 Web Vital, with no extra code. Point your backends' OpenTelemetry exporters at it and their traces, logs and
 metrics land in the same project. Everything shows up in one dashboard that updates as it happens.
 
-![The WGO overview page: pageviews, sessions, users, clicks and errors with sparklines, events over time, Web Vitals and a visitor map](dashboard/public/home/overview.jpg)
+![The WGO overview page: pageviews, sessions, users, clicks and errors with sparklines, events over time, Web Vitals and a visitor map](docs/screenshots/overview.jpg)
 
 - **Your data stays in your AWS account.** Nothing is sent to a third party, IP addresses are never stored,
   and no cookies are set; cookieless mode doesn't use `localStorage` either ([details](#cookies-and-privacy)).
@@ -31,7 +31,7 @@ Events show up within seconds.
 - **Small SDK:** about 10 KB gzipped. It batches and compresses events, and holds on to them while the visitor
   is offline.
 
-![The Live page: click counters for the signup button, add to cart and checkout, and a world map with recent events at each location](dashboard/public/home/live.jpg)
+![The Live page: click counters for the signup button, add to cart and checkout, and a world map with recent events at each location](docs/screenshots/live.jpg)
 
 ### OpenTelemetry metrics, traces and logs
 
@@ -44,7 +44,7 @@ next to your web analytics, in the same project.
 - **Logs:** filter by severity, service and text, and jump to the log's trace.
 - **Protocol:** OTLP over HTTP, as protobuf or JSON, gzipped or not.
 
-![The Metrics page: a list of OpenTelemetry metrics such as http.server.request.duration, with a chart of the selected metric over 24 hours](dashboard/public/home/metrics.jpg)
+![The Metrics page: a list of OpenTelemetry metrics such as http.server.request.duration, with a chart of the selected metric over 24 hours](docs/screenshots/metrics.jpg)
 
 ### Ask your AI assistant with MCP
 
@@ -54,7 +54,7 @@ limited to the projects you are a member of and is read-only, except that the as
 
 ### A home-screen widget for Android
 
-<img src="dashboard/public/home/widget.png" alt="The WGO widget on an Android home screen" width="220" align="right">
+<img src="docs/screenshots/widget.png" alt="The WGO widget on an Android home screen" width="220" align="right">
 
 Keep the numbers you care about on your phone. Pick a project, a time range and up to eight stats: visitors
 right now, errors, failed API calls, Web Vitals, backend latency, your tracked clicks or any OpenTelemetry
@@ -187,7 +187,7 @@ The deploy:
 ```
 ✔ WGO deployed
   Dashboard  https://wgo.example.com
-  Sign up    https://wgo.example.com/#/signup      (create your account here; the homepage doesn't link to it)
+  Sign up    https://wgo.example.com/#/signup      (create your account here)
   API        https://….execute-api.eu-west-1.amazonaws.com
   Live       wss://….execute-api.eu-west-1.amazonaws.com/live
   SDK        https://wgo.example.com/sdk/v1/wgo.js
@@ -202,8 +202,8 @@ The first deploy takes several minutes, mostly for CloudFront. Without a custom 
 ### First steps
 
 1. Open `https://wgo.example.com/#/signup` and create your account. Cognito emails you a verification code.
-   The dashboard's homepage presents the project and doesn't link to the sign-up form, so give this address to
-   teammates too.
+   The dashboard's front page is the sign-in screen; it links to sign-up while self sign-up is on
+   (`ALLOW_SELF_SIGNUP`, the default).
 2. Create a project.
 3. Copy the install snippet from the onboarding screen (or later from **Settings → Install**) into your web
    app, and/or set the [OpenTelemetry variables](#backends-opentelemetry) on your services.
@@ -458,8 +458,8 @@ Registered clients are not cleaned up automatically. List them with
 ## How it works
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="dashboard/public/home/architecture-dark.svg">
-  <img alt="WGO architecture: web apps and OpenTelemetry services send data through CloudFront to API Gateway, which queues it in SQS; Lambdas process it and write Parquet to S3; a maintenance Lambda compacts it and rolls it up into Aurora DSQL; the dashboard, widget, kiosks and MCP clients query it through Lambdas running DuckDB, and get live events over a WebSocket API" src="dashboard/public/home/architecture-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="dashboard/public/docs/architecture-dark.svg">
+  <img alt="WGO architecture: web apps and OpenTelemetry services send data through CloudFront to API Gateway, which queues it in SQS; Lambdas process it and write Parquet to S3; a maintenance Lambda compacts it and rolls it up into Aurora DSQL; the dashboard, widget, kiosks and MCP clients query it through Lambdas running DuckDB, and get live events over a WebSocket API" src="dashboard/public/docs/architecture-light.svg">
 </picture>
 
 The SDK and OTLP intake answer as soon as the data is queued (API Gateway writes SDK batches and OTLP requests

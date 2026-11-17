@@ -153,15 +153,38 @@ body {
 @keyframes pulse-dot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.8); } }
 .pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
 
-/* Public site (site/Site.tsx, auth/Landing.tsx) */
+/* Docs pages (site/Site.tsx) */
 [data-theme="light"] .theme-dark-only, :root:not([data-theme="light"]) .theme-light-only { display: none; }
-@keyframes line-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
-.term-line { opacity: 0; animation: line-in .3s ease-out forwards; }
-@keyframes caret { 50% { opacity: 0; } }
-.term-caret { animation: caret 1s steps(1) infinite; }
-.hero-glow { position: absolute; inset: -12% -6% auto; height: 70%; z-index: -1; filter: blur(70px); opacity: .55;
-  background: radial-gradient(50% 60% at 30% 40%, var(--glow1), transparent 70%), radial-gradient(45% 55% at 75% 45%, var(--glow2), transparent 70%); }
 
+/* Sign-in screens (auth/Backdrop.tsx) */
+.brand-orb { position: absolute; width: 62vmax; height: 62vmax; border-radius: 50%; filter: blur(90px); opacity: .9; will-change: transform; }
+.brand-orb-1 { left: -18vmax; top: -26vmax; background: radial-gradient(closest-side, var(--glow1), transparent); animation: orb-a 32s ease-in-out infinite alternate; }
+.brand-orb-2 { right: -22vmax; top: -10vmax; background: radial-gradient(closest-side, var(--glow2), transparent); animation: orb-b 38s ease-in-out infinite alternate; }
+.brand-orb-3 { left: 20vmax; bottom: -38vmax; background: radial-gradient(closest-side, var(--glow1), transparent); opacity: .6; animation: orb-c 44s ease-in-out infinite alternate; }
+@keyframes orb-a { to { transform: translate(14vmax, 8vmax) scale(1.12); } }
+@keyframes orb-b { to { transform: translate(-12vmax, 10vmax) scale(.9); } }
+@keyframes orb-c { to { transform: translate(-10vmax, -6vmax) scale(1.08); } }
+.brand-chart { -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); }
+.brand-line { position: absolute; left: 0; bottom: 0; width: max(200%, 2400px); height: 74%; /* the space above is room to bend upwards */ will-change: transform; }
+.brand-line-front { opacity: .55; animation: line-scroll 70s linear infinite; }
+.brand-line-back { opacity: .22; animation: line-scroll 110s linear infinite; }
+@keyframes line-scroll { to { transform: translateX(-50%); } }
+.brand-ping { position: absolute; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: currentColor; opacity: 0; box-shadow: 0 0 12px currentColor; animation: ping-dot 7.5s ease-out infinite; }
+.brand-ping::after { content: ''; position: absolute; inset: -2px; border-radius: 50%; border: 1px solid currentColor; opacity: 0; animation: ping-ring 7.5s ease-out infinite; animation-delay: inherit; }
+@keyframes ping-dot { 0% { opacity: 0; transform: scale(.4); } 4% { opacity: .9; transform: scale(1); } 30% { opacity: .5; } 45%, 100% { opacity: 0; } }
+@keyframes ping-ring { 0% { opacity: 0; transform: scale(1); } 4% { opacity: .8; } 28%, 100% { opacity: 0; transform: scale(7); } }
+.brand-mark-line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: mark-draw 1.1s .15s cubic-bezier(.65,0,.35,1) forwards; }
+.brand-mark-dot { transform-origin: 25px 9px; transform: scale(0); animation: mark-dot .45s 1.1s cubic-bezier(.3,1.6,.5,1) forwards; }
+.brand-mark-halo { transform-origin: 25px 9px; opacity: 0; animation: mark-halo 3.2s 1.6s ease-out infinite; }
+@keyframes mark-draw { to { stroke-dashoffset: 0; } }
+@keyframes mark-dot { to { transform: scale(1); } }
+@keyframes mark-halo { 0% { opacity: .9; transform: scale(1); } 70%, 100% { opacity: 0; transform: scale(3.2); } }
+.brand-rise { animation: brand-rise .7s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes brand-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .brand-orb, .brand-line, .brand-mark-halo { animation: none !important; }
+  .brand-ping, .brand-ping::after { display: none; }
+}
 
 .tok-k { color: #c084fc; } .tok-s { color: #86efac; } .tok-c { color: #6c6b7a; font-style: italic; } .tok-n { color: #fbbf24; } .tok-t { color: #67e8f9; } .tok-a { color: #93c5fd; }
 [data-theme="light"] .tok-k { color: #7c3aed; } [data-theme="light"] .tok-s { color: #047857; } [data-theme="light"] .tok-n { color: #b45309; } [data-theme="light"] .tok-t { color: #0e7490; } [data-theme="light"] .tok-a { color: #1d4ed8; }

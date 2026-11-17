@@ -2,10 +2,9 @@ import { getConfig } from '../api/config';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { ArrowLeft, Check, Circle, Loader2 } from 'lucide-react';
 import { AuthError, confirmForgotPassword, confirmSignUp, forgotPassword, resendCode, signIn, signUp } from './cognito';
-import { Logo } from '../ui/Logo';
 import { Button, Field } from '../ui/kit';
 import { navigate, useRoute } from '../lib/router';
-import { Landing } from './Landing';
+import { Backdrop, BrandMark, Float } from './Backdrop';
 import { cn } from '../lib/format';
 
 type Screen = 'signin' | 'signup' | 'confirm' | 'forgot' | 'reset';
@@ -30,16 +29,17 @@ function PasswordHints({ value }: { value: string }) {
 /** The last choice of the "Keep me signed in" box, so it doesn't reset on every sign-in. */
 const REMEMBER_KEY = 'wgo.remember';
 
-const allowedDomains =() => getConfig().allowedEmailDomains ?? [];
+const allowedDomains = () => getConfig().allowedEmailDomains ?? [];
+/** Self sign-up is on unless the deploy says otherwise (AllowSelfSignup=false: accounts are created in Cognito). */
+const signupOpen = () => getConfig().selfSignup !== false;
 
 /**
- * Signed out: `#/` is the project homepage, `#/signup` the sign-up form, anything else (incl. deep links) sign-in.
- * Nothing links to the sign-up form: people get its address from whoever runs the install (see docs/Docs.tsx).
+ * Signed out: `#/signup` is the sign-up form when self sign-up is on; anything else (`#/`, `#/signin`, deep links) is
+ * sign-in, and a deep link opens once signed in.
  */
 export function AuthScreens() {
   const seg0 = useRoute().segments[0];
-  if (!seg0) return <Landing />;
-  return <AuthForms initial={seg0 === 'signup' ? 'signup' : 'signin'} />;
+  return <AuthForms initial={seg0 === 'signup' && signupOpen() ? 'signup' : 'signin'} />;
 }
 
 function AuthForms({ initial }: { initial: 'signin' | 'signup' }) {
@@ -74,13 +74,14 @@ function AuthForms({ initial }: { initial: 'signin' | 'signup' }) {
   const submit = (label: string, disabled = false) => <Button variant="primary" className="w-full !py-2.5" disabled={busy || disabled}>{busy && <Loader2 size={15} className="animate-spin" />}{label}</Button>;
   const link = (label: string, to: Screen) => <button type="button" onClick={() => go(to)} className="text-accent hover:underline cursor-pointer">{label}</button>;
 
-  let content: ReactNode, title: string, sub: string;
+  let content: ReactNode, title: string, sub: string | null;
   if (screen === 'signin') {
-    title = 'Welcome back'; sub = 'Sign in to WGO: what\'s going on?';
+    title = 'Sign in'; sub = null;
     content = (<form onSubmit={run(async () => { localStorage.setItem(REMEMBER_KEY, remember ? '1' : '0'); await signIn(email, password, remember); })} className="space-y-4">{emailField}{pwField('Password', 'current-password')}
       <div className="flex items-center justify-between text-[12.5px]">
         <label className="inline-flex cursor-pointer select-none items-center gap-2 text-muted"><input type="checkbox" className="size-3.5 cursor-pointer accent-accent" checked={remember} onChange={(e) => setRemember(e.target.checked)} />Keep me signed in</label>
-        {link('Forgot password?', 'forgot')}</div>{submit('Sign in')}</form>);
+        {link('Forgot password?', 'forgot')}</div>{submit('Sign in')}
+      {signupOpen() && <p className="text-center text-[13px] text-muted">New here? {link('Create an account', 'signup')}</p>}</form>);
   } else if (screen === 'signup') {
     title = 'Create your account'; sub = allowedDomains().length ? `Use your ${allowedDomains().map((d) => '@' + d.replace(/^\*\./, '…')).join(' or ')} email address.` : 'Start tracking in under two minutes.';
     content = (<form onSubmit={run(async () => { await signUp(email, password); go('confirm'); setInfo(`We emailed a code to ${email}.`); })} className="space-y-4">{emailField}
@@ -102,20 +103,29 @@ function AuthForms({ initial }: { initial: 'signin' | 'signup' }) {
   }
 
   return (
-    <div className="bg-atmos flex h-full flex-col overflow-y-auto">
-      <header className="mx-auto flex h-16 w-full max-w-[1200px] shrink-0 items-center px-6">
-        <a href="#/" aria-label="WGO home"><Logo size={28} /></a>
-      </header>
-      <div className="flex flex-1 items-start justify-center px-6 pb-16 pt-[8vh]">
-        <div key={screen} className="anim-pop glass w-full max-w-[420px] p-8">
-          {(screen === 'confirm' || screen === 'reset' || screen === 'forgot') && <button onClick={() => go('signin')} className="mb-5 inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-fg cursor-pointer"><ArrowLeft size={14} />Back</button>}
-          <h1 className="text-[26px] font-semibold tracking-tight">{title}</h1>
-          <p className="mb-7 mt-1.5 text-[14px] text-muted">{sub}</p>
-          {info && <div className="mb-4 rounded-lg border border-good/30 bg-good/10 px-3 py-2 text-[13px] text-good">{info}</div>}
-          {err && <div className="mb-4 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-[13px] text-bad" role="alert">{err}</div>}
-          {content}
+    <div className="relative isolate flex h-full flex-col overflow-y-auto overflow-x-hidden">
+      <Backdrop />
+      <main className="flex flex-1 flex-col items-center justify-center px-6 pb-[14vh] pt-12">
+        <div className="brand-rise flex flex-col items-center text-center">
+          <Float radius={170} strength={2.4} tilt={0.35}><BrandMark size={60} /></Float>
+          <p className="mt-5 text-[28px] font-semibold leading-none tracking-[-0.03em]" aria-label="WGO">
+            {['W', 'G', 'O'].map((c) => <Float key={c} radius={110} strength={2.2} tilt={0.6}><span aria-hidden>{c}</span></Float>)}
+          </p>
+          <p className="mt-2 text-[14px] text-muted" aria-label="What's going on?">
+            {"What's going on?".split(' ').map((w, i) => <span key={i} aria-hidden>{i > 0 && ' '}<Float radius={90} strength={1.6} tilt={0.4}>{w}</Float></span>)}
+          </p>
         </div>
-      </div>
+        <div key={screen} className="anim-pop glass mt-9 w-full max-w-[400px] p-7 shadow-[var(--shadow)]">
+          {(screen === 'confirm' || screen === 'reset' || screen === 'forgot') && <button onClick={() => go('signin')} className="mb-5 inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-fg cursor-pointer"><ArrowLeft size={14} />Back</button>}
+          <h1 className="text-[20px] font-semibold tracking-tight">{title}</h1>
+          <p className={cn('mt-1.5 text-[13.5px] text-muted', !sub && 'sr-only')}>{sub ?? 'Sign in to WGO'}</p>
+          <div className="mt-6">
+            {info && <div className="mb-4 rounded-lg border border-good/30 bg-good/10 px-3 py-2 text-[13px] text-good">{info}</div>}
+            {err && <div className="mb-4 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-[13px] text-bad" role="alert">{err}</div>}
+            {content}
+          </div>
+        </div>
+      </main>
     </div>
   );
 }

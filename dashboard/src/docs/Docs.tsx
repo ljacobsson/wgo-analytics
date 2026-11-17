@@ -136,7 +136,7 @@ export function Docs() {
 
           <Section id="first-steps" title="First steps">
             <ol className="list-decimal space-y-3 pl-5 text-[14.5px] leading-[1.7] text-muted marker:text-faint">
-              <li>Open <C>{HOST}/#/signup</C> and create your account. Cognito emails you a verification code. The homepage doesn't link to the sign-up form, so share this address with teammates too.</li>
+              <li>Open <C>{HOST}/#/signup</C> and create your account. Cognito emails you a verification code. The front page is the sign-in screen, and it links to sign-up while self sign-up is on.</li>
               <li>Create a project.</li>
               <li>Copy the install snippet from the onboarding screen (or later from <B>Settings → Install</B>) into your web app, and/or set the <Doc to="otel">OpenTelemetry variables</Doc> on your services.</li>
               <li>Watch the data arrive. To try it without your own app, serve <Ext href={repoFile('examples/demo.html')}>examples/demo.html</Ext> locally and open it with <C>?key=wk_…&endpoint={HOST}&sdk={HOST}/sdk/v1/wgo.js&auto=1</C>. <C>auto=1</C> makes it click through the shop by itself.</li>
@@ -312,7 +312,7 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
 
           <Section id="architecture" title="How it works">
             <div className="glass overflow-hidden p-3 sm:p-5">
-              <ThemedImg dark="home/architecture-dark.svg" light="home/architecture-light.svg" w={1530} h={770}
+              <ThemedImg dark="docs/architecture-dark.svg" light="docs/architecture-light.svg" w={1530} h={770}
                 alt="WGO architecture: web apps and OpenTelemetry services send data through CloudFront to API Gateway, which queues it in SQS; Lambdas write Parquet to S3; a maintenance Lambda compacts it and rolls it up into Aurora DSQL; the dashboard, widget, kiosks and MCP clients query it through Lambdas running DuckDB, and get live events over a WebSocket API" />
             </div>
             <List items={[

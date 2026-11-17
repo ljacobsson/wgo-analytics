@@ -145,6 +145,10 @@ DEPLOYED_ALLOWLIST="$(aws cloudformation describe-stacks --stack-name "$STACK_NA
   --query "Stacks[0].Parameters[?ParameterKey=='AllowedEmailDomains'].ParameterValue" --output text 2>/dev/null || true)"
 [ "$DEPLOYED_ALLOWLIST" = "None" ] && DEPLOYED_ALLOWLIST=""
 ALLOWLIST_JSON="$(printf '%s' "$DEPLOYED_ALLOWLIST" | tr ',' '\n' | sed '/^$/d; s/.*/"&"/' | paste -sd, -)"
+# the sign-in page offers "Create account" only when self sign-up is on (the template default)
+SELF_SIGNUP="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$AWS_REGION" \
+  --query "Stacks[0].Parameters[?ParameterKey=='AllowSelfSignup'].ParameterValue" --output text 2>/dev/null || true)"
+[ "$SELF_SIGNUP" = "false" ] || SELF_SIGNUP=true
 
 step "SDK: build"
 cd "$ROOT/sdk"
@@ -175,6 +179,7 @@ cat > dist/config.json <<JSON
   "userPoolId": "$USER_POOL_ID",
   "userPoolClientId": "$USER_POOL_CLIENT_ID",
   "allowedEmailDomains": [$ALLOWLIST_JSON],
+  "selfSignup": $SELF_SIGNUP,
   "mcpUrl": "$MCP_CONFIG_URL"
 }
 JSON
@@ -208,7 +213,7 @@ cat <<EOF
 
 $(printf '\033[1;32m✔ WGO deployed\033[0m')
   Dashboard  $DASHBOARD_URL
-  Sign up    $DASHBOARD_URL/#/signup      (create your account here; the homepage doesn't link to it)
+  Sign up    $DASHBOARD_URL/#/signup      (create your account here)
   API        $API_URL
   Live       $WS_URL
   SDK        $SDK_URL

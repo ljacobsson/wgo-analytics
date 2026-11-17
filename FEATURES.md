@@ -13,7 +13,7 @@ backends over OpenTelemetry. It all lands in one dashboard that updates as it ha
 
 <br>
 
-![The WGO overview page: pageviews, sessions, users, clicks and errors with sparklines, events over time, Web Vitals and a visitor map](dashboard/public/home/overview.jpg)
+![The WGO overview page: pageviews, sessions, users, clicks and errors with sparklines, events over time, Web Vitals and a visitor map](docs/screenshots/overview.jpg)
 
 ---
 
@@ -41,7 +41,7 @@ without any extra code. Events show up within seconds.
 <script src="https://wgo.example.com/sdk/v1/wgo.js" data-write-key="wk_…" data-endpoint="https://wgo.example.com" async></script>
 ```
 
-![The Live page: click counters for the signup button, add to cart and checkout, and a world map with recent events at each location](dashboard/public/home/live.jpg)
+![The Live page: click counters for the signup button, add to cart and checkout, and a world map with recent events at each location](docs/screenshots/live.jpg)
 
 ---
 
@@ -64,7 +64,7 @@ OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 
 The dashboard has a setup guide for Node.js and Python, on servers and AWS Lambda.
 
-![The Metrics page: a list of OpenTelemetry metrics such as http.server.request.duration, with a chart of the selected metric over 24 hours](dashboard/public/home/metrics.jpg)
+![The Metrics page: a list of OpenTelemetry metrics such as http.server.request.duration, with a chart of the selected metric over 24 hours](docs/screenshots/metrics.jpg)
 
 ---
 
@@ -86,7 +86,7 @@ metric.
 
 </td>
 <td width="40%" align="center">
-<img src="dashboard/public/home/widget.png" alt="The WGO widget on an Android home screen, showing pageviews with a chart and tiles for sessions, JavaScript errors, clicks and failed API calls" width="260">
+<img src="docs/screenshots/widget.png" alt="The WGO widget on an Android home screen, showing pageviews with a chart and tiles for sessions, JavaScript errors, clicks and failed API calls" width="260">
 </td>
 </tr>
 </table>
