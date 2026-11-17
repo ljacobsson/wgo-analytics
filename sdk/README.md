@@ -75,8 +75,9 @@ There are two ways to identify:
   * in `localStorage`, `sessionStorage` and readable cookies, as a bare token or inside a JSON value (Amplify /
     Cognito, Auth0, MSAL and Firebase store them like this). The SDK looks when it starts, before each
     pageview, and when another tab changes storage;
-  * in the `Authorization: Bearer …` header of your app's `fetch` and XHR requests. A stored token wins over a
-    header token, because access tokens often name the user only by an opaque `sub`.
+  * in the `Authorization` header of your app's `fetch` and XHR requests, as `Bearer …` or a bare JWT (Cognito
+    authorizers take the id token without a scheme). A stored token wins over a header token, because access
+    tokens often name the user only by an opaque `sub`.
 
   Tokens are decoded, not verified, and expired tokens are ignored. The `identify` event the SDK sends has
   `traits: { $source: 'jwt' }`. When a token names a different user than before, someone else is using the

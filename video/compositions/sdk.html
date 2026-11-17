@@ -1,0 +1,74 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; font-family: Inter, sans-serif; }
+    #sdk-stage { position: absolute; inset: 0; background: #0a0a0f; }
+    #sdk-title {
+      position: absolute; left: 150px; top: 170px;
+      font-weight: 800; font-size: 96px; line-height: 1; letter-spacing: -0.035em; color: #ececf1; white-space: nowrap;
+    }
+    #sdk-title .w { display: inline-block; }
+    #sdk-code {
+      position: absolute; left: 150px; top: 340px; width: 1640px; padding: 46px 56px;
+      background: #121219; border: 1px solid #2a2a38; border-radius: 18px;
+      font-family: "JetBrains Mono", monospace; font-weight: 500; font-size: 38px; line-height: 1.6; color: #c9c9d6;
+    }
+    .sdk-line { display: block; white-space: pre; overflow: hidden; height: 61px; }
+    .sdk-line > span { display: inline-block; overflow: hidden; vertical-align: top; white-space: pre; }
+    .t { color: #c4b5fd; } .a { color: #7dd3fc; } .s { color: #86efac; }
+    #sdk-types { position: absolute; left: 150px; top: 690px; display: flex; gap: 18px; }
+    .sdk-badge {
+      display: inline-flex; align-items: center; gap: 12px; padding: 12px 22px; border-radius: 10px;
+      font-family: "JetBrains Mono", monospace; font-size: 32px; font-weight: 500; border: 2px solid;
+    }
+    .sdk-badge i { width: 12px; height: 12px; border-radius: 50%; background: currentColor; display: inline-block; }
+    #sdk-sub { position: absolute; left: 150px; top: 820px; font-size: 46px; font-weight: 600; color: #a1a1b5; letter-spacing: -0.01em; white-space: nowrap; }
+    #sdk-sub .w { display: inline-block; }
+  </style>
+  <div id="root" data-composition-id="sdk" data-width="1920" data-height="1080">
+    <div id="sdk-stage">
+      <div id="sdk-title">
+        <span class="w">Add</span> <span class="w">one</span> <span class="w">script</span> <span class="w">tag</span>
+      </div>
+      <div id="sdk-code">
+        <span class="sdk-line"><span id="sdk-l1"><span class="t">&lt;script</span> <span class="a">src</span>=<span class="s">"https://wgo.example.com/sdk/v1/wgo.js"</span></span></span>
+        <span class="sdk-line"><span id="sdk-l2">        <span class="a">data-write-key</span>=<span class="s">"wk_…"</span></span></span>
+        <span class="sdk-line"><span id="sdk-l3">        <span class="a">data-endpoint</span>=<span class="s">"https://wgo.example.com"</span> <span class="a">async</span><span class="t">&gt;&lt;/script&gt;</span></span></span>
+      </div>
+      <div id="sdk-types">
+        <span class="sdk-badge" style="color:#60a5fa;background:rgba(59,130,246,.12)"><i></i>pageview</span>
+        <span class="sdk-badge" style="color:#34d399;background:rgba(16,185,129,.12)"><i></i>click</span>
+        <span class="sdk-badge" style="color:#f87171;background:rgba(239,68,68,.12)"><i></i>error</span>
+        <span class="sdk-badge" style="color:#fb923c;background:rgba(249,115,22,.12)"><i></i>http_error</span>
+        <span class="sdk-badge" style="color:#fbbf24;background:rgba(245,158,11,.12)"><i></i>vitals</span>
+        <span class="sdk-badge" style="color:#a78bfa;background:rgba(139,124,246,.12)"><i></i>custom</span>
+      </div>
+      <div id="sdk-sub">
+        <span class="w">No</span> <span class="w">extra</span> <span class="w">code.</span> <span class="w">About</span> <span class="w">10 KB</span> <span class="w">gzipped.</span>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      // whip in from the right
+      tl.fromTo("#sdk-stage", { x: 1920, filter: "blur(16px)" }, { x: 0, filter: "blur(0px)", duration: 0.4, ease: "expo.out" }, 0);
+      tl.fromTo("#sdk-title .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.067, ease: "power2.out" }, 0.3);
+
+      // the tag types itself, line by line (monospace: one ch per character)
+      const lines = ["sdk-l1", "sdk-l2", "sdk-l3"].map((id) => ["#" + id, document.getElementById(id).textContent.length]);
+      let t = 0.6;
+      for (const [sel, n] of lines) {
+        const d = n * 0.0095;
+        tl.fromTo(sel, { width: "0ch" }, { width: n + "ch", duration: d, ease: `steps(${n})` }, t);
+        t += d + 0.05;
+      }
+      // what it records lands under it
+      tl.fromTo("#sdk-types .sdk-badge", { opacity: 0, y: 14, filter: "blur(4px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.3, stagger: 0.07, ease: "expo.out" }, t + 0.1);
+      tl.fromTo("#sdk-sub .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.06, ease: "power2.out" }, t + 0.45);
+
+      // zoom through the tag into the dashboard
+      tl.to("#sdk-stage", { scale: 6, transformOrigin: "62% 42%", opacity: 0, duration: 0.45, ease: "power3.in" }, 4.4);
+      window.__timelines["sdk"] = tl;
+    })();
+  </script>
+</template>

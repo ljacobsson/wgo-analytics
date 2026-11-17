@@ -45,7 +45,7 @@ export function SettingsPage() {
       </Card>
 
       <Card>
-        <CardHeader title="Members" sub="Invited people get access the next time they sign in with that email." />
+        <CardHeader title="Members" sub={<>Invited people get access the next time they sign in with that email. New users create an account at <span className="font-mono">{location.origin + location.pathname}#/signup</span>.</>} />
         {owner && <form className="flex gap-3 px-4 pb-3" onSubmit={(e) => { e.preventDefault(); const v = inv.trim(); if (v) { invite.mutate(v, { onError: (er) => toast({ title: 'Invite failed', body: (er as Error).message, tone: 'bad' }) }); setInv(''); } }}>
           <input className="field" type="email" placeholder="teammate@company.com" value={inv} onChange={(e) => setInv(e.target.value)} /><Button variant="primary" disabled={!inv.trim()}><UserPlus size={14} />Invite</Button></form>}
         <div className="divide-y divide-line/60 border-t border-line">

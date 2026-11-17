@@ -207,7 +207,8 @@ aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" \
 cat <<EOF
 
 $(printf '\033[1;32m✔ WGO deployed\033[0m')
-  Dashboard  $DASHBOARD_URL      (sign up there to create your account)
+  Dashboard  $DASHBOARD_URL
+  Sign up    $DASHBOARD_URL/#/signup      (create your account here; the homepage doesn't link to it)
   API        $API_URL
   Live       $WS_URL
   SDK        $SDK_URL

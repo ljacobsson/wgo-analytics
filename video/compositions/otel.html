@@ -1,0 +1,55 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; font-family: Inter, sans-serif; }
+    #ot-stage { position: absolute; inset: 0; background: #0a0a0f; }
+    #ot-title {
+      position: absolute; left: 150px; top: 170px;
+      font-weight: 800; font-size: 96px; line-height: 1; letter-spacing: -0.035em; color: #ececf1; white-space: nowrap;
+    }
+    #ot-title .w { display: inline-block; }
+    #ot-code {
+      position: absolute; left: 150px; top: 340px; width: 1640px; padding: 46px 56px;
+      background: #121219; border: 1px solid #2a2a38; border-radius: 18px;
+      font-family: "JetBrains Mono", monospace; font-weight: 500; font-size: 38px; line-height: 1.6; color: #c9c9d6;
+    }
+    .ot-line { display: block; white-space: pre; overflow: hidden; height: 61px; }
+    .ot-line > span { display: inline-block; overflow: hidden; vertical-align: top; white-space: pre; }
+    .a { color: #7dd3fc; } .s { color: #86efac; }
+    #ot-sub { position: absolute; left: 150px; top: 720px; font-size: 46px; font-weight: 600; color: #a1a1b5; letter-spacing: -0.01em; white-space: nowrap; }
+    #ot-sub .w { display: inline-block; }
+  </style>
+  <div id="root" data-composition-id="otel" data-width="1920" data-height="1080">
+    <div id="ot-stage">
+      <div id="ot-title">
+        <span class="w">Point</span> <span class="w">OpenTelemetry</span> <span class="w">at</span> <span class="w">it</span>
+      </div>
+      <div id="ot-code">
+        <span class="ot-line"><span id="ot-l1"><span class="a">OTEL_EXPORTER_OTLP_ENDPOINT</span>=<span class="s">https://wgo.example.com</span></span></span>
+        <span class="ot-line"><span id="ot-l2"><span class="a">OTEL_EXPORTER_OTLP_HEADERS</span>=<span class="s">x-wgo-key=wk_…</span></span></span>
+        <span class="ot-line"><span id="ot-l3"><span class="a">OTEL_EXPORTER_OTLP_PROTOCOL</span>=<span class="s">http/protobuf</span></span></span>
+      </div>
+      <div id="ot-sub">
+        <span class="w">Traces,</span> <span class="w">logs</span> <span class="w">and</span> <span class="w">metrics</span>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      // vertical whip in from below
+      tl.fromTo("#ot-stage", { y: 1080, filter: "blur(16px)" }, { y: 0, filter: "blur(0px)", duration: 0.4, ease: "expo.out" }, 0);
+      tl.fromTo("#ot-title .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.067, ease: "power2.out" }, 0.3);
+      const lines = ["ot-l1", "ot-l2", "ot-l3"].map((id) => ["#" + id, document.getElementById(id).textContent.length]);
+      let t = 0.6;
+      for (const [sel, n] of lines) {
+        const d = n * 0.0085;
+        tl.fromTo(sel, { width: "0ch" }, { width: n + "ch", duration: d, ease: `steps(${n})` }, t);
+        t += d + 0.05;
+      }
+      tl.fromTo("#ot-sub .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.06, ease: "power2.out" }, t + 0.1);
+      // blur swap out
+      tl.to("#ot-stage", { opacity: 0, filter: "blur(10px)", duration: 0.2, ease: "power2.in" }, 3.95);
+      window.__timelines["otel"] = tl;
+    })();
+  </script>
+</template>

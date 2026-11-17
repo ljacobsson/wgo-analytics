@@ -1,0 +1,79 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-variables='[
+    {"id":"color-ground","type":"color","label":"Background","default":"#0a0a0f"},
+    {"id":"color-ink","type":"color","label":"Text","default":"#ececf1"},
+    {"id":"color-accent","type":"color","label":"Accent (violet)","default":"#8b7cf6"},
+    {"id":"color-accent2","type":"color","label":"Accent (cyan)","default":"#22d3ee"}
+  ]'
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --color-ground: #0a0a0f;
+        --color-ink: #ececf1;
+        --color-accent: #8b7cf6;
+        --color-accent2: #22d3ee;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--color-ground);
+      }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #bg { position: absolute; inset: 0; background: var(--color-ground); }
+      .scene { position: absolute; inset: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="109.3" data-width="1920" data-height="1080">
+      <div id="bg"></div>
+
+      <div id="hook" class="scene" style="z-index:1" data-composition-id="hook" data-composition-src="compositions/hook.html"
+        data-start="0" data-duration="8" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="sdk" class="scene" style="z-index:2" data-composition-id="sdk" data-composition-src="compositions/sdk.html"
+        data-start="7.7" data-duration="4.9" data-track-index="2" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="overview" class="scene" style="z-index:3" data-composition-id="overview" data-composition-src="compositions/overview.html"
+        data-start="12.4" data-duration="5.4" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="live" class="scene" style="z-index:4" data-composition-id="live" data-composition-src="compositions/live.html"
+        data-start="17.4" data-duration="11" data-track-index="2" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="goals" class="scene" style="z-index:5" data-composition-id="goals" data-composition-src="compositions/goals.html"
+        data-start="28.1" data-duration="5.9" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="errors" class="scene" style="z-index:6" data-composition-id="errors" data-composition-src="compositions/errors.html"
+        data-start="33.8" data-duration="4.9" data-track-index="2" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="triggers" class="scene" style="z-index:7" data-composition-id="triggers" data-composition-src="compositions/triggers.html"
+        data-start="38.4" data-duration="4.9" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="otel" class="scene" style="z-index:8" data-composition-id="otel" data-composition-src="compositions/otel.html"
+        data-start="43" data-duration="4.2" data-track-index="2" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="traces" class="scene" style="z-index:9" data-composition-id="traces" data-composition-src="compositions/traces.html"
+        data-start="47" data-duration="7.4" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="logs" class="scene" style="z-index:10" data-composition-id="logs" data-composition-src="compositions/logs.html"
+        data-start="54.1" data-duration="4.3" data-track-index="2" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="metrics" class="scene" style="z-index:11" data-composition-id="metrics" data-composition-src="compositions/metrics.html"
+        data-start="58.1" data-duration="4.3" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="mcp" class="scene" style="z-index:12" data-composition-id="mcp" data-composition-src="compositions/mcp.html"
+        data-start="62.2" data-duration="9.6" data-track-index="2" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="widget" class="scene" style="z-index:13" data-composition-id="widget" data-composition-src="compositions/widget.html"
+        data-start="71.5" data-duration="5.3" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="kiosk" class="scene" style="z-index:14" data-composition-id="kiosk" data-composition-src="compositions/kiosk.html"
+        data-start="76.6" data-duration="15.6" data-track-index="2" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="aws" class="scene" style="z-index:15" data-composition-id="aws" data-composition-src="compositions/aws.html"
+        data-start="92" data-duration="6.2" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="oss" class="scene" style="z-index:16" data-composition-id="oss" data-composition-src="compositions/oss.html"
+        data-start="98" data-duration="5" data-track-index="2" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="endcard" class="scene" style="z-index:17" data-composition-id="endcard" data-composition-src="compositions/endcard.html"
+        data-start="102.8" data-duration="6.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

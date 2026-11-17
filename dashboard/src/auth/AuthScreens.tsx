@@ -32,7 +32,10 @@ const REMEMBER_KEY = 'wgo.remember';
 
 const allowedDomains =() => getConfig().allowedEmailDomains ?? [];
 
-/** Signed out: `#/` is the landing page, `#/signup` the sign-up form, anything else (incl. deep links) sign-in. */
+/**
+ * Signed out: `#/` is the project homepage, `#/signup` the sign-up form, anything else (incl. deep links) sign-in.
+ * Nothing links to the sign-up form: people get its address from whoever runs the install (see docs/Docs.tsx).
+ */
 export function AuthScreens() {
   const seg0 = useRoute().segments[0];
   if (!seg0) return <Landing />;
@@ -77,8 +80,7 @@ function AuthForms({ initial }: { initial: 'signin' | 'signup' }) {
     content = (<form onSubmit={run(async () => { localStorage.setItem(REMEMBER_KEY, remember ? '1' : '0'); await signIn(email, password, remember); })} className="space-y-4">{emailField}{pwField('Password', 'current-password')}
       <div className="flex items-center justify-between text-[12.5px]">
         <label className="inline-flex cursor-pointer select-none items-center gap-2 text-muted"><input type="checkbox" className="size-3.5 cursor-pointer accent-accent" checked={remember} onChange={(e) => setRemember(e.target.checked)} />Keep me signed in</label>
-        {link('Forgot password?', 'forgot')}</div>{submit('Sign in')}
-      <p className="text-center text-[13px] text-muted">New here? {link('Create an account', 'signup')}</p></form>);
+        {link('Forgot password?', 'forgot')}</div>{submit('Sign in')}</form>);
   } else if (screen === 'signup') {
     title = 'Create your account'; sub = allowedDomains().length ? `Use your ${allowedDomains().map((d) => '@' + d.replace(/^\*\./, '…')).join(' or ')} email address.` : 'Start tracking in under two minutes.';
     content = (<form onSubmit={run(async () => { await signUp(email, password); go('confirm'); setInfo(`We emailed a code to ${email}.`); })} className="space-y-4">{emailField}

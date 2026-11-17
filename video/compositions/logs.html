@@ -1,0 +1,50 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; font-family: Inter, sans-serif; }
+    #lg-stage { position: absolute; inset: 0; background: #0a0a0f; }
+    .cam { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    .cam img { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    #lg-mark { position: absolute; left: 266px; top: 655px; width: 640px; height: 60px; border: 3px solid #f87171; border-radius: 8px; }
+    .cap {
+      position: absolute; left: 96px; bottom: 96px; padding: 12px 20px 14px;
+      background: rgba(10, 10, 15, 0.72); border-radius: 10px;
+      font-weight: 600; font-size: 38px; line-height: 1.1; letter-spacing: -0.01em; color: rgba(236, 236, 241, 0.92); white-space: nowrap;
+    }
+    .cap .w { display: inline-block; }
+  </style>
+  <div id="root" data-composition-id="logs" data-width="1920" data-height="1080">
+    <div id="lg-stage">
+      <div class="cam" id="lg-cam">
+        <img src="assets/screens/logs.jpg" alt="WGO Logs page" />
+        <div id="lg-mark"></div>
+      </div>
+      <div class="cap" id="lg-cap">
+        <span class="w">Logs</span>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      const cam = (x, y, s) => {
+        let tx = 960 - x * s, ty = 540 - y * s;
+        tx = Math.min(0, Math.max(1920 - 1920 * s, tx));
+        ty = Math.min(0, Math.max(1080 - 1080 * s, ty));
+        return { x: tx, y: ty, scale: s };
+      };
+      gsap.set("#lg-cam", { transformOrigin: "0 0" });
+      // iris from "View logs for this trace" (traces.html: 1712, 446)
+      const IX = 1712, IY = 446;
+      tl.fromTo("#lg-stage", { clipPath: `circle(0px at ${IX}px ${IY}px)` }, { clipPath: `circle(2300px at ${IX}px ${IY}px)`, duration: 0.35, ease: "power2.in" }, 0);
+      tl.fromTo("#lg-cam", cam(760, 330, 1.45), { ...cam(760, 300, 1.45), duration: 0.6, ease: "expo.out" }, 0.1);
+      // down the tail to the payment-service errors
+      tl.to("#lg-cam", { ...cam(700, 690, 1.6), duration: 1.0, ease: "power2.inOut" }, 1.1);
+      tl.fromTo("#lg-mark", { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: 0.3, ease: "expo.out" }, 2.15);
+      tl.fromTo("#lg-cap", { clipPath: "inset(0 100% 0 0 round 14px)" }, { clipPath: "inset(0 0% 0 0 round 14px)", duration: 0.35, ease: "expo.out" }, 0.5);
+      tl.fromTo("#lg-cap .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.067, ease: "power2.out" }, 0.6);
+      // whip out left
+      tl.to("#lg-stage", { x: -700, filter: "blur(16px)", duration: 0.3, ease: "power3.in" }, 4.0);
+      window.__timelines["logs"] = tl;
+    })();
+  </script>
+</template>

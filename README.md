@@ -186,7 +186,8 @@ The deploy:
 
 ```
 ✔ WGO deployed
-  Dashboard  https://wgo.example.com      (sign up there to create your account)
+  Dashboard  https://wgo.example.com
+  Sign up    https://wgo.example.com/#/signup      (create your account here; the homepage doesn't link to it)
   API        https://….execute-api.eu-west-1.amazonaws.com
   Live       wss://….execute-api.eu-west-1.amazonaws.com/live
   SDK        https://wgo.example.com/sdk/v1/wgo.js
@@ -200,7 +201,9 @@ The first deploy takes several minutes, mostly for CloudFront. Without a custom 
 
 ### First steps
 
-1. Open the dashboard and **sign up**. Cognito emails you a verification code.
+1. Open `https://wgo.example.com/#/signup` and create your account. Cognito emails you a verification code.
+   The dashboard's homepage presents the project and doesn't link to the sign-up form, so give this address to
+   teammates too.
 2. Create a project.
 3. Copy the install snippet from the onboarding screen (or later from **Settings → Install**) into your web
    app, and/or set the [OpenTelemetry variables](#backends-opentelemetry) on your services.
@@ -454,8 +457,8 @@ Registered clients are not cleaned up automatically. List them with
 ## How it works
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
-  <img alt="WGO architecture: web apps and OpenTelemetry services send data through CloudFront to API Gateway, which queues it in SQS; Lambdas process it and write Parquet to S3; a maintenance Lambda compacts it and rolls it up into Aurora DSQL; the dashboard, widget, kiosks and MCP clients query it through Lambdas running DuckDB, and get live events over a WebSocket API" src="docs/architecture-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="dashboard/public/home/architecture-dark.svg">
+  <img alt="WGO architecture: web apps and OpenTelemetry services send data through CloudFront to API Gateway, which queues it in SQS; Lambdas process it and write Parquet to S3; a maintenance Lambda compacts it and rolls it up into Aurora DSQL; the dashboard, widget, kiosks and MCP clients query it through Lambdas running DuckDB, and get live events over a WebSocket API" src="dashboard/public/home/architecture-light.svg">
 </picture>
 
 The SDK and OTLP intake answer as soon as the data is queued (API Gateway writes SDK batches and OTLP requests

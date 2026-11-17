@@ -676,7 +676,7 @@ async function main() {
       outro(`Done. Deploy whenever you're ready with ${c.cyan('npm run deploy')}`);
       return;
     }
-    outro(`Deploying ${c.bold(cfg.stackName)} to ${cfg.region}. When it finishes, open the dashboard and sign up.`);
+    outro(`Deploying ${c.bold(cfg.stackName)} to ${cfg.region}. When it finishes, create your account at the Sign up address it prints.`);
     const child = spawn('bash', [join(ROOT, 'scripts', 'deploy.sh')], { stdio: 'inherit', env: { ...process.env, DEPLOY_ENV: ENV_FILE } });
     child.on('exit', (code, signal) => {
       if (code !== 0)

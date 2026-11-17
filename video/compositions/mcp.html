@@ -1,0 +1,62 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; font-family: Inter, sans-serif; }
+    #mc-stage { position: absolute; inset: 0; background: #f4f3ef; }
+    #mc-title {
+      position: absolute; left: 150px; top: 110px;
+      font-weight: 800; font-size: 84px; line-height: 1; letter-spacing: -0.035em; color: #1b1b22; white-space: nowrap;
+    }
+    #mc-title .w { display: inline-block; }
+    #mc-user {
+      position: absolute; right: 150px; top: 260px; max-width: 980px; padding: 26px 34px;
+      background: #1b1b22; color: #f4f3ef; border-radius: 22px 22px 6px 22px;
+      font-size: 38px; font-weight: 500; line-height: 1.35; letter-spacing: -0.01em;
+    }
+    #mc-tools { position: absolute; left: 150px; top: 470px; font-family: "JetBrains Mono", monospace; font-size: 29px; line-height: 1.75; color: #5b5b6e; }
+    .mc-tool { display: flex; align-items: center; gap: 16px; white-space: pre; }
+    .mc-tool b { color: #1b1b22; font-weight: 600; }
+    .mc-tool svg { width: 30px; height: 30px; flex: none; }
+    #mc-answer {
+      position: absolute; left: 150px; top: 660px; width: 1620px;
+      font-size: 40px; font-weight: 500; line-height: 1.45; color: #1b1b22; letter-spacing: -0.01em;
+    }
+    #mc-answer .w { opacity: 0; }
+    #mc-answer code { font-family: "JetBrains Mono", monospace; font-size: 34px; background: #e6e3dc; padding: 2px 10px; border-radius: 6px; }
+    #mc-cmd {
+      position: absolute; left: 150px; top: 900px; padding: 18px 28px; border-radius: 12px; background: #1b1b22; color: #e6e6ee;
+      font-family: "JetBrains Mono", monospace; font-size: 30px; white-space: pre;
+    }
+    #mc-cmd .p { color: #8d8da0; }
+  </style>
+  <div id="root" data-composition-id="mcp" data-width="1920" data-height="1080">
+    <div id="mc-stage">
+      <div id="mc-title">
+        <span class="w">Ask</span> <span class="w">your</span> <span class="w">AI</span> <span class="w">assistant</span>
+      </div>
+      <div id="mc-user">Checkout complaints started this afternoon. What's going on?</div>
+      <div id="mc-tools">
+        <div class="mc-tool" id="mc-t1"><svg viewBox="0 0 24 24" fill="none" stroke="#6250d6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg><b>wgo.list_errors</b>  range: "24h"</div>
+        <div class="mc-tool" id="mc-t2"><svg viewBox="0 0 24 24" fill="none" stroke="#6250d6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg><b>wgo.list_failed_requests</b>  range: "24h"</div>
+        <div class="mc-tool" id="mc-t3"><svg viewBox="0 0 24 24" fill="none" stroke="#6250d6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg><b>wgo.list_traces</b>  service: "payment-service", errors: true</div>
+      </div>
+      <div id="mc-answer" data-hold="true"><span class="w">Failed</span> <span class="w">calls</span> <span class="w">to</span> <span class="w"><code>POST /api/checkout</code></span> <span class="w">went</span> <span class="w">from</span> <span class="w">a</span> <span class="w">handful</span> <span class="w">an</span> <span class="w">hour</span> <span class="w">to</span> <span class="w">41</span> <span class="w">since</span> <span class="w">14:00,</span> <span class="w">almost</span> <span class="w">all</span> <span class="w">502s.</span> <span class="w">The</span> <span class="w">matching</span> <span class="w">traces</span> <span class="w">in</span> <span class="w">payment-service</span> <span class="w">spend</span> <span class="w">8–10 s</span> <span class="w">waiting</span> <span class="w">on</span> <span class="w">the</span> <span class="w">card</span> <span class="w">processor</span> <span class="w">before</span> <span class="w">timing</span> <span class="w">out.</span></div>
+      <div id="mc-cmd"><span class="p">$ </span>claude mcp add --transport http wgo https://wgo.example.com/mcp</div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      // colour flood: the dark ground turns to the chat client's paper
+      tl.fromTo("#mc-stage", { backgroundColor: "#0a0a0f" }, { backgroundColor: "#f4f3ef", duration: 0.45, ease: "power2.inOut" }, 0);
+      tl.fromTo("#mc-title .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.067, ease: "power2.out" }, 0.4);
+      tl.fromTo("#mc-user", { opacity: 0, scale: 0.94, transformOrigin: "100% 100%" }, { opacity: 1, scale: 1, duration: 0.5, ease: "expo.out" }, 0.9);
+      tl.fromTo([".mc-tool"], { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.3, stagger: 0.38, ease: "expo.out" }, 2.1);
+      // the answer streams in word by word
+      tl.fromTo("#mc-answer .w", { opacity: 0 }, { opacity: 1, duration: 0.08, stagger: 0.045, ease: "none" }, 3.3);
+      tl.fromTo("#mc-cmd", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.45, ease: "expo.out" }, 5.6);
+      // whip out left
+      tl.to("#mc-stage", { x: -800, filter: "blur(16px)", duration: 0.3, ease: "power3.in" }, 9.3);
+      window.__timelines["mcp"] = tl;
+    })();
+  </script>
+</template>

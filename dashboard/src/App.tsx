@@ -27,6 +27,7 @@ import { WidgetPage } from './pages/Widget';
 import { KiosksPage } from './pages/Kiosks';
 import { McpPage } from './pages/Mcp';
 import { OtelDocs } from './docs/OtelDocs';
+import { Docs } from './docs/Docs';
 
 function Authed({ email }: { email: string }) {
   const me = useMe();
@@ -84,6 +85,6 @@ export default function App() {
   const route = useRoute();
   useEffect(() => { if (!auth.signedIn) qc.clear(); }, [auth.signedIn, qc]);
   // Public docs render the same whether or not you're signed in.
-  if (route.segments[0] === 'docs') return <ToastProvider><OtelDocs /></ToastProvider>;
+  if (route.segments[0] === 'docs') return <ToastProvider>{route.segments[1] === 'opentelemetry' ? <OtelDocs /> : <Docs />}</ToastProvider>;
   return <ToastProvider>{auth.signedIn ? <Authed email={auth.email ?? ''} /> : <AuthScreens />}</ToastProvider>;
 }

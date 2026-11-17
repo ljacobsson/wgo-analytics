@@ -1,0 +1,48 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; font-family: Inter, sans-serif; }
+    #ec-stage { position: absolute; inset: 0; background: #121219; }
+    #ec-lock { position: absolute; left: 0; top: 270px; width: 1920px; height: 230px; display: flex; align-items: center; justify-content: center; gap: 48px; }
+    #ec-mark { width: 220px; height: 220px; overflow: visible; }
+    #ec-word { font-weight: 800; font-size: 190px; line-height: 1; letter-spacing: -0.04em; color: #ececf1; }
+    #ec-tag { position: absolute; left: 0; top: 560px; width: 1920px; text-align: center; font-size: 64px; font-weight: 700; color: #a1a1b5; letter-spacing: -0.02em; }
+    #ec-tag .w { display: inline-block; }
+    #ec-cta { position: absolute; left: 0; top: 720px; width: 1920px; display: flex; justify-content: center; }
+    #ec-cmd { padding: 22px 36px; border-radius: 14px; background: #0a0a0f; border: 1px solid #34344a; font-family: "JetBrains Mono", monospace; font-size: 40px; color: #ececf1; white-space: pre; }
+    #ec-cmd .p { color: #8d8da0; }
+    #ec-sub { position: absolute; left: 0; top: 850px; width: 1920px; text-align: center; font-size: 34px; font-weight: 500; color: #8d8da0; }
+  </style>
+  <div id="root" data-composition-id="endcard" data-width="1920" data-height="1080">
+    <div id="ec-stage">
+      <div id="ec-lock">
+        <svg id="ec-mark" viewBox="0 0 32 32">
+          <defs><linearGradient id="ec-g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8b7cf6"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs>
+          <rect id="ec-rect" width="32" height="32" rx="9" fill="#0b0b10"/>
+          <path id="ec-line" d="M6 22 12 14l5 4 9-11" fill="none" stroke="url(#ec-g)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div id="ec-word">WGO</div>
+      </div>
+      <div id="ec-tag"><span class="w">What's</span> <span class="w">going</span> <span class="w">on?</span></div>
+      <div id="ec-cta"><div id="ec-cmd"><span class="p">$ </span>npm run setup</div></div>
+      <div id="ec-sub">Deploy it to your own AWS account · Open source, MIT</div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      const line = document.getElementById("ec-line");
+      const L = line.getTotalLength();
+      line.style.strokeDasharray = L + " " + L;
+      tl.fromTo("#ec-stage", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" }, 0);
+      // the mark: tile lands, then its line is drawn
+      tl.fromTo("#ec-rect", { scale: 0.6, opacity: 0, transformOrigin: "16px 16px" }, { scale: 1, opacity: 1, duration: 0.6, ease: "expo.out" }, 0.2);
+      tl.fromTo("#ec-line", { strokeDashoffset: L }, { strokeDashoffset: 0, duration: 0.7, ease: "power2.inOut" }, 0.5);
+      // the name wipes in beside it
+      tl.fromTo("#ec-word", { clipPath: "inset(0 100% 0 0)", x: -30 }, { clipPath: "inset(0 0% 0 0)", x: 0, duration: 0.6, ease: "expo.out" }, 1.05);
+      tl.fromTo("#ec-tag .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.09, ease: "power2.out" }, 1.7);
+      tl.fromTo("#ec-cmd", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "expo.out" }, 2.3);
+      tl.fromTo("#ec-sub", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out" }, 2.6);
+      window.__timelines["endcard"] = tl;
+    })();
+  </script>
+</template>

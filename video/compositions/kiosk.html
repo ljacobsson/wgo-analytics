@@ -1,0 +1,308 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; font-family: Inter, sans-serif; background: #000; }
+    #ks-all { position: absolute; inset: 0; }
+
+    /* ---------- close-up: the Pi on the sideboard top ---------- */
+    #ks-close { position: absolute; inset: 0; overflow: hidden; }
+    #ks-wood {
+      position: absolute; inset: 0;
+      background:
+        repeating-linear-gradient(90deg, rgba(60, 30, 10, 0.10) 0 3px, transparent 3px 330px),
+        repeating-linear-gradient(90deg, rgba(255, 235, 200, 0.05) 0 1px, transparent 1px 23px),
+        repeating-linear-gradient(90deg, rgba(60, 30, 10, 0.05) 0 2px, transparent 2px 57px),
+        linear-gradient(180deg, #8f5f3d 0%, #7a4e31 100%);
+    }
+    #ks-pcam { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    #ks-pi { position: absolute; left: 385px; top: 210px; width: 1150px; height: 758px; overflow: visible; filter: drop-shadow(0 22px 26px rgba(30, 12, 0, 0.45)); }
+
+    /* ---------- the office ---------- */
+    #ks-office { position: absolute; inset: 0; overflow: hidden; }
+    #ks-ocam { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    #ks-wall { position: absolute; left: 0; top: 0; width: 1920px; height: 900px;
+      background: radial-gradient(1300px 950px at 12% 32%, rgba(255, 251, 242, 0.75), transparent 62%), linear-gradient(180deg, #e9e4db 0%, #d8d0c3 100%); }
+    #ks-window { position: absolute; left: 90px; top: 110px; width: 330px; height: 640px; background: #f7f5f1; border-radius: 4px; box-shadow: 0 6px 18px rgba(80, 60, 30, 0.18); }
+    .ks-pane { position: absolute; background: linear-gradient(180deg, #c9dfee 0%, #e4eff6 70%, #d4e2d0 100%); }
+    #ks-sill { position: absolute; left: 70px; top: 750px; width: 370px; height: 18px; background: #f3f0ea; box-shadow: 0 6px 10px rgba(80, 60, 30, 0.2); }
+    #ks-poster { position: absolute; left: 1600px; top: 120px; width: 240px; height: 320px; background: #262424; padding: 12px; box-shadow: 0 14px 24px rgba(60, 40, 20, 0.25); }
+    #ks-poster > div { position: relative; width: 100%; height: 100%; background: #f2eee6; overflow: hidden; }
+    #ks-base { position: absolute; left: 0; top: 884px; width: 1920px; height: 22px; background: #f3f0ea; }
+    #ks-floor { position: absolute; left: 0; top: 906px; width: 1920px; height: 174px;
+      background: repeating-linear-gradient(90deg, rgba(70, 40, 15, 0.16) 0 2px, transparent 2px 260px), linear-gradient(180deg, #b48a62 0%, #a57b54 100%); }
+    #ks-tv { position: absolute; left: 470px; top: 112px; width: 980px; height: 560px; background: #0d0d10; border-radius: 8px;
+      box-shadow: 0 30px 52px rgba(40, 28, 12, 0.34), 0 4px 8px rgba(40, 28, 12, 0.25); }
+    #ks-screen { position: absolute; left: 10px; top: 10px; width: 960px; height: 540px; overflow: hidden; background: #000; }
+    #ks-native { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+    #ks-gloss { position: absolute; inset: 0; background: linear-gradient(120deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 38%); pointer-events: none; }
+    #ks-console { position: absolute; inset: 0; background: #000; padding: 70px 70px; font-family: "JetBrains Mono", monospace; font-size: 28px; line-height: 1.6; color: #d8d8d8; }
+    #ks-console .ln { display: block; white-space: pre; }
+    #ks-console .ty { display: inline-block; overflow: hidden; vertical-align: top; white-space: pre; }
+    #ks-console .pr { color: #6ee36e; font-weight: 700; }
+    #ks-console .sy { color: #d16bd6; font-weight: 700; }
+    #ks-console .ok { color: #4ade80; font-weight: 700; }
+    #ks-kshot { position: absolute; inset: 0; width: 1920px; height: 1080px; opacity: 0; }
+    #ks-live { position: absolute; inset: 0; opacity: 0; }
+    #ks-vid { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; object-fit: cover; }
+    #ks-black { position: absolute; inset: 0; background: #000; opacity: 0; }
+    #ks-board { position: absolute; left: 600px; top: 744px; width: 760px; height: 142px; background: #7a4e31; }
+    #ks-board .door { position: absolute; top: 14px; height: 114px; border: 2px solid rgba(40, 20, 8, 0.35); border-radius: 2px; }
+    #ks-board .handle { position: absolute; top: 60px; width: 4px; height: 26px; background: #cbb68c; border-radius: 2px; }
+    #ks-top { position: absolute; left: 588px; top: 728px; width: 784px; height: 18px; background: linear-gradient(180deg, #a06c46 0%, #8d5c3b 100%); border-radius: 2px; }
+    .ks-leg { position: absolute; top: 886px; width: 12px; height: 20px; background: #3b2516; }
+    #ks-plant { position: absolute; left: 1480px; top: 425px; width: 248px; height: 480px; overflow: visible; }
+    #ks-mini { position: absolute; left: 1195px; top: 700px; width: 120px; height: 30px; overflow: visible; }
+    #ks-cable { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; pointer-events: none; }
+
+    .cap {
+      position: absolute; left: 96px; bottom: 96px; padding: 12px 20px 14px;
+      background: rgba(10, 10, 15, 0.72); border-radius: 10px;
+      font-weight: 600; font-size: 38px; line-height: 1.1; letter-spacing: -0.01em; color: rgba(236, 236, 241, 0.92); white-space: nowrap; opacity: 0;
+    }
+    .cap .w { display: inline-block; }
+  </style>
+  <div id="root" data-composition-id="kiosk" data-width="1920" data-height="1080">
+    <div id="ks-all">
+      <!-- close-up: a Raspberry Pi 4 on the sideboard, power and HDMI plugged in -->
+      <div id="ks-close">
+        <div id="ks-wood"></div>
+        <div id="ks-pcam">
+          <svg id="ks-pi" viewBox="0 0 850 560">
+            <g transform="rotate(176 425 280)">
+              <!-- cables leave from the port edge (drawn below the board in board space, so they run up the frame) -->
+              <path d="M112 700 C 112 900, 40 1050, 30 1500" stroke="#e9e7e2" stroke-width="40" fill="none" stroke-linecap="round"/>
+              <path d="M104 700 C 104 900, 32 1050, 22 1500" stroke="#ffffff" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.7"/>
+              <path d="M262 710 C 262 920, 360 1060, 380 1500" stroke="#141418" stroke-width="44" fill="none" stroke-linecap="round"/>
+              <path d="M252 710 C 252 920, 350 1060, 370 1500" stroke="#3b3b45" stroke-width="7" fill="none" stroke-linecap="round" opacity="0.8"/>
+              <!-- board -->
+              <rect x="0" y="0" width="850" height="560" rx="30" fill="#1d6b37"/>
+              <rect x="0" y="0" width="850" height="560" rx="30" fill="none" stroke="#155429" stroke-width="4"/>
+              <g fill="#0f3d1f" opacity="0.55">
+                <path d="M120 120 H 300 V 200 H 420" stroke="#2a8a4b" stroke-width="3" fill="none"/>
+                <path d="M120 140 H 280 V 230 H 420" stroke="#2a8a4b" stroke-width="3" fill="none"/>
+                <path d="M520 360 H 640 V 470" stroke="#2a8a4b" stroke-width="3" fill="none"/>
+                <path d="M500 380 H 620 V 480" stroke="#2a8a4b" stroke-width="3" fill="none"/>
+              </g>
+              <!-- mounting holes -->
+              <g>
+                <circle cx="35" cy="35" r="27" fill="#d8b84a"/><circle cx="35" cy="35" r="14" fill="#5a3a22"/>
+                <circle cx="615" cy="35" r="27" fill="#d8b84a"/><circle cx="615" cy="35" r="14" fill="#5a3a22"/>
+                <circle cx="35" cy="525" r="27" fill="#d8b84a"/><circle cx="35" cy="525" r="14" fill="#5a3a22"/>
+                <circle cx="615" cy="525" r="27" fill="#d8b84a"/><circle cx="615" cy="525" r="14" fill="#5a3a22"/>
+              </g>
+              <!-- 40-pin GPIO header -->
+              <rect x="72" y="8" width="510" height="52" rx="3" fill="#121214"/>
+              <g id="ks-pins" fill="#e2c35a"></g>
+              <!-- wireless module -->
+              <rect x="40" y="92" width="122" height="112" rx="4" fill="#c4c7cb"/>
+              <rect x="48" y="100" width="106" height="96" rx="3" fill="#b2b6bb"/>
+              <!-- SoC with heat spreader -->
+              <rect x="222" y="196" width="152" height="152" rx="8" fill="#b9bcc1"/>
+              <rect x="236" y="210" width="124" height="124" rx="6" fill="#cfd2d6"/>
+              <rect x="236" y="210" width="124" height="124" rx="6" fill="none" stroke="#a3a7ad" stroke-width="2"/>
+              <!-- RAM -->
+              <rect x="404" y="214" width="104" height="116" rx="4" fill="#18181b"/>
+              <!-- USB controller -->
+              <rect x="540" y="250" width="64" height="64" rx="3" fill="#1d1d21"/>
+              <!-- DSI / CSI ribbon connectors -->
+              <rect x="10" y="185" width="34" height="210" rx="3" fill="#f1efe8"/><rect x="18" y="195" width="18" height="190" fill="#2a2a2e"/>
+              <rect x="452" y="372" width="30" height="190" rx="3" fill="#f1efe8"/><rect x="459" y="382" width="16" height="170" fill="#2a2a2e"/>
+              <!-- Ethernet and USB on the right edge (overhanging) -->
+              <rect x="652" y="20" width="224" height="164" rx="6" fill="#b7bbc0"/>
+              <rect x="664" y="34" width="200" height="136" rx="4" fill="#9ea3a9"/>
+              <rect x="690" y="192" width="186" height="146" rx="6" fill="#c5c8cc"/>
+              <rect x="690" y="372" width="186" height="146" rx="6" fill="#c5c8cc"/>
+              <rect x="702" y="212" width="164" height="22" rx="2" fill="#3157b8"/>
+              <rect x="702" y="296" width="164" height="22" rx="2" fill="#3157b8"/>
+              <rect x="702" y="392" width="164" height="22" rx="2" fill="#2b2b30"/>
+              <rect x="702" y="476" width="164" height="22" rx="2" fill="#2b2b30"/>
+              <!-- port edge: USB-C power, two micro-HDMI, audio -->
+              <rect x="66" y="488" width="92" height="84" rx="10" fill="#c3c6ca"/>
+              <rect x="224" y="490" width="74" height="82" rx="6" fill="#c3c6ca"/>
+              <rect x="358" y="490" width="74" height="82" rx="6" fill="#c3c6ca"/>
+              <rect x="508" y="480" width="70" height="84" rx="6" fill="#1b1b1f"/><circle cx="543" cy="572" r="22" fill="#111114"/>
+              <!-- plugs in the power and HDMI0 ports -->
+              <rect x="70" y="560" width="84" height="150" rx="14" fill="#efede8"/>
+              <rect x="226" y="560" width="72" height="160" rx="10" fill="#1a1a1e"/>
+              <!-- LEDs -->
+              <rect x="10" y="420" width="22" height="30" rx="3" fill="#5a0f0f"/>
+              <rect id="ks-pwr" x="10" y="420" width="22" height="30" rx="3" fill="#ff3b30"/>
+              <rect x="10" y="460" width="22" height="30" rx="3" fill="#0f3a16"/>
+              <rect id="ks-act" x="10" y="460" width="22" height="30" rx="3" fill="#4cff6a"/>
+              <!-- silkscreen -->
+              <text x="88" y="300" fill="#f1f1ec" font-family="Inter, sans-serif" font-size="26" font-weight="600" transform="rotate(-90 88 300)">Raspberry Pi 4 Model B</text>
+              <text x="560" y="420" fill="#f1f1ec" font-family="Inter, sans-serif" font-size="18" font-weight="600">© Raspberry Pi 2019</text>
+            </g>
+          </svg>
+        </div>
+        <div class="cap" id="ks-cap1">
+        <span class="w">Raspberry</span> <span class="w">Pi</span>
+      </div>
+      </div>
+
+      <!-- the office: the TV on the wall, the Pi on the sideboard under it -->
+      <div id="ks-office">
+        <div id="ks-ocam">
+          <div id="ks-wall"></div>
+          <div id="ks-window">
+            <div class="ks-pane" style="left:14px;top:14px;width:144px;height:196px"></div>
+            <div class="ks-pane" style="left:172px;top:14px;width:144px;height:196px"></div>
+            <div class="ks-pane" style="left:14px;top:222px;width:144px;height:196px"></div>
+            <div class="ks-pane" style="left:172px;top:222px;width:144px;height:196px"></div>
+            <div class="ks-pane" style="left:14px;top:430px;width:144px;height:196px"></div>
+            <div class="ks-pane" style="left:172px;top:430px;width:144px;height:196px"></div>
+          </div>
+          <div id="ks-sill"></div>
+          <div id="ks-poster"><div>
+            <div style="position:absolute;left:28px;top:40px;width:120px;height:120px;border-radius:50%;background:#e2683c"></div>
+            <div style="position:absolute;left:70px;top:150px;width:110px;height:110px;background:#2f4f6f"></div>
+            <div style="position:absolute;left:20px;top:250px;width:176px;height:6px;background:#262424"></div>
+          </div></div>
+          <div id="ks-base"></div>
+          <div id="ks-floor"></div>
+          <svg id="ks-cable" viewBox="0 0 1920 1080">
+            <path d="M1262 672 C 1262 690, 1250 696, 1248 712" stroke="#141418" stroke-width="9" fill="none" stroke-linecap="round"/>
+          </svg>
+          <div id="ks-tv">
+            <div id="ks-screen">
+              <div id="ks-native">
+                <div id="ks-console">
+                  <span class="ln"><span class="ty" id="ks-c1"><span class="pr">pi@office-tv:~ $</span> curl -fsSL https://wgo.example.com/downloads/wgo-kiosk.sh |</span></span>
+                  <span class="ln"><span class="ty" id="ks-c2">&gt; sudo bash -s -- 'https://wgo.example.com/#/kiosk/ks_…'</span></span>
+                  <span class="ln ks-out"><span class="sy">▸</span> Setting up a WGO kiosk on Raspberry Pi 4 Model B (Debian GNU/Linux 12 (bookworm), 3796 MB RAM)</span>
+                  <span class="ln ks-out"><span class="sy">▸</span> Kiosk at https://wgo.example.com</span>
+                  <span class="ln ks-out"><span class="sy">▸</span> Updating package lists</span>
+                  <span class="ln ks-out"><span class="sy">▸</span> Installing cage chromium curl fonts-dejavu-core fonts-noto-color-emoji (a few minutes on the first run)</span>
+                  <span class="ln ks-out"><span class="ok">✔</span> Installed Chromium and cage</span>
+                  <span class="ln ks-out"><span class="ok">✔</span> The dashboard at https://wgo.example.com answers</span>
+                  <span class="ln ks-out"><span class="ok">✔</span> WGO kiosk installed. It starts when the Pi reboots.</span>
+                  <span class="ln ks-out"><span class="sy">▸</span> Rebooting in 10 seconds (Ctrl+C to cancel, then reboot later)</span>
+                </div>
+                <img id="ks-kshot" src="assets/screens/kiosk-screen-2x.jpg" alt="WGO kiosk showing the Overview" />
+                <div id="ks-live">
+                  <video id="ks-vid" class="clip" src="assets/clips/kiosklive.mp4" muted playsinline
+                    data-start="10.9" data-duration="4.7" data-media-start="1" data-track-index="0"></video>
+                </div>
+                <div id="ks-black"></div>
+              </div>
+              <div id="ks-gloss"></div>
+            </div>
+          </div>
+          <div id="ks-top"></div>
+          <div id="ks-board">
+            <div class="door" style="left:14px;width:236px"></div>
+            <div class="door" style="left:262px;width:236px"></div>
+            <div class="door" style="left:510px;width:236px"></div>
+            <div class="handle" style="left:236px"></div>
+            <div class="handle" style="left:276px"></div>
+            <div class="handle" style="left:524px"></div>
+          </div>
+          <div class="ks-leg" style="left:620px"></div>
+          <div class="ks-leg" style="left:1328px"></div>
+          <!-- the plant -->
+          <svg id="ks-plant" viewBox="0 0 160 310">
+            <path d="M80 230 C 60 170, 20 140, 4 90 C 40 100, 70 150, 82 220 Z" fill="#3d7a48"/>
+            <path d="M82 230 C 90 160, 120 110, 156 70 C 150 130, 112 180, 86 228 Z" fill="#336b3e"/>
+            <path d="M80 232 C 70 150, 66 80, 84 6 C 104 80, 98 160, 84 232 Z" fill="#4a8a52"/>
+            <path d="M80 232 C 50 200, 18 196, 0 170 C 34 160, 62 190, 82 230 Z" fill="#2f6238"/>
+            <path d="M84 232 C 110 205, 140 200, 160 180 C 132 168, 104 196, 82 230 Z" fill="#3f8049"/>
+            <path d="M44 236 H 116 L 108 310 H 52 Z" fill="#e6e1d8"/>
+            <rect x="40" y="228" width="80" height="14" rx="3" fill="#d6d0c5"/>
+          </svg>
+          <!-- the Pi, edge-on: Ethernet and USB facing the room, LEDs on the corner -->
+          <svg id="ks-mini" viewBox="0 0 120 30">
+            <rect x="0" y="23" width="112" height="6" rx="1" fill="#1d6b37"/>
+            <rect x="6" y="3" width="30" height="20" rx="1.5" fill="#b7bbc0"/><rect x="10" y="8" width="22" height="11" fill="#55595e"/>
+            <rect x="42" y="5" width="26" height="18" rx="1.5" fill="#c5c8cc"/><rect x="45" y="9" width="20" height="3" fill="#3157b8"/><rect x="45" y="16" width="20" height="3" fill="#3157b8"/>
+            <rect x="74" y="5" width="26" height="18" rx="1.5" fill="#c5c8cc"/><rect x="77" y="9" width="20" height="3" fill="#2b2b30"/><rect x="77" y="16" width="20" height="3" fill="#2b2b30"/>
+            <rect x="104" y="20" width="4" height="3" fill="#ff3b30"/>
+            <rect id="ks-act2" x="108" y="20" width="4" height="3" fill="#4cff6a"/>
+          </svg>
+        </div>
+        <div class="cap" id="ks-cap2">
+        <span class="w">One</span> <span class="w">command</span>
+      </div>
+        <div class="cap" id="ks-cap3">
+        <span class="w">On</span> <span class="w">the</span> <span class="w">office</span> <span class="w">wall</span>
+      </div>
+        <div class="cap" id="ks-cap4">
+        <span class="w">Rotates</span> <span class="w">between</span> <span class="w">pages</span>
+      </div>
+      </div>
+      <div id="ks-fade" style="position:absolute;inset:0;background:#000"></div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      // 2 x 20 GPIO pins
+      const pins = document.getElementById("ks-pins");
+      let svgPins = "";
+      for (let i = 0; i < 20; i++) {
+        for (let r = 0; r < 2; r++) svgPins += `<rect x="${86 + i * 25.4}" y="${16 + r * 22}" width="10" height="10" rx="1"/>`;
+      }
+      pins.innerHTML = svgPins;
+
+      const tl = gsap.timeline({ paused: true });
+      const cam = (x, y, s) => {
+        let tx = 960 - x * s, ty = 540 - y * s;
+        tx = Math.min(0, Math.max(1920 - 1920 * s, tx));
+        ty = Math.min(0, Math.max(1080 - 1080 * s, ty));
+        return { x: tx, y: ty, scale: s };
+      };
+      const capIn = (id, t) => {
+        tl.set(id, { opacity: 1 }, t);
+        tl.fromTo(id, { clipPath: "inset(0 100% 0 0 round 14px)" }, { clipPath: "inset(0 0% 0 0 round 14px)", duration: 0.35, ease: "expo.out" }, t);
+        tl.fromTo(`${id} .w`, { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.067, ease: "power2.out" }, t + 0.1);
+      };
+      const capOut = (id, t) => {
+        tl.to(`${id} .w`, { opacity: 0, filter: "blur(8px)", duration: 0.18, stagger: 0.025, ease: "power2.in" }, t);
+        tl.to(id, { opacity: 0, duration: 0.12, ease: "power2.in" }, t + 0.18);
+      };
+      gsap.set(["#ks-pcam", "#ks-ocam"], { transformOrigin: "0 0" });
+      gsap.set("#ks-native", { scale: 0.5 });
+      gsap.set("#ks-office", { y: -1080 });
+
+      // ---- close-up of the Pi
+      tl.fromTo("#ks-fade", { opacity: 1 }, { opacity: 0, duration: 0.35, ease: "power2.out" }, 0);
+      tl.fromTo("#ks-pcam", cam(960, 600, 1.12), { ...cam(960, 560, 1.0), duration: 3.3, ease: "power2.out" }, 0);
+      // ACT LED: activity flicker (fixed pattern)
+      const blinks = [0.4, 0.55, 0.9, 1.0, 1.1, 1.6, 1.75, 2.2, 2.3, 2.45, 2.9, 3.05];
+      gsap.set(["#ks-act", "#ks-act2"], { opacity: 0 });
+      blinks.forEach((t, i) => tl.set("#ks-act", { opacity: i % 2 === 0 ? 1 : 0 }, t));
+      capIn("#ks-cap1", 0.6);
+      capOut("#ks-cap1", 3.0);
+
+      // ---- tilt up along the HDMI cable to the wall
+      tl.to("#ks-close", { y: 1080, filter: "blur(14px)", duration: 0.5, ease: "power3.inOut" }, 3.3);
+      tl.fromTo("#ks-office", { y: -1080, filter: "blur(14px)" }, { y: 0, filter: "blur(0px)", duration: 0.5, ease: "power3.inOut" }, 3.3);
+      tl.set("#ks-ocam", cam(960, 540, 1.0), 3.3);
+
+      // ---- push into the TV; the install runs on the Pi's console
+      const tvCam = cam(960, 392, 1.85);
+      tl.to("#ks-ocam", { ...tvCam, duration: 0.9, ease: "power2.inOut" }, 4.3);
+      const c1 = document.getElementById("ks-c1").textContent.length;
+      const c2 = document.getElementById("ks-c2").textContent.length;
+      tl.fromTo("#ks-c1", { width: "0ch" }, { width: c1 + "ch", duration: c1 * 0.009, ease: `steps(${c1})` }, 4.7);
+      tl.fromTo("#ks-c2", { width: "0ch" }, { width: c2 + "ch", duration: c2 * 0.009, ease: `steps(${c2})` }, 4.7 + c1 * 0.009 + 0.05);
+      tl.fromTo(".ks-out", { opacity: 0 }, { opacity: 1, duration: 0.01, stagger: 0.19 }, 5.9);
+      [6.0, 6.2, 6.5, 6.6, 6.9, 7.1, 7.4, 7.6, 8.0, 8.1].forEach((t, i) => tl.set("#ks-act2", { opacity: i % 2 === 0 ? 1 : 0 }, t));
+      capIn("#ks-cap2", 4.6);
+      capOut("#ks-cap2", 7.4);
+
+      // ---- reboot: black, then the kiosk takes the screen
+      tl.to("#ks-black", { opacity: 1, duration: 0.08, ease: "none" }, 7.55);
+      tl.set("#ks-kshot", { opacity: 1 }, 8.0);
+      tl.to("#ks-black", { opacity: 0, duration: 0.25, ease: "power2.out" }, 8.05);
+      tl.to("#ks-ocam", { ...cam(960, 470, 1.3), duration: 1.0, ease: "power2.inOut" }, 8.3);
+      capIn("#ks-cap3", 8.7);
+      capOut("#ks-cap3", 11.0);
+
+      // ---- the screen rotates to Live; push back in
+      tl.to("#ks-live", { opacity: 1, duration: 0.3, ease: "power2.inOut" }, 11.0);
+      tl.to("#ks-ocam", { ...cam(960, 392, 1.62), duration: 1.0, ease: "power2.inOut" }, 11.2);
+      capIn("#ks-cap4", 11.4);
+
+      tl.to("#ks-all", { opacity: 0, filter: "blur(10px)", duration: 0.3, ease: "power2.in" }, 15.3);
+      window.__timelines["kiosk"] = tl;
+    })();
+  </script>
+</template>

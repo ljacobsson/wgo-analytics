@@ -132,6 +132,20 @@ describe('autoIdentify', () => {
     expect(XMLHttpRequest.prototype.setRequestHeader.name).not.toBe('setHeader')
   })
 
+  it('reads a bare JWT header, catching a token refreshed in this tab after an expired one at load', async () => {
+    const key = 'CognitoIdentityServiceProvider.c.u.idToken'
+    localStorage.setItem(key, jwt({ email: 'h@x.com', exp: Math.floor(Date.now() / 1000) - 60 }))
+    const f = mockFetch()
+    A.init(auto())
+    const fresh = jwt({ email: 'h@x.com' })
+    localStorage.setItem(key, fresh) // same-tab write: no storage event
+    await fetch('https://app.test/api', { headers: { Authorization: fresh } })
+    await fetch('https://app.test/b', { headers: { Authorization: 'not-a-jwt' } })
+    A.track('x')
+    await A.flush()
+    expect(eventsOf(f).map((e) => [e.t, e.u])).toEqual([['identify', 'h@x.com'], ['custom', 'h@x.com']])
+  })
+
   it('prefers a stored token over an opaque header token', async () => {
     localStorage.setItem('id', jwt({ email: 'u@x.com' }))
     const f = mockFetch()

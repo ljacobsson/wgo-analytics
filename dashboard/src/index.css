@@ -153,6 +153,15 @@ body {
 @keyframes pulse-dot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.8); } }
 .pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
 
+/* Public site (site/Site.tsx, auth/Landing.tsx) */
+[data-theme="light"] .theme-dark-only, :root:not([data-theme="light"]) .theme-light-only { display: none; }
+@keyframes line-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.term-line { opacity: 0; animation: line-in .3s ease-out forwards; }
+@keyframes caret { 50% { opacity: 0; } }
+.term-caret { animation: caret 1s steps(1) infinite; }
+.hero-glow { position: absolute; inset: -12% -6% auto; height: 70%; z-index: -1; filter: blur(70px); opacity: .55;
+  background: radial-gradient(50% 60% at 30% 40%, var(--glow1), transparent 70%), radial-gradient(45% 55% at 75% 45%, var(--glow2), transparent 70%); }
+
 
 .tok-k { color: #c084fc; } .tok-s { color: #86efac; } .tok-c { color: #6c6b7a; font-style: italic; } .tok-n { color: #fbbf24; } .tok-t { color: #67e8f9; } .tok-a { color: #93c5fd; }
 [data-theme="light"] .tok-k { color: #7c3aed; } [data-theme="light"] .tok-s { color: #047857; } [data-theme="light"] .tok-n { color: #b45309; } [data-theme="light"] .tok-t { color: #0e7490; } [data-theme="light"] .tok-a { color: #1d4ed8; }

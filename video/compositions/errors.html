@@ -1,0 +1,49 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; font-family: Inter, sans-serif; }
+    #er-stage { position: absolute; inset: 0; background: #0a0a0f; }
+    .cam { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    .cam img { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    .cursor { position: absolute; left: 0; top: 0; width: 44px; height: 64px; }
+    .cap {
+      position: absolute; left: 96px; bottom: 96px; padding: 12px 20px 14px;
+      background: rgba(10, 10, 15, 0.72); border-radius: 10px;
+      font-weight: 600; font-size: 38px; line-height: 1.1; letter-spacing: -0.01em; color: rgba(236, 236, 241, 0.92); white-space: nowrap;
+    }
+    .cap .w { display: inline-block; }
+  </style>
+  <div id="root" data-composition-id="errors" data-width="1920" data-height="1080">
+    <div id="er-stage">
+      <div class="cam" id="er-cam"><img src="assets/screens/errors.jpg" alt="WGO Errors page" /></div>
+      <svg class="cursor" id="er-cursor" viewBox="0 0 22 32"><path d="M1 1 L1 25 L7 19.5 L11 29 L15 27.3 L11 18 L19 18 Z" fill="#fff" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      <div class="cap" id="er-cap">
+        <span class="w">Errors,</span> <span class="w">grouped</span>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      const cam = (x, y, s) => {
+        let tx = 960 - x * s, ty = 540 - y * s;
+        tx = Math.min(0, Math.max(1920 - 1920 * s, tx));
+        ty = Math.min(0, Math.max(1080 - 1080 * s, ty));
+        return { x: tx, y: ty, scale: s };
+      };
+      gsap.set("#er-cam", { transformOrigin: "0 0" });
+      const c2 = cam(1500, 200, 1.6);
+      const btn = { x: c2.x + 1752 * c2.scale, y: c2.y + 92 * c2.scale }; // "Create trigger"
+
+      // hard cut in (after the dip), already pushed in on the error rows
+      tl.fromTo("#er-cam", cam(880, 300, 1.55), { ...cam(880, 300, 1.45), duration: 1.6, ease: "power2.out" }, 0);
+      tl.fromTo("#er-cap", { clipPath: "inset(0 100% 0 0 round 14px)" }, { clipPath: "inset(0 0% 0 0 round 14px)", duration: 0.35, ease: "expo.out" }, 0.3);
+      tl.fromTo("#er-cap .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.067, ease: "power2.out" }, 0.4);
+      // across to the trends, then up to "Create trigger"
+      tl.to("#er-cam", { ...c2, duration: 0.9, ease: "power2.inOut" }, 2.4);
+      tl.fromTo("#er-cursor", { x: 1500, y: 1150 }, { x: btn.x - 2, y: btn.y - 2, duration: 0.9, ease: "power3.out" }, 2.9);
+      tl.to("#er-cursor", { scale: 0.82, duration: 0.07, ease: "power2.in" }, 4.5);
+      tl.to("#er-cursor", { scale: 1, duration: 0.12, ease: "power2.out" }, 4.57);
+      window.__timelines["errors"] = tl;
+    })();
+  </script>
+</template>

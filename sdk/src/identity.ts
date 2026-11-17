@@ -45,5 +45,11 @@ export function findIdentity(): string | undefined {
   return best?.[1]
 }
 
-/** The token in an `Authorization: Bearer …` value. */
-export const bearer = (v: unknown): string | undefined => /^Bearer\s+(\S+)/i.exec(String(v))?.[1]
+/**
+ * The token in an `Authorization` value: `Bearer …`, or a bare JWT (API Gateway Cognito authorizers take the
+ * id token as-is, so Amplify apps commonly send it without a scheme).
+ */
+export const bearer = (v: unknown): string | undefined => {
+  const s = String(v).trim()
+  return /^Bearer\s+(\S+)/i.exec(s)?.[1] ?? (/^eyJ[\w-]+\.eyJ[\w-]+\.[\w-]*$/.test(s) ? s : undefined)
+}

@@ -1,9 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
-import { useAuth } from '../auth/cognito';
-import { Logo } from '../ui/Logo';
-import { Button } from '../ui/kit';
 import { CodeBlock } from '../ui/CodeBlock';
-import { navigate } from '../lib/router';
+import { SiteFooter, SiteHeader } from '../site/Site';
 
 /**
  * Public guide: sending OpenTelemetry from Node.js and Python backends, on servers and on AWS Lambda.
@@ -41,7 +38,6 @@ const Code = (p: Parameters<typeof CodeBlock>[0]) => <CodeBlock wrap={false} {..
 const Ext = ({ href, children }: { href: string; children: ReactNode }) => <a href={href} target="_blank" rel="noreferrer" className="text-accent hover:underline">{children}</a>;
 
 export function OtelDocs() {
-  const { signedIn } = useAuth();
   const origin = window.location.origin;
   useEffect(() => { document.title = 'OpenTelemetry setup · WGO'; return () => { document.title = 'WGO'; }; }, []);
 
@@ -197,14 +193,7 @@ def handler(event, context):
 
   return (
     <div className="bg-atmos h-full overflow-y-auto">
-      <header className="sticky top-0 z-10 border-b border-line bg-[color-mix(in_srgb,var(--bg)_80%,transparent)] backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
-          <a href="#/" aria-label="WGO home"><Logo size={28} /></a>
-          {signedIn
-            ? <Button variant="primary" onClick={() => navigate('/')}>Open dashboard</Button>
-            : <div className="flex items-center gap-1"><Button variant="ghost" onClick={() => navigate('/signin')}>Sign in</Button><Button variant="primary" onClick={() => navigate('/signup')}>Create an account</Button></div>}
-        </div>
-      </header>
+      <SiteHeader />
 
       <div className="mx-auto grid max-w-[1200px] gap-12 px-6 pb-24 pt-14 lg:grid-cols-[200px_minmax(0,1fr)]">
         <nav className="hidden lg:block">
@@ -309,6 +298,7 @@ def handler(event, context):
           </Section>
         </main>
       </div>
+      <SiteFooter />
     </div>
   );
 }

@@ -1,0 +1,220 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; background: #0a0a0f; overflow: hidden; font-family: Inter, sans-serif; }
+    #in-stage { position: absolute; inset: 0; }
+
+    /* the live map underneath (real recording of the Live page) */
+    #in-map { position: absolute; inset: 0; background: #0a0a0f; opacity: 0; }
+    #in-mcam { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    #in-vid { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; object-fit: cover; }
+
+    /* the sea of storefront pages */
+    #in-world { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    .pg { position: absolute; width: 1920px; height: 1080px; background: #fafaf8; overflow: hidden; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5); }
+    #in-hero { z-index: 2; }
+    .pg .bar { position: absolute; left: 0; top: 0; width: 1920px; height: 64px; background: #e7e7ec; }
+    .pg .url { position: absolute; left: 300px; top: 13px; width: 1320px; height: 38px; border-radius: 19px; background: #fff; font-size: 22px; line-height: 38px; color: #6b6b75; padding-left: 26px; white-space: nowrap; }
+    .pg .dot3 { position: absolute; top: 24px; width: 16px; height: 16px; border-radius: 50%; }
+    .pg .hdr { position: absolute; left: 0; top: 64px; width: 1920px; height: 100px; background: #fff; border-bottom: 2px solid #eeeeef; }
+    .pg .logo { position: absolute; left: 120px; top: 22px; font-size: 46px; font-weight: 800; letter-spacing: -0.04em; color: #1b1b22; }
+    .pg .nav { position: absolute; left: 1150px; top: 34px; font-size: 27px; color: #4a4a55; word-spacing: 40px; white-space: nowrap; }
+    .pg .img { position: absolute; left: 120px; top: 230px; width: 780px; height: 770px; border-radius: 24px; }
+    .pg .obj { position: absolute; }
+    .pg .crumb { position: absolute; left: 1000px; top: 250px; font-size: 25px; color: #8b8b95; white-space: nowrap; }
+    .pg .ttl { position: absolute; left: 1000px; top: 296px; font-size: 86px; font-weight: 800; letter-spacing: -0.035em; color: #1b1b22; white-space: nowrap; }
+    .pg .price { position: absolute; left: 1000px; top: 418px; font-size: 50px; font-weight: 600; color: #1b1b22; }
+    .pg .desc { position: absolute; left: 1000px; top: 505px; width: 720px; font-size: 31px; line-height: 1.4; color: #5a5a64; }
+    .pg .sw { position: absolute; top: 650px; width: 46px; height: 46px; border-radius: 50%; }
+    .pg .btn { position: absolute; left: 1000px; top: 740px; width: 560px; height: 100px; border-radius: 14px; background: #1b1b22; color: #fff; font-size: 35px; font-weight: 600; line-height: 100px; text-align: center; }
+    .pg .ship { position: absolute; left: 1000px; top: 872px; font-size: 25px; color: #8b8b95; }
+
+    /* hero page details */
+    #in-shade { left: 250px; top: 150px; width: 280px; height: 170px; background: #e9b44c; clip-path: polygon(22% 0, 78% 0, 100% 100%, 0 100%); }
+    #in-pool { left: 180px; top: 310px; width: 420px; height: 260px; border-radius: 50%; background: radial-gradient(closest-side, rgba(233, 180, 76, 0.28), rgba(233, 180, 76, 0)); }
+    #in-stem { left: 385px; top: 318px; width: 10px; height: 320px; background: #3a3a40; }
+    #in-base { left: 290px; top: 628px; width: 200px; height: 34px; border-radius: 50%; background: #2b2b30; }
+    #in-cart { position: absolute; left: 1700px; top: 28px; width: 40px; height: 44px; }
+    #in-badge { position: absolute; left: 1728px; top: 14px; width: 34px; height: 34px; border-radius: 50%; background: #e5484d; color: #fff; font-size: 21px; font-weight: 700; line-height: 34px; text-align: center; opacity: 0; }
+    #in-added { position: absolute; inset: 0; border-radius: 14px; background: #15803d; opacity: 0; }
+
+    .cursor { position: absolute; left: 0; top: 0; width: 44px; height: 64px; }
+    #in-ring { position: absolute; left: 0; top: 0; width: 40px; height: 40px; border-radius: 50%; border: 4px solid #22d3ee; opacity: 0; }
+    .in-pin { position: absolute; left: 0; top: 0; width: 18px; height: 18px; border-radius: 50%; background: #22d3ee; opacity: 0; }
+
+    .cap {
+      position: absolute; left: 96px; bottom: 96px; padding: 12px 20px 14px;
+      background: rgba(10, 10, 15, 0.72); border-radius: 10px;
+      font-weight: 600; font-size: 38px; line-height: 1.1; letter-spacing: -0.01em; color: rgba(236, 236, 241, 0.92); white-space: nowrap;
+    }
+    .cap .w { display: inline-block; }
+  </style>
+  <div id="root" data-composition-id="hook" data-width="1920" data-height="1080">
+    <div id="in-stage">
+      <div id="in-map">
+        <div id="in-mcam">
+          <video id="in-vid" class="clip" src="assets/clips/live.mp4" muted playsinline
+            data-start="3.4" data-duration="4.6" data-media-start="4" data-track-index="0"></video>
+        </div>
+      </div>
+
+      <div id="in-world">
+        <!-- the page the shopper is on -->
+        <div class="pg" id="in-hero" data-layout-ignore>
+          <div class="bar"></div>
+          <div class="dot3" style="left:28px;background:#ff5f57"></div><div class="dot3" style="left:56px;background:#febc2e"></div><div class="dot3" style="left:84px;background:#28c840"></div>
+          <div class="url">shop.acme.dev/products/aurora-lamp</div>
+          <div class="hdr">
+            <div class="logo">acme</div>
+            <div class="nav">Products Pricing Blog</div>
+            <svg id="in-cart" viewBox="0 0 40 44"><path d="M6 14 H34 L31 42 H9 Z" fill="none" stroke="#1b1b22" stroke-width="3" stroke-linejoin="round"/><path d="M13 16 V10 a7 7 0 0 1 14 0 V16" fill="none" stroke="#1b1b22" stroke-width="3"/></svg>
+            <div id="in-badge">1</div>
+          </div>
+          <div class="img" style="background:#f1ece4">
+            <div class="obj" id="in-pool"></div>
+            <div class="obj" id="in-stem"></div>
+            <div class="obj" id="in-base"></div>
+            <div class="obj" id="in-shade"></div>
+          </div>
+          <div class="crumb">Lighting / Lamps</div>
+          <div class="ttl">Aurora Lamp</div>
+          <div class="price">$129</div>
+          <div class="desc">Hand-blown glass shade and a dimmable warm LED. Ships in two days.</div>
+          <div class="sw" style="left:1000px;background:#e9b44c;box-shadow:0 0 0 4px #fafaf8, 0 0 0 7px #1b1b22"></div>
+          <div class="sw" style="left:1070px;background:#c9d4d8"></div>
+          <div class="sw" style="left:1140px;background:#2b2b30"></div>
+          <div class="btn" id="in-btn"><div id="in-added"></div><span style="position:relative">Add to cart</span></div>
+          <div class="ship">Free shipping over $100</div>
+        </div>
+        <div id="in-grid"></div>
+      </div>
+
+      <div id="in-pins"></div>
+      <div id="in-ring"></div>
+      <svg class="cursor" id="in-cursor" viewBox="0 0 22 32"><path d="M1 1 L1 25 L7 19.5 L11 29 L15 27.3 L11 18 L19 18 Z" fill="#fff" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      <div class="cap" id="in-cap"><span class="w">Your</span> <span class="w">app,</span> <span class="w">live</span></div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      // seeded RNG: every frame is a function of time only
+      let seed = 20261117;
+      const rnd = () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+
+      // ---- storefront pages scattered around the hero: jittered, tilted, varied in size, with gaps
+      const GX = 2112, GY = 1188, R = 10;
+      const products = [
+        ["Nimbus Chair", "$349", "#e6e9ee", "#7d8fa6", "Seating / Chairs"], ["Halo Desk", "$540", "#efe9df", "#b08a5c", "Desks"],
+        ["Drift Sofa", "$1,190", "#e8efe9", "#6f9277", "Seating / Sofas"], ["Ember Kettle", "$89", "#f3e6e1", "#c8553d", "Kitchen"],
+        ["Fjord Mug", "$24", "#e3edf2", "#3f7fa3", "Kitchen / Mugs"], ["Lumen Shelf", "$210", "#efece4", "#8c7a5b", "Storage"],
+        ["Arc Stool", "$129", "#ece6f0", "#7c6aa8", "Seating / Stools"], ["Tide Rug", "$260", "#e5eeee", "#4c8c8a", "Textiles"],
+        ["Pine Table", "$780", "#f0eadf", "#a57b4f", "Tables"], ["Aurora Lamp", "$129", "#f1ece4", "#e9b44c", "Lighting / Lamps"],
+      ];
+      const tiles = [];
+      let html = "";
+      for (let r = -R; r <= R; r++) {
+        for (let c = -R; c <= R; c++) {
+          if (r === 0 && c === 0) continue;
+          const near = Math.abs(r) <= 1 && Math.abs(c) <= 1;
+          if (!near && rnd() < 0.08) continue; // a few gaps
+          const p = products[Math.floor(rnd() * products.length)];
+          const round = rnd() > 0.5;
+          const id = `in-t${tiles.length}`;
+          const j = near ? 0.25 : 0.6;
+          const x = Math.round(c * GX + (rnd() - 0.5) * j * GX), y = Math.round(r * GY + (rnd() - 0.5) * j * GY);
+          tiles.push({ id, x, y, rot: (rnd() - 0.5) * 18, sc: 0.8 + rnd() * 0.28 });
+          html += `<div class="pg" data-layout-ignore id="${id}" style="left:${x}px;top:${y}px">` +
+            `<div class="bar"></div><div class="url">shop.acme.dev/products/${p[0].toLowerCase().replace(/ /g, "-")}</div>` +
+            `<div class="hdr"><div class="logo">acme</div><div class="nav">Products Pricing Blog</div></div>` +
+            `<div class="img" style="background:${p[2]}"><div class="obj" style="left:${round ? 230 : 210}px;top:${round ? 230 : 250}px;width:${round ? 320 : 360}px;height:${round ? 320 : 280}px;border-radius:${round ? "50%" : "28px"};background:${p[3]}"></div></div>` +
+            `<div class="crumb">${p[4]}</div><div class="ttl">${p[0]}</div><div class="price">${p[1]}</div>` +
+            `<div class="desc">Designed in Stockholm, made to last. Free returns within 30 days.</div>` +
+            `<div class="btn" id="${id}-b">Add to cart</div><div class="ship">Free shipping over $100</div></div>`;
+        }
+      }
+      document.getElementById("in-grid").innerHTML = html;
+
+      const tl = gsap.timeline({ paused: true });
+      gsap.set(["#in-world", "#in-mcam"], { transformOrigin: "0 0" });
+      gsap.set(".pg", { transformOrigin: "50% 50%" });
+      tiles.forEach((t) => gsap.set(`#${t.id}`, { rotation: t.rot, scale: t.sc }));
+      const S = 0.045; // zoomed out: about 21 pages across
+      const worldAt = (s) => ({ x: 960 - 960 * s, y: 540 - 540 * s, scale: s });
+
+      // ---- 1. a shopper clicks "Add to cart"
+      const BTN = { x: 1280, y: 790 };
+      tl.fromTo("#in-world", worldAt(1.04), { ...worldAt(1.0), duration: 1.2, ease: "power2.out" }, 0);
+      tl.fromTo("#in-cursor", { x: 1500, y: 1150 }, { x: BTN.x - 2, y: BTN.y - 2, duration: 0.8, ease: "power3.out" }, 0.1);
+      tl.to("#in-cursor", { scale: 0.82, duration: 0.07, ease: "power2.in" }, 0.95);
+      tl.to("#in-cursor", { scale: 1, duration: 0.12, ease: "power2.out" }, 1.02);
+      tl.fromTo("#in-added", { opacity: 0 }, { opacity: 1, duration: 0.12, ease: "power2.out" }, 1.0);
+      tl.fromTo("#in-badge", { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, 1.08);
+      gsap.set("#in-ring", { x: BTN.x - 20, y: BTN.y - 20 });
+      tl.fromTo("#in-ring", { opacity: 0.9, scale: 1 }, { opacity: 0, scale: 4, duration: 0.8, ease: "power2.out", immediateRender: false }, 1.02);
+      tl.to("#in-cursor", { opacity: 0, duration: 0.2 }, 1.45);
+
+      // ---- 2. pull back: hundreds of shoppers on hundreds of pages
+      tl.to("#in-world", { ...worldAt(S), duration: 2.0, ease: "power3.inOut" }, 1.4);
+      const flashed = new Set();
+      for (let i = 0; i < 160; i++) {
+        let k = Math.floor(rnd() * tiles.length);
+        while (flashed.has(k)) k = (k + 1) % tiles.length; // one click per page
+        flashed.add(k);
+        const t = tiles[k];
+        const at = 1.7 + rnd() * 2.2;
+        tl.to(`#${t.id}-b`, { backgroundColor: "#15803d", duration: 0.08, ease: "none" }, at);
+        tl.to(`#${t.id}-b`, { backgroundColor: "#1b1b22", duration: 0.3, ease: "power1.out" }, at + 0.35);
+      }
+
+      // ---- 3. the pages fall onto the world map and become visitors
+      const mapCam = (x, y, s) => ({ x: 960 - x * s, y: 540 - y * s, scale: s });
+      const MC = mapCam(664, 630, 2.1);
+      tl.set("#in-mcam", MC, 0);
+      tl.to("#in-map", { opacity: 1, duration: 0.6, ease: "power2.out" }, 3.5);
+      // land on that map, in the Live page's CSS pixels
+      const land = [
+        [317, 576], [346, 614], [372, 629], [402, 605], [432, 586], [384, 557], [451, 576], [336, 538],
+        [422, 672], [451, 730], [480, 768], [461, 806], [437, 701],
+        [624, 538], [653, 518], [680, 516], [672, 557], [634, 566], [691, 538], [662, 576],
+        [662, 653], [691, 691], [720, 730], [672, 710], [730, 672],
+        [749, 595], [797, 614], [838, 679], [864, 576], [912, 595], [941, 557], [960, 614], [902, 653],
+        [941, 691], [989, 768], [1027, 787],
+      ].map(([x, y]) => ({ x: x * MC.scale + MC.x, y: y * MC.scale + MC.y }));
+      document.getElementById("in-pins").innerHTML = land.map((_, i) => `<div class="in-pin" id="in-pin${i}"></div>`).join("");
+      land.forEach((p, i) => gsap.set(`#in-pin${i}`, { x: p.x - 9, y: p.y - 9 }));
+      const arrived = new Array(land.length).fill(99);
+      const all = [{ id: "in-hero", x: 0, y: 0, rot: 0, sc: 1 }, ...tiles];
+      const W0 = { x: 960 - 960 * S, y: 540 - 540 * S };
+      all.forEach((t, i) => {
+        const cx = t.x + 960, cy = t.y + 540;
+        const sx = cx * S + W0.x, sy = cy * S + W0.y; // where the page sits on screen
+        // a nearby dot, preferring ones below the page (it falls down onto the map)
+        const near = land.map((P, k) => ({ k, d: Math.hypot(P.x - sx, (P.y - sy) * (P.y < sy ? 1.8 : 1)) })).sort((a, b) => a.d - b.d);
+        const target = i === 0 ? 2 : near[Math.floor(rnd() * 3)].k; // the first shopper lands in Austin
+        const P = land[target];
+        const wx = (P.x - W0.x) / S, wy = (P.y - W0.y) / S;
+        const start = 3.5 + rnd() * 1.3;
+        const lift = 0.18, d = 0.55 + rnd() * 0.25;
+        tl.to(`#${t.id}`, { y: -10 / S, scale: t.sc * 1.06, duration: lift, ease: "power2.out" }, start);
+        tl.to(`#${t.id}`, { x: wx - cx, duration: d, ease: "sine.inOut" }, start + lift);
+        tl.to(`#${t.id}`, { y: wy - cy, duration: d, ease: "power2.in" }, start + lift);
+        tl.to(`#${t.id}`, { scale: 0.05, rotation: t.rot + (rnd() - 0.5) * 60, duration: d, ease: "power2.in" }, start + lift);
+        tl.to(`#${t.id}`, { opacity: 0, duration: 0.1, ease: "none" }, start + lift + d - 0.1);
+        arrived[target] = Math.min(arrived[target], start + lift + d);
+      });
+      land.forEach((_, i) => {
+        if (arrived[i] > 50) return;
+        tl.fromTo(`#in-pin${i}`, { opacity: 0, scale: 0.3 }, { opacity: 1, scale: 1, duration: 0.25, ease: "back.out(2)" }, arrived[i] - 0.05);
+      });
+      // the pins hand over to the map's own live pings
+      tl.to(".in-pin", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 6.0);
+      tl.to("#in-mcam", { ...mapCam(664, 640, 1.85), duration: 1.8, ease: "power2.inOut" }, 5.9);
+
+      tl.fromTo("#in-cap", { clipPath: "inset(0 100% 0 0 round 10px)" }, { clipPath: "inset(0 0% 0 0 round 10px)", duration: 0.35, ease: "expo.out" }, 6.1);
+      tl.fromTo("#in-cap .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.067, ease: "power2.out" }, 6.2);
+
+      // whip out left as the next scene arrives
+      tl.to("#in-stage", { x: -700, filter: "blur(16px)", duration: 0.3, ease: "power3.in" }, 7.7);
+      window.__timelines["hook"] = tl;
+    })();
+  </script>
+</template>
