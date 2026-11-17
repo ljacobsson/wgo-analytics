@@ -36,13 +36,13 @@
       };
       gsap.set("#lv-cam", { transformOrigin: "0 0" });
       gsap.set("#lv-cap2", { opacity: 0 });
-      tl.fromTo("#lv-stage", { x: 1920, filter: "blur(16px)" }, { x: 0, filter: "blur(0px)", duration: 0.4, ease: "expo.out" }, 0);
+      tl.fromTo("#lv-stage", { x: 1920, filter: "blur(16px)" }, { x: 0, filter: "blur(0px)", duration: 0.6, ease: "expo.out" }, 0);
       // the watch counters
-      tl.fromTo("#lv-cam", cam(960, 540, 1.0), { ...cam(700, 250, 1.5), duration: 1.4, ease: "power2.inOut" }, 1.0);
+      tl.fromTo("#lv-cam", cam(960, 540, 1.0), { ...cam(700, 250, 1.4), duration: 2.0, ease: "sine.inOut" }, 1.4);
       tl.fromTo("#lv-cap1", { clipPath: "inset(0 100% 0 0 round 14px)" }, { clipPath: "inset(0 0% 0 0 round 14px)", duration: 0.35, ease: "expo.out" }, 1.6);
       tl.fromTo("#lv-cap1 .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.067, ease: "power2.out" }, 1.7);
       // down to the map and the firehose
-      tl.to("#lv-cam", { ...cam(980, 650, 1.42), duration: 1.5, ease: "power2.inOut" }, 5.4);
+      tl.to("#lv-cam", { ...cam(980, 650, 1.35), duration: 2.2, ease: "sine.inOut" }, 5.4);
       tl.to("#lv-cap1 .w", { opacity: 0, filter: "blur(8px)", duration: 0.18, stagger: 0.03, ease: "power2.in" }, 5.4);
       tl.set("#lv-cap1", { opacity: 0 }, 5.75);
       tl.set("#lv-cap2", { opacity: 1 }, 6.2);

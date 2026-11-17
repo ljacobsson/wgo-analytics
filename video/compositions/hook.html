@@ -10,7 +10,7 @@
 
     /* the sea of storefront pages */
     #in-world { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
-    .pg { position: absolute; width: 1920px; height: 1080px; background: #fafaf8; overflow: hidden; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5); }
+    .pg { position: absolute; width: 1920px; height: 1080px; background: #fafaf8; overflow: visible; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5); }
     #in-hero { z-index: 2; }
     .pg .bar { position: absolute; left: 0; top: 0; width: 1920px; height: 64px; background: #e7e7ec; }
     .pg .url { position: absolute; left: 300px; top: 13px; width: 1320px; height: 38px; border-radius: 19px; background: #fff; font-size: 22px; line-height: 38px; color: #6b6b75; padding-left: 26px; white-space: nowrap; }
@@ -53,7 +53,7 @@
       <div id="in-map">
         <div id="in-mcam">
           <video id="in-vid" class="clip" src="assets/clips/live.mp4" muted playsinline
-            data-start="3.4" data-duration="4.6" data-media-start="4" data-track-index="0"></video>
+            data-start="3.6" data-duration="4.9" data-media-start="4" data-track-index="0"></video>
         </div>
       </div>
 
@@ -137,6 +137,7 @@
       gsap.set(["#in-world", "#in-mcam"], { transformOrigin: "0 0" });
       gsap.set(".pg", { transformOrigin: "50% 50%" });
       tiles.forEach((t) => gsap.set(`#${t.id}`, { rotation: t.rot, scale: t.sc }));
+      gsap.set(".pg", { transformPerspective: 2600 });
       const S = 0.045; // zoomed out: about 21 pages across
       const worldAt = (s) => ({ x: 960 - 960 * s, y: 540 - 540 * s, scale: s });
 
@@ -153,23 +154,45 @@
       tl.to("#in-cursor", { opacity: 0, duration: 0.2 }, 1.45);
 
       // ---- 2. pull back: hundreds of shoppers on hundreds of pages
-      tl.to("#in-world", { ...worldAt(S), duration: 2.0, ease: "power3.inOut" }, 1.4);
-      const flashed = new Set();
-      for (let i = 0; i < 160; i++) {
-        let k = Math.floor(rnd() * tiles.length);
-        while (flashed.has(k)) k = (k + 1) % tiles.length; // one click per page
-        flashed.add(k);
-        const t = tiles[k];
-        const at = 1.7 + rnd() * 2.2;
-        tl.to(`#${t.id}-b`, { backgroundColor: "#15803d", duration: 0.08, ease: "none" }, at);
-        tl.to(`#${t.id}-b`, { backgroundColor: "#1b1b22", duration: 0.3, ease: "power1.out" }, at + 0.35);
+      // the pull-back runs in log-scale (an even, steady zoom) and is still moving when the pages start to fall
+      const Z0 = 1.4, ZD = 3.2;
+      const zoomEase = gsap.parseEase("sine.inOut");
+      const sAt = (t) => (t <= Z0 ? 1 : Math.exp(Math.log(S) * zoomEase(Math.min(1, (t - Z0) / ZD))));
+      const zoom = { k: 0 };
+      tl.to(zoom, { k: 1, duration: ZD, ease: "none", onUpdate: () => { if (zoom.k > 0) gsap.set("#in-world", worldAt(sAt(Z0 + zoom.k * ZD))); } }, Z0);
+      // shoppers on the other pages click "Add to cart" too: about 40 clicks, spread out in time and across the pile
+      const CLICKS = 40, C0 = 2.0, C1 = 3.6;
+      const picked = [];
+      for (let i = 0; i < CLICKS; i++) {
+        const at = C0 + (i + 0.2 + rnd() * 0.6) * (C1 - C0) / CLICKS;
+        const s = sAt(at);
+        const visible = tiles.filter((t) => !t.clickAt && Math.abs(t.x * s) < 820 && Math.abs(t.y * s) < 420);
+        if (!visible.length) continue;
+        // of a few random candidates, take the one farthest from the last clicks, so they don't bunch up
+        let best = null, bestD = -1;
+        for (let k = 0; k < 8; k++) {
+          const c = visible[Math.floor(rnd() * visible.length)];
+          const d = Math.min(1e9, ...picked.slice(-6).map((q) => Math.hypot((c.x - q.x) * s, (c.y - q.y) * s)));
+          if (d > bestD) { bestD = d; best = c; }
+        }
+        best.clickAt = at;
+        picked.push(best);
+        const w = Math.min(600, 64 / s); // a cursor about as big as the shopper's own, until the pages get tiny
+        document.getElementById(best.id).insertAdjacentHTML("beforeend",
+          `<svg id="${best.id}-c" viewBox="0 0 22 32" style="position:absolute;left:${1280 - w / 22}px;top:${790 - w / 22}px;width:${w}px;height:${w * 32 / 22}px;opacity:0;overflow:visible"><path d="M1 1 L1 25 L7 19.5 L11 29 L15 27.3 L11 18 L19 18 Z" fill="#fff" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/></svg>`);
+        const cur = `#${best.id}-c`;
+        tl.fromTo(cur, { opacity: 0, x: w * 0.9, y: w * 1.1 }, { opacity: 1, x: 0, y: 0, duration: 0.4, ease: "power2.out" }, at - 0.45);
+        tl.to(cur, { scale: 0.85, transformOrigin: "0 0", duration: 0.06, ease: "power2.in" }, at);
+        tl.to(cur, { scale: 1, duration: 0.1, ease: "power2.out" }, at + 0.06);
+        tl.to(`#${best.id}-b`, { backgroundColor: "#15803d", duration: 0.1, ease: "none" }, at);
+        tl.to(cur, { opacity: 0, duration: 0.3, ease: "power1.in" }, at + 0.4);
       }
 
       // ---- 3. the pages fall onto the world map and become visitors
       const mapCam = (x, y, s) => ({ x: 960 - x * s, y: 540 - y * s, scale: s });
       const MC = mapCam(664, 630, 2.1);
       tl.set("#in-mcam", MC, 0);
-      tl.to("#in-map", { opacity: 1, duration: 0.6, ease: "power2.out" }, 3.5);
+      tl.to("#in-map", { opacity: 1, duration: 0.9, ease: "power2.out" }, 3.0);
       // land on that map, in the Live page's CSS pixels
       const land = [
         [317, 576], [346, 614], [372, 629], [402, 605], [432, 586], [384, 557], [451, 576], [336, 538],
@@ -191,29 +214,38 @@
         const near = land.map((P, k) => ({ k, d: Math.hypot(P.x - sx, (P.y - sy) * (P.y < sy ? 1.8 : 1)) })).sort((a, b) => a.d - b.d);
         const target = i === 0 ? 2 : near[Math.floor(rnd() * 3)].k; // the first shopper lands in Austin
         const P = land[target];
-        const wx = (P.x - W0.x) / S, wy = (P.y - W0.y) / S;
-        const start = 3.5 + rnd() * 1.3;
-        const lift = 0.18, d = 0.55 + rnd() * 0.25;
-        tl.to(`#${t.id}`, { y: -10 / S, scale: t.sc * 1.06, duration: lift, ease: "power2.out" }, start);
-        tl.to(`#${t.id}`, { x: wx - cx, duration: d, ease: "sine.inOut" }, start + lift);
-        tl.to(`#${t.id}`, { y: wy - cy, duration: d, ease: "power2.in" }, start + lift);
-        tl.to(`#${t.id}`, { scale: 0.05, rotation: t.rot + (rnd() - 0.5) * 60, duration: d, ease: "power2.in" }, start + lift);
-        tl.to(`#${t.id}`, { opacity: 0, duration: 0.1, ease: "none" }, start + lift + d - 0.1);
-        arrived[target] = Math.min(arrived[target], start + lift + d);
+        // no pause: pages start falling while the camera is still pulling back, each at its own pace,
+        // aimed at where their dot is on screen at the moment they land (the zoom is still moving)
+        const start = Math.max(2.7 + rnd() * 1.5, (t.clickAt ?? 0) + 0.5);
+        const d = 0.8 + rnd() * 0.6;
+        const sL = sAt(start + d);
+        const wx = (P.x - (960 - 960 * sL)) / sL, wy = (P.y - (540 - 540 * sL)) / sL;
+        const el = `#${t.id}`;
+        // it tumbles in 3D as it drops away from the camera: tips back, turns, shrinks into the map
+        tl.to(el, { x: wx - cx, duration: d, ease: "sine.inOut" }, start);
+        tl.to(el, { y: wy - cy, duration: d, ease: "power2.in" }, start);
+        tl.to(el, {
+          scale: 0.05, rotation: t.rot + (rnd() - 0.5) * 70,
+          rotationX: 45 + rnd() * 35, rotationY: (rnd() - 0.5) * 80,
+          duration: d, ease: "power2.in",
+        }, start);
+        // depth: the farther it falls, the fainter it gets
+        tl.to(el, { opacity: 0, duration: d * 0.45, ease: "power1.in" }, start + d * 0.55);
+        arrived[target] = Math.min(arrived[target], start + d);
       });
       land.forEach((_, i) => {
         if (arrived[i] > 50) return;
         tl.fromTo(`#in-pin${i}`, { opacity: 0, scale: 0.3 }, { opacity: 1, scale: 1, duration: 0.25, ease: "back.out(2)" }, arrived[i] - 0.05);
       });
       // the pins hand over to the map's own live pings
-      tl.to(".in-pin", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 6.0);
-      tl.to("#in-mcam", { ...mapCam(664, 640, 1.85), duration: 1.8, ease: "power2.inOut" }, 5.9);
+      tl.to(".in-pin", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 6.6);
+      tl.to("#in-mcam", { ...mapCam(664, 640, 1.85), duration: 1.8, ease: "power2.inOut" }, 6.5);
 
-      tl.fromTo("#in-cap", { clipPath: "inset(0 100% 0 0 round 10px)" }, { clipPath: "inset(0 0% 0 0 round 10px)", duration: 0.35, ease: "expo.out" }, 6.1);
-      tl.fromTo("#in-cap .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.067, ease: "power2.out" }, 6.2);
+      tl.fromTo("#in-cap", { clipPath: "inset(0 100% 0 0 round 10px)" }, { clipPath: "inset(0 0% 0 0 round 10px)", duration: 0.35, ease: "expo.out" }, 6.7);
+      tl.fromTo("#in-cap .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.067, ease: "power2.out" }, 6.8);
 
       // whip out left as the next scene arrives
-      tl.to("#in-stage", { x: -700, filter: "blur(16px)", duration: 0.3, ease: "power3.in" }, 7.7);
+      tl.to("#in-stage", { x: -700, filter: "blur(16px)", duration: 0.3, ease: "power3.in" }, 8.2);
       window.__timelines["hook"] = tl;
     })();
   </script>

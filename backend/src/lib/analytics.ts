@@ -194,20 +194,30 @@ export async function stats(pid: string, p: Params): Promise<StatsResponse> {
   return { bucketSeconds: bucket, totals: current, previous, series: [...byT.values()], botSessions: await hiddenBots };
 }
 
+/**
+ * Most clicked targets, one row per selector + text + tracked name. A selector with an alias is one row whatever its
+ * text (a "Buy" button showing a different price on each product page); its text and name are only kept when
+ * every click had the same one.
+ */
 export async function clicks(pid: string, p: Params): Promise<ClickRow[]> {
   const r = parseRange(p);
+  const names = await aliasMap(pid);
   const params: unknown[] = [pid, r.from, r.to, limitParam(p.limit, 50, 500)];
   const F = filtersFrom(p, 'events', params);
-  const [names, rows] = await Promise.all([aliasMap(pid), rawQuery<{ selector: string; element_text: string | null; track_name: string | null; element_tag: string | null; count: number; sessions: number; rage: number; last_seen: Date }>(pid, r,
-    `SELECT selector, element_text, track_name, max(element_tag) AS element_tag,
+  const merged = names.size ? `selector IN ${inList(params, [...names.keys()])}` : 'false';
+  const rows = await rawQuery<{ selector: string; element_text: string | null; track_name: string | null; element_tag: string | null; count: number; sessions: number; rage: number; last_seen: Date }>(pid, r,
+    `SELECT selector,
+            CASE WHEN count(DISTINCT element_text) > 1 THEN NULL ELSE max(element_text) END AS element_text,
+            CASE WHEN count(DISTINCT track_name) > 1 THEN NULL ELSE max(track_name) END AS track_name,
+            max(element_tag) AS element_tag,
             count(*)::int AS count, count(DISTINCT session_id)::int AS sessions,
             sum(CASE WHEN props->>'rage' IS NOT NULL THEN 1 ELSE 0 END)::int AS rage, max(ts) AS last_seen
        FROM events
       WHERE project_id = $1 AND type = 'click' AND ts >= $2 AND ts < $3 AND selector IS NOT NULL${F}
-      GROUP BY selector, element_text, track_name
+      GROUP BY selector, CASE WHEN ${merged} THEN NULL ELSE element_text END, CASE WHEN ${merged} THEN NULL ELSE track_name END
       ORDER BY count DESC LIMIT $4`,
     params,
-  )]);
+  );
   return rows.map((x) => ({
     selector: x.selector, elementText: x.element_text, trackName: x.track_name, elementTag: x.element_tag, alias: names.get(x.selector) ?? null,
     count: x.count, sessions: x.sessions, rageClicks: x.rage, lastSeen: iso(x.last_seen)!,

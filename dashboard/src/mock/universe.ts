@@ -14,6 +14,10 @@ export const CLICKS = [
   { selector: '.promo-banner button', text: 'Claim offer', track: 'promo-claim', tag: 'button', path: '/', w: 6, rage: 0.22 },
   { selector: 'input#coupon + button', text: 'Apply', track: null, tag: 'button', path: '/checkout', w: 3, rage: 0.12 },
   { selector: 'footer a.twitter', text: null, track: null, tag: 'a', path: '/', w: 2, rage: 0 },
+  // one buy button whose caption carries each product's price: alias it to see it as one row
+  { selector: 'main > div.product > button.buy', text: 'Buy now – $129', track: null, tag: 'button', path: '/products/aurora-lamp', w: 6, rage: 0 },
+  { selector: 'main > div.product > button.buy', text: 'Buy now – $349', track: null, tag: 'button', path: '/products/nimbus-chair', w: 4, rage: 0.01 },
+  { selector: 'main > div.product > button.buy', text: 'Buy now – $39', track: null, tag: 'button', path: '/products/halo-mug', w: 3, rage: 0 },
 ];
 export const ERRORS = [
   { fp: 'e1a9c3f07b2d', msg: "TypeError: Cannot read properties of undefined (reading 'price')", kind: 'error', source: '/assets/app-3f9a1c.js', url: '/cart', w: 30,

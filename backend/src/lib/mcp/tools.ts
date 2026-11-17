@@ -142,7 +142,7 @@ export function buildMcpServer(email: string): McpServer {
   projectTool(
     'set_click_alias',
     'Name a click target',
-    'Gives an autocaptured click selector a readable name (alias) that the dashboard and top_clicks show instead of its text or selector, shared with all project members. Use the exact selector from top_clicks or search_events. Pass an empty alias to remove it. Changes labels only, never the recorded clicks.',
+    'Gives an autocaptured click selector a readable name (alias) that the dashboard and top_clicks show instead of its text or selector, shared with all project members. The alias covers every click on that selector whatever the element said (e.g. a buy button showing each product\'s price), and top_clicks then counts them as one row. Use the exact selector from top_clicks or search_events. Pass an empty alias to remove it. Changes labels and grouping only, never the recorded clicks.',
     {
       selector: z.string().min(1).max(512).describe('Exact CSS selector as captured, from top_clicks or search_events'),
       alias: z.string().max(80).describe('Readable name, 1-80 characters, e.g. "Pricing: start trial button". Empty string removes the alias.'),

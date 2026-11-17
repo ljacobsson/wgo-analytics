@@ -29,6 +29,7 @@ d('click aliases (PostgreSQL)', async () => {
   const now = Date.now();
   const range = { from: new Date(now - 3600_000).toISOString(), to: new Date(now + 60_000).toISOString() };
   const ugly = 'div.w-full.py-6 > div:nth-of-type(2) > button.rounded-lg';
+  const buy = 'main > button.buy';
 
   beforeAll(async () => {
     const admin = new Client({ connectionString: BASE });
@@ -38,10 +39,12 @@ d('click aliases (PostgreSQL)', async () => {
     await admin.end();
     for (const sql of SCHEMA_STATEMENTS) await query(sql.replace(' ASYNC ', ' '));
 
-    const click = (sel: string, text?: string) =>
-      ({ id: randomUUID(), t: 'click', ts: now - 60_000, s: 'sess-a', url: 'https://shop.test/', path: '/', d: { sel, tag: 'button', ...(text ? { text } : {}) } });
+    const click = (sel: string, text?: string, s = 'sess-a') =>
+      ({ id: randomUUID(), t: 'click', ts: now - 60_000, s, url: 'https://shop.test/', path: '/', d: { sel, tag: 'button', ...(text ? { text } : {}) } });
     const batch = (e: unknown[]) => ({ k: 'k', a: 'anon-1', sentAt: now, ctx: { ua: 'Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0' }, e });
-    await writeRows('events', [...normalizeBatch(pid, batch([click(ugly), click(ugly), click('#signup', 'Sign up')]) as never, now)]);
+    await writeRows('events', [...normalizeBatch(pid, batch([click(ugly), click(ugly), click('#signup', 'Sign up'),
+      // the same buy button with each product's price on it
+      click(buy, 'Buy – $49'), click(buy, 'Buy – $49', 'sess-b'), click(buy, 'Buy – $129', 'sess-c'), click(buy, 'Buy – $15')]) as never, now)]);
   });
 
   afterAll(async () => closeDb());
@@ -72,5 +75,16 @@ d('click aliases (PostgreSQL)', async () => {
     const rows = await A.clicks(pid, range);
     expect(rows.find((r) => r.selector === ugly)).toMatchObject({ alias: 'Choose plan', count: 2 });
     expect(rows.find((r) => r.selector === '#signup')).toMatchObject({ alias: null, elementText: 'Sign up' });
+  });
+
+  it('counts every text of an aliased selector as one target', async () => {
+    const before = (await A.clicks(pid, range)).filter((r) => r.selector === buy);
+    expect(before.map((r) => [r.elementText, r.count]).sort()).toEqual([['Buy – $129', 1], ['Buy – $15', 1], ['Buy – $49', 2]]);
+
+    await CA.setAlias(pid, 'alice@example.com', { selector: buy, alias: 'Buy button' });
+    const after = (await A.clicks(pid, range)).filter((r) => r.selector === buy);
+    expect(after).toEqual([expect.objectContaining({ alias: 'Buy button', elementText: null, elementTag: 'button', count: 4, sessions: 3 })]);
+    // a selector whose clicks all had one text keeps it
+    expect((await A.clicks(pid, range)).find((r) => r.selector === ugly)).toMatchObject({ alias: 'Choose plan', count: 2 });
   });
 });

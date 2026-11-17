@@ -44,7 +44,7 @@ function AliasDialog({ row, onClose }: { row: ClickRow | null; onClose: () => vo
         <Button variant="primary" disabled={!alias.trim() || !changed || save.isPending} onClick={() => submit(alias)}>Save</Button>
       </>}>
       <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (alias.trim() && changed) void submit(alias); }}>
-        <Field label="Alias" hint="Shown instead of the element’s text or selector, for everyone in this project.">
+        <Field label="Alias" hint="Names every click on this selector, whatever the element says (a price, a count), and counts them as one target. Everyone in this project sees it.">
           <input autoFocus className="field" maxLength={80} value={alias} onChange={(e) => setAlias(e.target.value)} placeholder={row ? clickLabel({ ...row, alias: null }) : ''} />
         </Field>
         <div>
@@ -87,7 +87,7 @@ export function ClicksPage() {
           {isPending ? <RowsSkeleton /> : rows.length === 0 ? (
             <EmptyState icon={<MousePointerClick size={22} />} title={q ? 'No clicks match' : 'No clicks recorded'} action={!q && <Button variant="primary" onClick={() => navigate(pageHref(project.id, 'settings', route.params))}>Install the snippet</Button>}>Clicks are captured automatically once the SDK is on your site.</EmptyState>
           ) : rows.map((r) => (
-            <div key={r.selector} className={`group grid ${COLS} items-center gap-4 border-b border-line/60 px-4 py-2.5 text-[13px] transition-colors hover:bg-[var(--hl)]`}>
+            <div key={JSON.stringify([r.selector, r.elementText, r.trackName])} className={`group grid ${COLS} items-center gap-4 border-b border-line/60 px-4 py-2.5 text-[13px] transition-colors hover:bg-[var(--hl)]`}>
               <div className="flex min-w-0 items-center gap-1.5">
                 <div className="min-w-0">
                   <div className="truncate font-medium" title={r.alias ?? r.elementText ?? undefined}>{r.alias || r.elementText || <span className="font-mono text-[12px] text-muted">{shortSelector(r.selector)}</span>}</div>

@@ -191,8 +191,21 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     case 'stats': { const r = D.stats(from, to); return qp('compare') === '0' ? { ...r, previous: null } : r; }
     case 'totals': return D.totalsFor(from, to);
     case 'clicks': {
+      // like the API: an aliased selector is one row, keeping its text only when every click had the same one
       const names = new Map((db.clickAliases?.[pid] ?? []).map((a) => [a.selector, a.alias]));
-      return D.clicks(from, to, limit).map((r) => ({ ...r, alias: names.get(r.selector) ?? null }));
+      const rows = new Map<string, ReturnType<typeof D.clicks>[number]>();
+      for (const r of D.clicks(from, to, 500)) {
+        const alias = names.get(r.selector) ?? null;
+        const key = alias ? r.selector : JSON.stringify([r.selector, r.elementText, r.trackName]);
+        const cur = rows.get(key);
+        if (!cur) { rows.set(key, { ...r, alias }); continue; }
+        rows.set(key, {
+          ...cur, count: cur.count + r.count, sessions: cur.sessions + r.sessions, rageClicks: cur.rageClicks + r.rageClicks,
+          elementText: cur.elementText === r.elementText ? cur.elementText : null, trackName: cur.trackName === r.trackName ? cur.trackName : null,
+          lastSeen: cur.lastSeen > r.lastSeen ? cur.lastSeen : r.lastSeen,
+        });
+      }
+      return [...rows.values()].sort((a, b) => b.count - a.count).slice(0, limit);
     }
     case 'click-aliases': {
       const list = ((db.clickAliases ??= {})[pid] ??= []);
