@@ -275,4 +275,28 @@ export const SCHEMA_STATEMENTS: string[] = [
      updated_at timestamptz NOT NULL DEFAULT now(),
      PRIMARY KEY (project_id, selector)
    )`,
+
+  // session recording settings (lib/recordings.ts); no row = recording off
+  `CREATE TABLE IF NOT EXISTS recording_settings (
+     project_id uuid PRIMARY KEY,
+     enabled boolean NOT NULL,
+     sample_percent double precision NOT NULL,
+     triggers jsonb NOT NULL,
+     max_per_hour integer,
+     max_per_day integer,
+     mask_text boolean NOT NULL,
+     updated_by text NOT NULL,
+     updated_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  // sessions granted a recording slot: the hourly/daily limits count these, and ingest only stores replay
+  // chunks of sessions listed here. The recording itself is Parquet (the replays raw table).
+  `CREATE TABLE IF NOT EXISTS recordings (
+     project_id uuid NOT NULL,
+     session_id text NOT NULL,
+     started_at timestamptz NOT NULL,
+     anon_id text,
+     reason text NOT NULL,
+     PRIMARY KEY (project_id, session_id)
+   )`,
+  `CREATE INDEX ASYNC IF NOT EXISTS recordings_started_idx ON recordings (project_id, started_at)`,
 ];

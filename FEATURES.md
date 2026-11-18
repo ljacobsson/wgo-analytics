@@ -34,6 +34,9 @@ without any extra code. Events show up within seconds.
   journeys with their conversion rate.
 - 🗺️ A live map shows where visitors are, to the nearest city. Locations come from CloudFront, and IP addresses
   are never stored.
+- 🎬 Watch what a visitor did: their pointer, clicks, scrolling and page changes, replayed over snapshots of the
+  page. It records no video, so a session costs kilobytes. Record a share of sessions, or only the ones that hit an
+  error or reach a page you choose, with hourly and daily limits. Typed text is never recorded.
 - 🪶 The browser SDK is about 10 KB gzipped. It batches and compresses events, and holds on to them while the
   visitor is offline.
 

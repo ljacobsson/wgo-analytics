@@ -215,6 +215,9 @@ aws s3 cp dist/index.html "s3://$BUCKET/index.html" --cache-control 'no-cache' -
 aws s3 cp dist/config.json "s3://$BUCKET/config.json" --cache-control 'no-cache' --content-type 'application/json'
 aws s3 cp "$ROOT/sdk/dist/wgo.js" "s3://$BUCKET/sdk/v1/wgo.js" \
   --cache-control 'public, max-age=300' --content-type 'text/javascript'
+# session recorder: wgo.js loads it from next to itself, only on pages that record
+aws s3 cp "$ROOT/sdk/dist/wgo-replay.js" "s3://$BUCKET/sdk/v1/wgo-replay.js" \
+  --cache-control 'public, max-age=300' --content-type 'text/javascript'
 
 aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" \
   --paths /index.html /config.json /pair.html '/sdk/*' '/downloads/*' >/dev/null

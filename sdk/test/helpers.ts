@@ -7,9 +7,14 @@ export const INGEST = `${EP}/ingest`
 
 type Handler = (url: string, init: RequestInit) => Promise<Partial<Response>> | Partial<Response>
 
-export function mockFetch(handler: Handler = () => ({ ok: true, status: 200, statusText: 'OK' })) {
+/**
+ * Stubs fetch. The SDK's session-recording config request (GET /replay/config) is answered with a 404 (the project
+ * doesn't record) and kept out of the returned mock, so tests only see their own traffic; pass `replay` to answer it.
+ */
+export function mockFetch(handler: Handler = () => ({ ok: true, status: 200, statusText: 'OK' }), replay?: Handler) {
   const f = vi.fn(async (input: unknown, init: RequestInit = {}) => handler(String(input), init))
-  vi.stubGlobal('fetch', f)
+  vi.stubGlobal('fetch', async (input: unknown, init: RequestInit = {}) =>
+    String(input).includes('/replay/config') ? (replay ? replay(String(input), init) : { ok: false, status: 404 }) : f(input, init))
   return f
 }
 

@@ -5,6 +5,7 @@ import type {
   BreakdownRow, ClickRow, ErrorGroup, EventsResponse, GeoResponse, HttpErrorGroup, LogsResponse, Me, Member, MetricInfo,
   MetricSeriesResponse, PageRow, Project, ServiceRow, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse, FieldsResponse, FieldValuesResponse, FilterScope, SlackIntegration, Trigger, TriggerInput, TriggerTestResult, SlackSetup,
   SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, ConversionsResponse, ClickAlias,
+  RecordingsResponse, RecordingResponse, RecordingSettings, RecordingSettingsResponse,
 } from './contract';
 import { previousWindow, type TimeRange } from '../lib/time';
 import { botsParam, filtersParam } from '../lib/filters';
@@ -387,5 +388,42 @@ export function useDeleteKiosk(pid: string) {
       qc.setQueryData<Kiosk[]>(kiosksKey(pid), (l) => l?.filter((x) => x.id !== id));
     },
     onSettled: () => qc.invalidateQueries({ queryKey: kiosksKey(pid) }),
+  });
+}
+
+// ---------- session recordings ----------
+export function useRecordings(pid: string, r: TimeRange) {
+  return useInfiniteQuery({
+    queryKey: ['recordings', pid, r.from, r.to],
+    queryFn: ({ pageParam, signal }) => api<RecordingsResponse>(`${base(pid)}/recordings`, { params: { from: r.from, to: r.to, limit: 50, before: pageParam }, signal }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (l) => l.nextBefore ?? undefined,
+    staleTime: STALE, placeholderData: keepPreviousData,
+  });
+}
+/** A whole recording: the API sends it in parts of a few MB, fetched one after another. */
+export function useRecording(pid: string, sessionId: string) {
+  return useQuery({
+    queryKey: ['recording', pid, sessionId],
+    queryFn: async ({ signal }) => {
+      const first = await api<RecordingResponse>(`${base(pid)}/recordings/${encodeURIComponent(sessionId)}`, { signal });
+      let next = first.nextAfter;
+      for (let i = 0; next && i < 40; i++) {
+        const page = await api<RecordingResponse>(`${base(pid)}/recordings/${encodeURIComponent(sessionId)}`, { params: { after: next }, signal });
+        first.chunks.push(...page.chunks);
+        next = page.nextAfter;
+      }
+      return { ...first, nextAfter: next };
+    },
+    staleTime: 60_000, retry: (n, e) => (e as { status?: number }).status !== 404 && n < 2,
+  });
+}
+export const useRecordingSettings = (pid: string) =>
+  useQuery({ queryKey: ['recording-settings', pid], queryFn: () => api<RecordingSettingsResponse>(`${base(pid)}/recording-settings`), staleTime: 15_000 });
+export function useSaveRecordingSettings(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (s: RecordingSettings) => api<RecordingSettingsResponse>(`${base(pid)}/recording-settings`, { method: 'PATCH', body: s }),
+    onSuccess: (r) => qc.setQueryData(['recording-settings', pid], r),
   });
 }

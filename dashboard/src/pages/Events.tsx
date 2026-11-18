@@ -6,7 +6,7 @@ import { useClickAliases, useEvents } from '../api/hooks';
 import type { AnalyticsEvent, EventType, Filter } from '../api/contract';
 import { useProject } from '../lib/project';
 import { useTime } from '../lib/time';
-import { navigate, useRoute, useSetParams } from '../lib/router';
+import { navigate, pageHref, useRoute, useSetParams } from '../lib/router';
 import { Badge, Card, EmptyState, ErrorState, Mono, Skeleton, TypeBadge, useDebounced } from '../ui/kit';
 import { FilterBar } from '../ui/FilterBar';
 import { AttributeTable, eventAttributeRows } from './EventAttributes';
@@ -34,6 +34,7 @@ function EventDetails({ e, onSession }: { e: AnalyticsEvent; onSession: (s: stri
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-faint">
         <span className="tnum">{fmtDateTime(e.ts)}</span><Mono>{e.id}</Mono>
         {e.sessionId && <button className="text-accent hover:underline cursor-pointer" onClick={() => onSession(e.sessionId!)}>Session timeline →</button>}
+        {e.sessionId && <a className="text-accent hover:underline" href={'#' + pageHref(project.id, `recordings/${encodeURIComponent(e.sessionId)}`, route.params)}>Watch recording →</a>}
         <span>{rows.length} attributes · hover a row to filter by it</span>
         <button className="ml-auto inline-flex items-center gap-1 text-accent hover:underline cursor-pointer"
           onClick={() => navigate(newTriggerHref(project.id, route.params, 'events', triggerFiltersFor(e)))}>

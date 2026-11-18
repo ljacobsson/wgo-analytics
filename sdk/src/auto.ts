@@ -40,6 +40,7 @@ function fromScript(s: HTMLScriptElement | null): Config | null {
     respectDoNotTrack: flag(d.respectDoNotTrack),
     cookieless: flag(d.cookieless),
     autoIdentify: flag(d.autoIdentify),
+    record: bool(d.record),
     autocapture: autocapture(d.autocapture),
     sampleRate: num(d.sampleRate),
     sessionTimeout: num(d.sessionTimeout),

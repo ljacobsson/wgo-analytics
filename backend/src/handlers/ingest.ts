@@ -5,7 +5,8 @@ import { storeErrorStacks } from '../lib/errorStacks';
 import { geoFromHeaders, type Geo } from '../lib/geo';
 import { fanOut } from '../lib/live';
 import { projectIdForWriteKey } from '../lib/projects';
-import { storeEvents } from '../lib/store/queue';
+import { replayRows } from '../lib/recordings';
+import { storeEvents, storeReplays } from '../lib/store/queue';
 import { evaluateTriggers } from '../lib/triggers';
 
 /**
@@ -16,8 +17,11 @@ import { evaluateTriggers } from '../lib/triggers';
 
 /** Normalizes one SDK batch, pushes it live, queues it for the Parquet writer and evaluates triggers. */
 async function ingestBatch(projectId: string, batch: WireBatch, receivedAt: number, userAgent: string | undefined, geo: Geo): Promise<number> {
+  // session recording chunks (their own table; only for sessions holding a recording slot, see lib/recordings.ts)
+  const replays = await replayRows(projectId, batch, receivedAt);
+  await storeReplays(replays);
   const rows = normalizeBatch(projectId, batch, receivedAt, userAgent, geo);
-  if (!rows.length) return 0;
+  if (!rows.length) return replays.length;
 
   // Live fan-out runs alongside the write: the dashboard should see a click as soon as we do.
   // A fan-out failure must never fail the batch (a retry would duplicate stored events).
@@ -30,7 +34,7 @@ async function ingestBatch(projectId: string, batch: WireBatch, receivedAt: numb
   await storeEvents(rows.map((r) => ({ ...r, error_stack: null })));
   // triggers only after the events are safely queued, so a retried batch can't notify twice for events we dropped
   await Promise.all([live, evaluateTriggers(projectId, apiEvents).catch((err) => console.warn('trigger evaluation failed', err))]);
-  return rows.length;
+  return rows.length + replays.length;
 }
 
 /** POST /ingest — SDK batches. Write key travels in the body (sendBeacon can't set headers). */

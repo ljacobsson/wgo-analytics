@@ -1,4 +1,4 @@
-import type { Config, Ctx, EmitOpts, EventType, Hooks, ResolvedConfig, WireEvent } from './types'
+import type { Config, Ctx, EmitOpts, EventType, Hooks, ReplayConfig, ResolvedConfig, WireEvent } from './types'
 import { SDK } from './types'
 import { migrateStorage } from './legacy'
 import { Session } from './session'
@@ -10,6 +10,7 @@ import { startPageviews } from './capture/pageviews'
 import { startVitals } from './capture/vitals'
 import { bearer, findIdentity, jwtIdentity } from './identity'
 import { ls, memoryStore, on, uuid } from './util'
+import { unit } from './replay/sample'
 
 function resolve(c: Config): ResolvedConfig {
   const a = c.autocapture || {}
@@ -37,20 +38,28 @@ function resolve(c: Config): ResolvedConfig {
     debug: c.debug ?? false,
     priorityClicks: c.priorityClicks ?? [],
     autoIdentify: c.autoIdentify ?? false,
+    record: c.record ?? true,
   }
 }
 
 export class Client {
-  private cfg: ResolvedConfig
-  private session: Session
+  /** @internal also read by the recorder (replay/index.ts) */
+  cfg: ResolvedConfig
+  /** @internal */
+  session: Session
   private transport: Transport
   private errors: ErrorReporter
-  private ctx: Ctx
+  /** @internal */
+  ctx: Ctx
   private ingest: string
   private stops: (() => void)[] = []
   private stopped = false
   private lastAuth?: string
   private lastScan = 0
+  /** @internal SDK events the recorder watches for triggers */
+  subs: ((e: WireEvent) => void)[] = []
+  /** @internal the project's recording settings, once this page may record */
+  rc?: ReplayConfig
 
   constructor(config: Config) {
     const cfg = (this.cfg = resolve(config))
@@ -78,7 +87,7 @@ export class Client {
       cfg,
       emit: (t, d, o) => this.emit(t, d, o),
       queued: (e) => this.transport.has(e),
-      skipUrl: (u) => u.startsWith(this.ingest) || cfg.httpIgnore.some((p) => (typeof p === 'string' ? u.includes(p) : (p.lastIndex = 0, p.test(u)))),
+      skipUrl: (u) => u.startsWith(this.ingest) || u.startsWith(`${cfg.endpoint}/replay/`) || cfg.httpIgnore.some((p) => (typeof p === 'string' ? u.includes(p) : (p.lastIndex = 0, p.test(u)))),
       clean: (u) => this.clean(u),
       log,
     }
@@ -102,6 +111,8 @@ export class Client {
     start(ac.vitals, () => startVitals(hooks)) // before our hide listener below, see vitals.ts
     start(ac.pageviews, () => startPageviews(hooks))
 
+    if (cfg.record) this.replay()
+
     const hide = () => this.transport.flushBeacon()
     this.stops.push(
       on(document, 'visibilitychange', () => { if (document.visibilityState === 'hidden') hide() }),
@@ -110,7 +121,28 @@ export class Client {
     )
   }
 
-  private clean(u: string): string {
+  /**
+   * Session recording lives in its own script (sdk/src/replay), loaded only when the project records and this
+   * session may be recorded: sampled in, or triggers are set (the recorder then waits for one to match).
+   */
+  private replay(): void {
+    const { endpoint: ep, writeKey: k } = this.cfg
+    fetch(`${ep}/replay/config?k=${encodeURIComponent(k)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c: ReplayConfig | null) => {
+        const s = this.session.touch()
+        if (!c?.on || this.stopped || !s.sampled || !(c.trg?.length || unit(s.id) < (c.rate ?? 0))) return
+        this.rc = c // the recorder picks up the rest from this client (`__wgo.client`, see replay/index.ts)
+        const el = document.createElement('script')
+        el.src = `${ep}/sdk/v1/wgo-replay.js`
+        el.async = true
+        document.head.appendChild(el)
+      })
+      .catch(() => { /* no recording */ })
+  }
+
+  /** @internal */
+  clean(u: string): string {
     return this.cfg.captureQueryParams ? u : u.replace(/\?[^#]*/, '')
   }
 
@@ -132,6 +164,7 @@ export class Client {
         e = r
       }
       this.transport.push(e, o.priority || t === 'error' || t === 'http_error')
+      this.subs.forEach((f) => { try { f(e) } catch { /* the recorder must not break tracking */ } })
       return e
     } catch (err) {
       if (this.cfg.debug) console.debug('[wgo] emit failed', err)
@@ -183,6 +216,8 @@ export class Client {
 
   stop(): void {
     this.stopped = true
+    this.subs = []
+    try { (globalThis as { __wgo?: { rs?: () => void } }).__wgo?.rs?.() } catch { /* ignore */ }
     this.stops.forEach((s) => { try { s() } catch { /* ignore */ } })
     this.stops = []
     this.transport.destroy()

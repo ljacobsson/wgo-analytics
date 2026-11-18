@@ -1,0 +1,228 @@
+import { useEffect, useMemo, useState } from 'react';
+import { MonitorPlay, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import type { RecordingSettings, RecordingSettingsResponse, RecordingSummary, RecordingTrigger, RecordingTriggerType } from '../api/contract';
+import { useRecordings, useRecordingSettings, useSaveRecordingSettings } from '../api/hooks';
+import { cn, fmtNum, fmtTime, relTime } from '../lib/format';
+import { useProject } from '../lib/project';
+import { navigate, pageHref, useRoute } from '../lib/router';
+import { useTime } from '../lib/time';
+import { Button, Card, Dialog, EmptyState, ErrorState, Field, Mono, Skeleton, Switch, useToast } from '../ui/kit';
+import { fmtClock } from '../replay/Player';
+import { RowsSkeleton, TableHead } from './common';
+
+const TRIGGERS: Record<RecordingTriggerType, { label: string; placeholder: string; hint: string }> = {
+  page: { label: 'Visits a page', placeholder: '/checkout*', hint: 'Path; * matches anything' },
+  click: { label: 'Clicks an element', placeholder: '#buy, button.add-to-cart', hint: 'CSS selector' },
+  event: { label: 'Sends a custom event', placeholder: 'signup_started', hint: 'Event name, as in WGO.track()' },
+  error: { label: 'Hits an error', placeholder: 'Any error', hint: 'Text in the error or failed request (empty: any)' },
+};
+
+/** Why a session was recorded, in words. */
+export function reasonText(reason: string): string {
+  if (reason === 'sample') return 'Sampled';
+  const [, type, ...rest] = reason.split(':');
+  const v = rest.join(':');
+  switch (type) {
+    case 'page': return `Visited ${v}`;
+    case 'click': return `Clicked ${v}`;
+    case 'event': return `Event ${v}`;
+    case 'error': return v ? `Error: ${v}` : 'Hit an error';
+    default: return reason;
+  }
+}
+
+export const visitorName = (r: Pick<RecordingSummary, 'userId' | 'anonId'>) => r.userId ?? (r.anonId ? `Visitor ${r.anonId.slice(0, 6)}` : 'Anonymous visitor');
+
+function describe(s: RecordingSettings): string {
+  const parts: string[] = [];
+  if (s.samplePercent > 0) parts.push(`${s.samplePercent}% of sessions`);
+  if (s.triggers.length) parts.push(`${s.samplePercent > 0 ? 'plus ' : ''}sessions that match ${s.triggers.length === 1 ? 'a trigger' : `one of ${s.triggers.length} triggers`}`);
+  return parts.length ? `Recording ${parts.join(', ')}.` : 'On, but neither a share of sessions nor a trigger is set, so nothing is recorded.';
+}
+
+const limitText = (used: number, max: number | null, span: string) => (max === null ? `${fmtNum(used)} in the ${span}` : `${fmtNum(used)} of ${fmtNum(max)} in the ${span}`);
+
+// ---------------------------------------------------------------- settings
+
+function SettingsDialog({ open, onClose, data }: { open: boolean; onClose: () => void; data: RecordingSettingsResponse }) {
+  const { project } = useProject();
+  const owner = project.role === 'owner';
+  const save = useSaveRecordingSettings(project.id);
+  const toast = useToast();
+  const [s, setS] = useState<RecordingSettings>(data.settings);
+  const [pct, setPct] = useState('');
+  const [perHour, setPerHour] = useState('');
+  const [perDay, setPerDay] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setS(data.settings);
+    setPct(String(data.settings.samplePercent));
+    setPerHour(data.settings.maxPerHour?.toString() ?? '');
+    setPerDay(data.settings.maxPerDay?.toString() ?? '');
+    setError('');
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setTrigger = (i: number, t: Partial<RecordingTrigger>) => setS((x) => ({ ...x, triggers: x.triggers.map((g, j) => (j === i ? { ...g, ...t } : g)) }));
+  const num = (v: string) => (v.trim() === '' ? null : Number(v));
+
+  const submit = () => {
+    setError('');
+    const next: RecordingSettings = { ...s, samplePercent: Number(pct || 0), maxPerHour: num(perHour), maxPerDay: num(perDay), triggers: s.triggers.map((t) => ({ ...t, value: t.value.trim() })) };
+    save.mutate(next, {
+      onSuccess: () => { toast({ title: 'Recording settings saved', body: next.enabled ? describe(next) : 'Recording is off', tone: 'good' }); onClose(); },
+      onError: (e) => setError((e as Error).message),
+    });
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} title="Session recording" width={620}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!owner || save.isPending} onClick={submit}>{save.isPending ? 'Saving…' : 'Save'}</Button></>}>
+      <div className="space-y-5 text-[13px]">
+        {!owner && <p className="rounded-lg border border-line bg-[var(--hl)] px-3 py-2 text-[12.5px] text-muted">Only project owners can change what is recorded.</p>}
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="font-medium">Record sessions</div>
+            <p className="mt-0.5 text-[12px] text-muted">The SDK on your site starts recording within a minute. Nothing changes in your snippet.</p>
+          </div>
+          <span className={cn(!owner && 'pointer-events-none opacity-60')}><Switch checked={s.enabled} onChange={(b) => setS({ ...s, enabled: b })} /></span>
+        </div>
+
+        <fieldset disabled={!owner} className={cn('space-y-5', !s.enabled && 'opacity-60')}>
+          <Field label="Share of sessions to record" hint="Picked at random per session. Set 0 to record only sessions that match a trigger.">
+            <div className="flex items-center gap-2"><input className="field !w-28 tnum" type="number" min={0} max={100} step={0.1} value={pct} onChange={(e) => setPct(e.target.value)} /><span className="text-muted">%</span></div>
+          </Field>
+
+          <div>
+            <div className="mb-1 text-[11.5px] font-medium text-muted">Also record a session when the visitor…</div>
+            <div className="space-y-2">
+              {s.triggers.map((t, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <select className="field !w-48 shrink-0" value={t.type} onChange={(e) => setTrigger(i, { type: e.target.value as RecordingTriggerType })}>
+                    {(Object.keys(TRIGGERS) as RecordingTriggerType[]).map((k) => <option key={k} value={k}>{TRIGGERS[k].label}</option>)}
+                  </select>
+                  <input className="field font-mono !text-[12px]" placeholder={TRIGGERS[t.type].placeholder} title={TRIGGERS[t.type].hint} value={t.value} onChange={(e) => setTrigger(i, { value: e.target.value })} />
+                  <button type="button" onClick={() => setS({ ...s, triggers: s.triggers.filter((_, j) => j !== i) })} title="Remove" className="rounded-md p-1.5 text-faint hover:bg-[var(--hl)] hover:text-bad cursor-pointer"><Trash2 size={14} /></button>
+                </div>
+              ))}
+              {s.triggers.length < 20 && <Button size="sm" type="button" onClick={() => setS({ ...s, triggers: [...s.triggers, { type: 'page', value: '' }] })}><Plus size={13} />Add trigger</Button>}
+            </div>
+            <p className="mt-1.5 text-[11px] text-faint">A matching session is recorded even if the sample didn't pick it, starting up to a minute before the match.</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="At most, per hour" hint={`${fmtNum(data.usage.lastHour)} in the last 60 minutes. Empty: no limit.`}>
+              <input className="field tnum" type="number" min={1} step={1} placeholder="No limit" value={perHour} onChange={(e) => setPerHour(e.target.value)} />
+            </Field>
+            <Field label="At most, per day" hint={`${fmtNum(data.usage.lastDay)} in the last 24 hours. Empty: no limit.`}>
+              <input className="field tnum" type="number" min={1} step={1} placeholder="No limit" value={perDay} onChange={(e) => setPerDay(e.target.value)} />
+            </Field>
+          </div>
+
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="font-medium">Mask all text</div>
+              <p className="mt-0.5 text-[12px] text-muted">Every letter on the page becomes an asterisk. Use it when pages show personal data.</p>
+            </div>
+            <span className={cn(!owner && 'pointer-events-none opacity-60')}><Switch checked={s.maskAllText} onChange={(b) => setS({ ...s, maskAllText: b })} /></span>
+          </div>
+        </fieldset>
+
+        <div className="rounded-lg border border-line bg-[var(--hl)] px-3.5 py-3 text-[12px] leading-relaxed text-muted">
+          What visitors type is never recorded: fields show one dot per character. Add <Mono className="text-fg">data-wgo-mask</Mono> to an element
+          to hide its text, or <Mono className="text-fg">data-wgo-block</Mono> to hide it completely. Recordings are kept for {data.retentionDays} days.
+          A site can opt out in code with <Mono className="text-fg">data-record="false"</Mono>.
+        </div>
+        {error && <p className="text-[12.5px] text-bad">{error}</p>}
+      </div>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------- list
+
+const COLS = 'grid-cols-[120px_80px_minmax(150px,1.2fr)_minmax(140px,1.4fr)_56px_56px_56px_minmax(120px,1fr)_minmax(110px,1fr)]';
+
+export function RecordingsPage() {
+  const { project } = useProject();
+  const { range } = useTime();
+  const route = useRoute();
+  const settings = useRecordingSettings(project.id);
+  const list = useRecordings(project.id, range);
+  const [open, setOpen] = useState(route.params.get('setup') === '1');
+  const [q, setQ] = useState('');
+
+  const rows = useMemo(() => {
+    const all = list.data?.pages.flatMap((p) => p.recordings) ?? [];
+    const needle = q.trim().toLowerCase();
+    return needle
+      ? all.filter((r) => [r.userId, r.anonId, r.entryPath, r.country, r.city, r.browser, r.os, reasonText(r.reason)].some((v) => v?.toLowerCase().includes(needle)))
+      : all;
+  }, [list.data, q]);
+
+  const s = settings.data;
+  const watch = (sid: string) => navigate(pageHref(project.id, `recordings/${encodeURIComponent(sid)}`, route.params));
+
+  return (
+    <div className="space-y-4">
+      <Card className="flex flex-wrap items-center gap-4 px-5 py-4">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-line bg-[var(--raised)] text-accent"><MonitorPlay size={19} /></div>
+        <div className="min-w-0 flex-1">
+          {!s ? <><Skeleton className="h-4 w-72" /><Skeleton className="mt-2 h-3 w-96" /></> : s.settings.enabled ? (<>
+            <div className="text-[13.5px] font-medium">{describe(s.settings)}</div>
+            <div className="mt-0.5 text-[12px] text-muted">
+              {limitText(s.usage.lastHour, s.settings.maxPerHour, 'last hour')} · {limitText(s.usage.lastDay, s.settings.maxPerDay, 'last 24 hours')} · kept {s.retentionDays} days
+            </div>
+          </>) : (<>
+            <div className="text-[13.5px] font-medium">Session recording is off</div>
+            <div className="mt-0.5 max-w-2xl text-[12px] text-muted">
+              Watch what visitors do: their pointer, clicks, scrolling and page changes, replayed over snapshots of the page.
+              No video is recorded, and nothing typed into forms. Record a share of sessions, or only sessions that hit an error or reach a page you care about.
+            </div>
+          </>)}
+        </div>
+        {s && <Button variant={s.settings.enabled ? 'secondary' : 'primary'} onClick={() => setOpen(true)}><Settings2 size={14} />{s.settings.enabled ? 'Settings' : project.role === 'owner' ? 'Set up recording' : 'View settings'}</Button>}
+      </Card>
+      {s && <SettingsDialog open={open} onClose={() => setOpen(false)} data={s} />}
+
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
+          <div className="text-[13px] font-semibold">Recordings <span className="font-normal text-faint">· {range.label}</span></div>
+          <label className="relative w-64">
+            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
+            <input className="field !py-1.5 !pl-8 !text-[12.5px]" placeholder="Visitor, page, country…" value={q} onChange={(e) => setQ(e.target.value)} />
+          </label>
+        </div>
+        <div className="overflow-x-auto">
+          <div className="min-w-[1080px]">
+            <TableHead className={COLS} cols={['Started', ['Length', 'text-right'], 'Visitor', 'Entry page', ['Pages', 'text-right'], ['Clicks', 'text-right'], ['Errors', 'text-right'], 'Device', 'Recorded because']} />
+            {list.isLoading ? <RowsSkeleton n={6} /> : list.isError ? <ErrorState error={list.error} retry={() => list.refetch()} /> : !rows.length ? (
+              <EmptyState icon={<MonitorPlay size={22} />} title={q ? 'No recordings match' : 'No recordings in this time range'}>
+                {q ? 'Try another search.' : s?.settings.enabled ? 'Recordings show up here within a minute of a recorded session starting.' : 'Turn on session recording to start collecting them.'}
+              </EmptyState>
+            ) : rows.map((r) => (
+              <button key={r.sessionId} onClick={() => watch(r.sessionId)}
+                className={cn('grid w-full items-center gap-4 border-b border-line px-4 py-2.5 text-left text-[12.5px] transition-colors hover:bg-[var(--hl)] cursor-pointer', COLS)}>
+                <span className="tnum" title={new Date(r.startedAt).toLocaleString()}>{fmtTime(r.startedAt, range.ms > 86_400_000)}<span className="block text-[11px] text-faint">{relTime(r.startedAt)}</span></span>
+                <span className="text-right font-mono tnum">{r.endedAt ? fmtClock(r.durationMs) : <span className="text-faint">…</span>}</span>
+                <span className="min-w-0 truncate" title={r.userId ?? r.anonId ?? ''}>{visitorName(r)}<span className="block truncate text-[11px] text-faint">{[r.city, r.country].filter(Boolean).join(', ') || 'Unknown location'}</span></span>
+                <span className="min-w-0 truncate font-mono text-[12px] text-muted">{r.entryPath ?? '–'}</span>
+                <span className="text-right tnum">{r.pages}</span>
+                <span className="text-right tnum">{r.clicks}</span>
+                <span className={cn('text-right tnum', r.errors ? 'text-bad' : 'text-faint')}>{r.errors}</span>
+                <span className="min-w-0 truncate text-muted">{[r.browser, r.os].filter(Boolean).join(' · ') || '–'}<span className="block text-[11px] capitalize text-faint">{r.device ?? ''}</span></span>
+                <span className="min-w-0 truncate text-muted" title={reasonText(r.reason)}>{reasonText(r.reason)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        {list.hasNextPage && (
+          <div className="flex justify-center border-t border-line p-3">
+            <Button size="sm" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>{list.isFetchingNextPage ? 'Loading…' : 'Load older recordings'}</Button>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}

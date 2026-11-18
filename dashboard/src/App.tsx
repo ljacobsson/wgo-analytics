@@ -16,6 +16,8 @@ import { ClicksPage } from './pages/Clicks';
 import { ErrorsPage } from './pages/Errors';
 import { NetworkPage } from './pages/Network';
 import { EventsPage } from './pages/Events';
+import { RecordingsPage } from './pages/Recordings';
+import { RecordingPlayerPage } from './pages/RecordingPlayer';
 import { TriggersPage } from './pages/Triggers';
 import { GoalsPage } from './pages/Goals';
 import { GoalFunnelPage } from './pages/GoalFunnel';
@@ -58,6 +60,7 @@ function Authed({ email }: { email: string }) {
       case 'errors': return <ErrorsPage />;
       case 'network': return <NetworkPage />;
       case 'events': return <EventsPage />;
+      case 'recordings': return sub ? <RecordingPlayerPage sessionId={decodeURIComponent(sub)} /> : <RecordingsPage />;
       case 'goals': return sub ? <GoalFunnelPage goalId={sub} /> : <GoalsPage />;
       case 'triggers': return <TriggersPage />;
       case 'traces': return <TracesPage traceId={sub ?? null} />;

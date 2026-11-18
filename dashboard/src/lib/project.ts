@@ -12,6 +12,7 @@ export const PAGES: PageDef[] = [
   { id: 'errors', label: 'Errors', group: 'Product', key: 'e', icon: 'errors' },
   { id: 'network', label: 'Network', group: 'Product', key: 'n', icon: 'network' },
   { id: 'events', label: 'Events', group: 'Product', key: 'v', icon: 'events' },
+  { id: 'recordings', label: 'Recordings', group: 'Product', key: 'p', icon: 'recordings' },
   { id: 'goals', label: 'Goals', group: 'Product', key: 'r', icon: 'goals' },
   { id: 'triggers', label: 'Triggers', group: 'Product', key: 'a', icon: 'triggers' },
   { id: 'traces', label: 'Traces', group: 'Observability', key: 't', icon: 'traces' },

@@ -33,6 +33,7 @@ const otlp = (await import('../src/handlers/otlp')).handler;
 const api = (await import('../src/handlers/api')).handler;
 const widget = (await import('../src/handlers/widget')).handler;
 const kiosk = (await import('../src/handlers/kiosk')).handler;
+const replay = (await import('../src/handlers/replay')).handler;
 const { mcpFetch } = await import('../src/lib/mcp/http');
 
 for (const sql of SCHEMA_STATEMENTS) await query(sql.replace(' ASYNC ', ' '));
@@ -90,6 +91,8 @@ createServer(async (req, res) => {
     if (req.method === 'OPTIONS') return send(res, { statusCode: 204 });
     const raw = await body(req);
     if (url.pathname === '/ingest' && req.method === 'POST') return send(res, (await ingest(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
+    // session recording: the SDK's config and slot requests (write-key auth, as deployed)
+    if (url.pathname.startsWith('/replay/')) return send(res, (await replay(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
     if (url.pathname.startsWith('/v1/') && req.method === 'POST') return send(res, (await otlp(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
     if (url.pathname.startsWith('/api/')) return send(res, (await api(toEvent(req, url, raw) as never)) as APIGatewayProxyStructuredResultV2);
     // Android widget API: device-token auth, so it works locally exactly as deployed
@@ -115,8 +118,8 @@ createServer(async (req, res) => {
     // fake failing API used by the demo page
     if (url.pathname.startsWith('/api-demo/')) return send(res, { statusCode: url.pathname.includes('checkout') ? 500 : 404, body: '{}' });
 
-    // static: /examples/*, /sdk/*
-    const file = normalize(join(ROOT, url.pathname));
+    // static: /examples/*, /sdk/*; /sdk/v1/* is the deployed path of sdk/dist (wgo.js loads wgo-replay.js from there)
+    const file = normalize(join(ROOT, url.pathname.replace(/^\/sdk\/v1\//, '/sdk/dist/')));
     if (!file.startsWith(join(ROOT, 'examples')) && !file.startsWith(join(ROOT, 'sdk', 'dist'))) return send(res, { statusCode: 404, body: 'not found' });
     const data = await readFile(file);
     res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', ...CORS });

@@ -1,5 +1,6 @@
 import type { SQSClient } from '@aws-sdk/client-sqs';
 import type { EventRow } from '../events';
+import type { ReplayRow } from '../recordings';
 import { recordIdentities } from '../identities';
 import { writeRows } from './write';
 
@@ -31,19 +32,42 @@ export function chunkJson(rows: unknown[], max = MAX_MESSAGE_BYTES): string[] {
   return out;
 }
 
+async function send(bodies: string[]): Promise<void> {
+  const url = process.env.EVENTS_QUEUE_URL!;
+  const { SQSClient, SendMessageCommand } = await import('@aws-sdk/client-sqs');
+  sqs ??= new SQSClient({});
+  await Promise.all(bodies.map((body) => sqs!.send(new SendMessageCommand({ QueueUrl: url, MessageBody: body }))));
+}
+
 export async function storeEvents(rows: EventRow[]): Promise<void> {
   if (!rows.length) return;
-  const url = process.env.EVENTS_QUEUE_URL;
-  if (!url) {
+  if (!process.env.EVENTS_QUEUE_URL) {
     await Promise.all([writeRows('events', rows), recordIdentities(rows)]);
     return;
   }
-  const { SQSClient, SendMessageCommand } = await import('@aws-sdk/client-sqs');
-  sqs ??= new SQSClient({});
-  await Promise.all(chunkJson(rows).map((body) => sqs!.send(new SendMessageCommand({ QueueUrl: url, MessageBody: body }))));
+  await send(chunkJson(rows));
+}
+
+/** Session recording chunks take the same queue, as `{"replays": [...]}` messages (events are plain arrays). */
+export async function storeReplays(rows: ReplayRow[]): Promise<void> {
+  if (!rows.length) return;
+  if (!process.env.EVENTS_QUEUE_URL) {
+    await writeRows('replays', rows);
+    return;
+  }
+  await send(chunkJson(rows).map((b) => `{"replays":${b}}`));
 }
 
 /** Rows from queued message bodies (dates arrive as ISO strings). */
-export function eventsFromMessages(bodies: string[]): EventRow[] {
-  return bodies.flatMap((b) => (JSON.parse(b) as EventRow[]).map((r) => ({ ...r, ts: new Date(r.ts) })));
+export function rowsFromMessages(bodies: string[]): { events: EventRow[]; replays: ReplayRow[] } {
+  const events: EventRow[] = [];
+  const replays: ReplayRow[] = [];
+  for (const b of bodies) {
+    const v = JSON.parse(b) as EventRow[] | { replays: ReplayRow[] };
+    if (Array.isArray(v)) for (const r of v) events.push({ ...r, ts: new Date(r.ts) });
+    else for (const r of v.replays ?? []) replays.push({ ...r, ts: new Date(r.ts) });
+  }
+  return { events, replays };
 }
+
+export const eventsFromMessages = (bodies: string[]): EventRow[] => rowsFromMessages(bodies).events;

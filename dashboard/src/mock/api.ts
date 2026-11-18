@@ -1,10 +1,12 @@
+import type { RecordingSettings } from '../api/contract';
 import type { ClickAlias, ClickAliasInput, Device, Goal, GoalInput, Kiosk, KioskConfig, KioskState, Member, Project, SavedView, SavedViewInput, SlackIntegration, Trigger, TriggerInput } from '../api/contract';
 import * as D from './data';
 import { funnel } from './funnel';
 import { hex } from './rng';
 import * as F from './filters';
+import * as REC from './recordings';
 
-interface Db { projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]> }
+interface Db { projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; recordingSettings?: Record<string, RecordingSettings> }
 const KEY = 'wgo.mock.db';
 const newKey = () => 'ak_' + hex(28, Date.now(), Math.floor(Math.random() * 1e9));
 
@@ -230,6 +232,25 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       const scope = (qp('scope') ?? 'events') as 'events' | 'logs' | 'spans';
       const sample = scope === 'logs' ? D.logs({ from, to, limit: 300 }).logs : D.events({ from, to, limit: 300 }).events;
       return parts[3] === 'values' ? F.values(scope, sample, qp('field') ?? '', qp('q')) : F.fields(scope, sample);
+    }
+    case 'recording-settings': {
+      const all = (db.recordingSettings ??= {});
+      if (method === 'PATCH') {
+        const b = body as RecordingSettings;
+        if (!(b.samplePercent >= 0 && b.samplePercent <= 100)) throw new MockHttpError(400, 'The share of sessions must be from 0 to 100 %');
+        if (b.triggers.some((t) => t.type !== 'error' && !t.value)) throw new MockHttpError(400, 'A trigger needs a value');
+        all[pid] = b; save(db);
+      }
+      const settings = all[pid] ?? REC.DEFAULT_MOCK_SETTINGS;
+      return { settings, usage: { lastHour: 9, lastDay: 214 }, retentionDays: 30, updatedAt: all[pid] ? new Date().toISOString() : null, updatedBy: all[pid] ? email : null };
+    }
+    case 'recordings': {
+      if (parts[3]) {
+        const r = REC.getRecording(decodeURIComponent(parts[3]));
+        if (!r) throw new MockHttpError(404, 'No recording of that session');
+        return r;
+      }
+      return REC.listRecordings(from, to, qp('before') ? Date.parse(qp('before')!) : undefined, limit);
     }
     case 'events': return D.events({ from, to, before: qp('before') ? Date.parse(qp('before')!) : undefined, type: qp('type'), q: qp('q'), sessionId: qp('sessionId'), fingerprint: qp('fingerprint'), filters: F.parse(qp('filters')), located: qp('located') === '1', lat: qp('lat') ? Number(qp('lat')) : undefined, lon: qp('lon') ? Number(qp('lon')) : undefined, limit });
     case 'services': return D.services(from, to);

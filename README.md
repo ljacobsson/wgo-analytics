@@ -30,6 +30,10 @@ Events show up within seconds.
   at the edge, and IP addresses are never stored.
 - **Small SDK:** about 10 KB gzipped. It batches and compresses events, and holds on to them while the visitor
   is offline.
+- **Session recordings:** watch what a visitor did, with their pointer, clicks, scrolling and page changes replayed
+  over snapshots of the page. There is no video, so a session costs kilobytes. Record a share of sessions, or the ones that hit an error
+  or reach a page you choose, with hourly and daily limits. Off until a project owner turns it on. Typed text is
+  never recorded.
 
 ![The Live page: click counters for the signup button, add to cart and checkout, and a world map with recent events at each location](docs/screenshots/live.jpg)
 
@@ -378,6 +382,7 @@ forward cookies to the backend either, so cookies your own site sets on the same
 | `wgo:uid` | The user id you pass to `WGO.identify()`, or the one `autoIdentify` read from your app's JWT | `WGO.reset()` or the visitor clears site data. Only set if you identify users |
 | `wgo:um` | `1` when the user id came from `identify()`, so a JWT doesn't replace it | Same as `wgo:uid` |
 | `wgo:q:<writeKey>` | Events that haven't been sent yet, e.g. while offline | They are delivered. Turn off with `persist: false` |
+| `wgo:rec:<session id>` (`sessionStorage`) | `1` when this session is being recorded, so later pages keep recording | The tab is closed. Only set if the project records sessions |
 
 **Storing nothing: cookieless mode.** Add `data-cookieless` to the script tag (or `cookieless: true` with npm)
 and the SDK keeps everything above in memory, so it writes nothing to `localStorage`, `sessionStorage` or
@@ -396,6 +401,12 @@ IP addresses are never stored. For clicks, the SDK records the element's selecto
 its text, `aria-label` or the label of a form field. It never records what someone typed into a field, and it
 records no label for fields that look like passwords, secrets, tokens, CVV or social security numbers. Mark
 anything else private with `data-wgo-mask` or `data-wgo-ignore`.
+
+**Session recordings.** Only when a project owner turns them on (they're off by default). For a recorded session the
+SDK also sends snapshots of the page's HTML (without scripts) and where the pointer moved, clicked and scrolled.
+Form fields are recorded as one `•` per typed character, never their contents. `data-wgo-mask` turns an element's
+text into asterisks, `data-wgo-block` hides it completely, and the "mask all text" setting does this for the whole page.
+Recordings are kept for 30 days at most. A site can opt out with `data-record="false"` on the script tag.
 
 **User ids.** Events only carry a user id if you identify users: with `WGO.identify()`, or with
 `data-auto-identify`, which reads the email or username from a JWT your app keeps in the browser or sends in an

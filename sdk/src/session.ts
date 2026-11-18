@@ -40,6 +40,12 @@ export class Session {
     return { id: r.id, sampled: r.smp === 1 }
   }
 
+  /** The current session's id without marking activity (a new one if it timed out). */
+  peek(): string {
+    const r = this.read() || this.cur
+    return r && Date.now() - r.last <= this.timeout ? r.id : this.touch().id
+  }
+
   identify(id: string, manual = true): void {
     this.uid = id
     this.store.set('wgo:uid', id)

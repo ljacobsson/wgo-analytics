@@ -29,6 +29,7 @@ The script auto-initialises from its own tag and exposes `window.WGO`. Supported
 | `data-http-ignore` | Comma-separated URL substrings never reported as failed requests |
 | `data-priority-clicks` | A CSS selector list; matching clicks are sent within a second (for realtime watches) |
 | `data-persist="false"` / `data-compress="false"` | Turn off `persist` / `compress` |
+| `data-record="false"` | Never record sessions on this site, whatever the project's settings (see [Session recording](#session-recording)) |
 
 The dashboard's install page builds this tag for you: tick the options you want and copy it.
 
@@ -149,6 +150,7 @@ Only `writeKey` and `endpoint` are required.
 | `debug` | `false` | Console diagnostics |
 | `priorityClicks` | `[]` | CSS selectors; matching clicks use priority latency (for realtime watches) |
 | `autoIdentify` | `false` | Use the email or username in your app's JWT as the user id ([details](#identifying-users)) |
+| `record` | `true` | Follow the project's [session recording](#session-recording) settings; `false` never records |
 
 **Compression and CORS.** Uncompressed batches are sent as `text/plain;charset=UTF-8`, a CORS simple request (no preflight). Compressed batches use `application/octet-stream`, which browsers preflight cross-origin; the server must answer the `OPTIONS` request, or set `compress: false`. The backend detects gzip by its magic bytes (`1f 8b`). Beacon sends are never compressed.
 
@@ -161,15 +163,35 @@ Only `writeKey` and `endpoint` are required.
 * Identical errors within 5 s are coalesced into one event with a `count`; at most 30 error events per minute.
 * The SDK ignores its own ingest requests in the fetch/XHR interceptors and never throws into the host app.
 
+## Session recording
+
+Project owners turn recording on in the dashboard (Recordings, then Settings). It's off by default, and the snippet stays the same.
+On each page load the SDK asks `GET <endpoint>/replay/config?k=<writeKey>` (cached for a minute) whether and what to record:
+a share of sessions, and triggers (a page, a click on a CSS selector, a custom event or an error) that record a session the sample
+didn't pick. Only then, and only for a session that may be recorded, it loads the recorder, `wgo-replay.js` (about 8 KB gzipped),
+from next to `wgo.js`.
+
+There is no video. The recorder sends snapshots of the page as HTML (gzipped, taken on load, on navigation and when the page
+changes after an interaction, without scripts or form values), and between them the pointer position, clicks, scrolling, viewport
+size and form field lengths. A typical session is a few kilobytes per page.
+
+* Before sending anything, the recorder asks `POST <endpoint>/replay/start` for a slot. The server grants it within the project's
+  per-hour and per-day limits, and drops recordings of sessions without one.
+* With triggers set, the recorder keeps the last minute in memory until one matches. The recording then starts with what led up to it.
+* Automated browsers (`navigator.webdriver`) are never recorded.
+* Opt out on a site with `data-record="false"` (`record: false`). `respectDoNotTrack` turns recording off along with everything else.
+* In cookieless mode, the "this session is recorded" flag is kept in memory. Otherwise it's in `sessionStorage` (`wgo:rec:<session id>`).
+
 ## Privacy: data attributes
 
 | Attribute | Effect |
 | --- | --- |
 | `data-track="name"` (or `data-wgo="name"`) | Makes the element a click target and sets `name` on its click events (nearest ancestor wins) |
 | `data-wgo-ignore` | Clicks on the element or any descendant are never captured |
-| `data-wgo-mask` | Click text is omitted for the element and its descendants |
+| `data-wgo-mask` | Click text is omitted for the element and its descendants. In recordings, their text shows as `*` |
+| `data-wgo-block` | Recordings show the element as an empty box of the same size (images, maps, anything private) |
 
-Input values are never captured. Click text is also omitted for `input`, `textarea`, `select`, `contenteditable` and password-like elements.
+Input values are never captured: recordings show one `•` per typed character. Click text is also omitted for `input`, `textarea`, `select`, `contenteditable` and password-like elements.
 
 ## Wire format
 

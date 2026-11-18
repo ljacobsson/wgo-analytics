@@ -7,6 +7,7 @@ import * as G from '../lib/goals';
 import * as GF from '../lib/funnel';
 import * as K from '../lib/kiosks';
 import * as P from '../lib/projects';
+import * as R from '../lib/recordings';
 import { READ_ROUTES } from '../lib/readRoutes';
 import * as S from '../lib/slack';
 import * as T from '../lib/triggers';
@@ -135,6 +136,17 @@ async function route(method: string, parts: string[], q: Q, email: string, event
         return S.setupStatus(pid, domain);
       }
     }
+    throw new HttpError(405, 'Method not allowed');
+  }
+
+  // session recordings: members watch them; only owners decide whether and how much is recorded. Not on kiosks.
+  if (sub === 'recordings' && method === 'GET') {
+    await P.getProject(email, pid);
+    return rest[0] ? R.getRecording(pid, decodeURIComponent(rest[0]), q) : R.listRecordings(pid, q);
+  }
+  if (sub === 'recording-settings') {
+    if (method === 'GET') { await P.getProject(email, pid); return R.getSettings(pid); }
+    if (method === 'PATCH') { await P.requireOwner(email, pid); return R.saveSettings(pid, email, jsonBody(event)); }
     throw new HttpError(405, 'Method not allowed');
   }
 

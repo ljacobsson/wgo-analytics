@@ -9,6 +9,8 @@ import { deleteExpired } from './store/maintain';
  * so data lives up to a day longer. Hourly rollups (DSQL) outlive raw data (ROLLUP_RETENTION_DAYS).
  */
 export const DEFAULT_RETENTION_DAYS = 90;
+/** Session recordings (lib/recordings.ts) are kept at most this long, whatever the project's retention. */
+export const RECORDING_RETENTION_DAYS = 30;
 const DAY = 86_400_000;
 
 export function maxRetentionDays(): number {
@@ -52,6 +54,7 @@ export async function runRetention(deadline: number, rolledUntil: number, now = 
   const days = new Map(projects.map((p) => [p.id, effectiveRetention(p.retention_days)]));
   const raw = await deleteExpired(projects.map((p) => p.id), (pid, table) => {
     const cutoff = now - days.get(pid)! * DAY;
+    if (table === 'replays') return Math.max(cutoff, now - RECORDING_RETENTION_DAYS * DAY);
     return table === 'events' ? Math.min(cutoff, rolledUntil) : cutoff;
   }, deadline);
   Object.assign(deleted, raw.deleted);
@@ -71,8 +74,14 @@ export async function runRetention(deadline: number, rolledUntil: number, now = 
          SELECT anon_id FROM identities WHERE project_id = $1 AND created_at < $2 LIMIT 500)`,
       [p.id, new Date(Math.min(cutoff, rolledUntil))], 500, deadline,
     );
+    // recording slots: their chunks are gone with the replays files
+    const recordingsDone = identitiesDone && await deleteSimple(
+      `DELETE FROM recordings WHERE project_id = $1 AND session_id IN (
+         SELECT session_id FROM recordings WHERE project_id = $1 AND started_at < $2 LIMIT 500)`,
+      [p.id, new Date(Math.max(cutoff, now - RECORDING_RETENTION_DAYS * DAY) - DAY)], 500, deadline,
+    );
     const rollCutoff = new Date(now - ROLLUP_RETENTION_DAYS * DAY);
-    const rollupsDone = identitiesDone && await deleteSimple(
+    const rollupsDone = recordingsDone && await deleteSimple(
       `DELETE FROM rollups WHERE project_id = $1 AND (dim, hour, key) IN (
          SELECT dim, hour, key FROM rollups WHERE project_id = $1 AND hour < $2 LIMIT 500)`,
       [p.id, rollCutoff], 500, deadline,

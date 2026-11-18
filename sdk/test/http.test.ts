@@ -100,11 +100,12 @@ describe('fetch interceptor', () => {
   })
 
   it('restores window.fetch on shutdown', () => {
-    const f = appFetch(200)
+    appFetch(200)
+    const orig = globalThis.fetch
     A.init(cfg({ autocapture: on }))
-    expect(globalThis.fetch).not.toBe(f)
+    expect(globalThis.fetch).not.toBe(orig)
     A.shutdown()
-    expect(globalThis.fetch).toBe(f)
+    expect(globalThis.fetch).toBe(orig)
   })
 })
 

@@ -702,3 +702,87 @@ export interface KioskState {
   reloadAt: string | null;
   version: string; // changes whenever the config, the name or reloadAt does
 }
+
+// ---------- session recordings ----------
+
+/**
+ * Starts a recording when it matches, even for a session the sample didn't pick (the hourly and daily limits
+ * still apply). page: path glob (`/checkout*`); click: CSS selector; event: custom event name; error: text in a
+ * JavaScript error or failed request (empty: any).
+ */
+export type RecordingTriggerType = 'page' | 'click' | 'event' | 'error';
+export interface RecordingTrigger {
+  type: RecordingTriggerType;
+  value: string;
+}
+
+/** A project's recording settings. Off until an owner turns them on. */
+export interface RecordingSettings {
+  enabled: boolean;
+  /** share of sessions recorded, 0–100 */
+  samplePercent: number;
+  triggers: RecordingTrigger[];
+  /** most sessions that may start recording in any 60 minutes / 24 hours; null = no limit */
+  maxPerHour: number | null;
+  maxPerDay: number | null;
+  /** replace all text on the page with asterisks (form values are never recorded either way) */
+  maskAllText: boolean;
+}
+
+export interface RecordingSettingsResponse {
+  settings: RecordingSettings;
+  /** recordings started in the last 60 minutes and 24 hours */
+  usage: { lastHour: number; lastDay: number };
+  /** recordings are kept this many days (at most the project's retention) */
+  retentionDays: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+export interface RecordingSummary {
+  sessionId: string;
+  startedAt: string;
+  /** when the last recorded activity happened (null while nothing has been stored yet) */
+  endedAt: string | null;
+  durationMs: number;
+  /** why it was recorded: `sample`, or `trigger:<type>[:<value>]` */
+  reason: string;
+  anonId: string | null;
+  userId: string | null;
+  entryPath: string | null;
+  pages: number;
+  clicks: number;
+  errors: number;
+  browser: string | null;
+  os: string | null;
+  device: string | null;
+  country: string | null;
+  city: string | null;
+}
+
+export interface RecordingsResponse {
+  recordings: RecordingSummary[];
+  /** pass as `before` for the next (older) page */
+  nextBefore: string | null;
+}
+
+/**
+ * Part of a recording, as the SDK sent it (sdk/src/replay/recorder.ts describes the records). `page` identifies
+ * one page load (tab): a session open in two tabs has two.
+ */
+export interface RecordingChunk {
+  ts: string;
+  page: string;
+  seq: number;
+  /** ms from `ts` to its last record */
+  dur: number;
+  url: string | null;
+  r: unknown[][];
+}
+
+export interface RecordingResponse {
+  recording: RecordingSummary;
+  chunks: RecordingChunk[];
+  /** more chunks follow: pass as `after` */
+  nextAfter: string | null;
+}

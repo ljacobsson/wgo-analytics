@@ -19,7 +19,7 @@ export interface TableDef {
   columns: Array<[string, ColType]>;
 }
 
-export type RawTable = 'events' | 'logs' | 'spans' | 'metric_points';
+export type RawTable = 'events' | 'logs' | 'spans' | 'metric_points' | 'replays';
 
 const s = 'string' as const, j = 'json' as const, ts = 'timestamp' as const, i = 'int' as const, d = 'double' as const;
 
@@ -54,6 +54,14 @@ export const TABLES: Record<RawTable, TableDef> = {
     columns: [
       ['ts', ts], ['id', s], ['name', s], ['type', s], ['unit', s], ['description', s], ['service', s], ['value', d],
       ['count', 'bigint'], ['attributes', j],
+    ],
+  },
+  // session recordings (lib/recordings.ts): one row per chunk the recorder sent, `data` its records as JSON text.
+  // Compacted files are sorted by session, so opening one recording reads a single row group per file.
+  replays: {
+    name: 'replays', time: 'ts', key: ['id'], sort: ['session_id', 'ts'],
+    columns: [
+      ['ts', ts], ['id', s], ['session_id', s], ['anon_id', s], ['page_id', s], ['seq', i], ['dur', i], ['url', s], ['data', s],
     ],
   },
 };

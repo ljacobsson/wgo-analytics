@@ -855,6 +855,36 @@ Resources:
         External: [pg-native, '@duckdb/node-api']
         EntryPoints: [src/handlers/kiosk.ts]
 
+  # Session recording, for the browser SDK (write-key auth, like /ingest): GET /replay/config says what to record,
+  # POST /replay/start grants a session a recording slot within the project's limits (src/lib/recordings.ts).
+  ReplayFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: replay.handler
+      MemorySize: 512
+      Timeout: 10
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dsql:DbConnectAdmin
+              Resource: !GetAtt DsqlCluster.ResourceArn
+      Events:
+        ReplayConfig:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /replay/config, Method: GET }
+        ReplayStart:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /replay/start, Method: POST }
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        External: [pg-native, '@duckdb/node-api']
+        EntryPoints: [src/handlers/replay.ts]
+
   # MCP server (/mcp) and its OAuth discovery documents. No API Gateway authorizer: unauthenticated calls must
   # get the 401 + WWW-Authenticate challenge that starts the OAuth flow, so the function verifies tokens.
   # Its public URL comes from the request (CloudFront Function below), not from the distribution: the
@@ -1063,7 +1093,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt MigrateFunction.Arn
       SchemaVersion: !Ref SchemaVersion
-      SchemaHash: '2026-11-17-2' # bump when src/lib/schema.ts changes
+      SchemaHash: '2026-11-18-1' # bump when src/lib/schema.ts changes
 
   # ---------------------------------------------------------------- dashboard + SDK hosting
   WebBucket:
@@ -1109,6 +1139,23 @@ Resources:
             - Origin
             - Access-Control-Request-Method
             - Access-Control-Request-Headers
+
+  # Every page view asks GET /replay/config whether to record: answered from the edge for a minute per write key.
+  # Origin is part of the key so each site gets a response with its own CORS header.
+  ReplayConfigCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub '${AWS::StackName}-replay-config'
+        DefaultTTL: 60
+        MinTTL: 0
+        MaxTTL: 300
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          CookiesConfig: { CookieBehavior: none }
+          QueryStringsConfig: { QueryStringBehavior: whitelist, QueryStrings: [k] }
+          HeadersConfig: { HeaderBehavior: whitelist, Headers: [Origin] }
 
   # The MCP server must know the URL clients use (its OAuth resource identifier). API Gateway only sees its own
   # host, so this copies the viewer's Host; the function trusts it only next to the edge secret header.
@@ -1184,6 +1231,22 @@ Resources:
             Compress: false
           - PathPattern: /v1/*
             TargetOriginId: intake
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: !FindInMap [CloudFront, Managed, CachingDisabled]
+            OriginRequestPolicyId: !Ref IngestOriginRequestPolicy
+            Compress: false
+          - PathPattern: /replay/config
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: !Ref ReplayConfigCachePolicy
+            OriginRequestPolicyId: !Ref IngestOriginRequestPolicy
+            Compress: true
+          - PathPattern: /replay/start
+            TargetOriginId: api
             ViewerProtocolPolicy: https-only
             AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
             CachedMethods: [GET, HEAD]

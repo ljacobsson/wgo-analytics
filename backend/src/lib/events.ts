@@ -104,10 +104,7 @@ export function fillMissingIds(batch: WireBatch, sourceId: string): void {
 /** Normalize an SDK batch into event rows. Invalid events are dropped, never the whole batch. */
 export function normalizeBatch(projectId: string, batch: WireBatch, receivedAt = Date.now(), userAgentHeader?: string, geo: Geo = NO_GEO): EventRow[] {
   if (!batch || !Array.isArray(batch.e)) return [];
-  // Correct for badly-set client clocks (the SDK stamps sentAt right before sending). The correction is
-  // coarse on purpose: a retried batch must map to the same `ts`, because (project_id, ts, id) dedupes retries.
-  const rawSkew = typeof batch.sentAt === 'number' ? receivedAt - batch.sentAt : 0;
-  const skew = Math.abs(rawSkew) > 120_000 ? Math.round(rawSkew / 60_000) * 60_000 : 0;
+  const skew = clockSkew(batch, receivedAt);
   const ua = parseUserAgent(str(batch.ctx?.ua) ?? userAgentHeader ?? '');
   const ctxExtras: Record<string, unknown> = {};
   for (const k of ['lang', 'sw', 'sh', 'tz', 'release', 'env', 'sdk'] as const) if (batch.ctx?.[k] !== undefined) ctxExtras[k] = batch.ctx[k];
@@ -117,8 +114,7 @@ export function normalizeBatch(projectId: string, batch: WireBatch, receivedAt =
   const rows: EventRow[] = [];
   for (const e of batch.e.slice(0, MAX_EVENTS_PER_BATCH)) {
     if (!e || !TYPES.has(e.t)) continue;
-    let ts = (num(e.ts) ?? receivedAt) + skew;
-    if (ts > receivedAt + MAX_FUTURE_SKEW_MS || ts < receivedAt - MAX_AGE_MS) ts = receivedAt;
+    const ts = eventTime(e.ts, skew, receivedAt);
     const d = (e.d && typeof e.d === 'object' ? e.d : {}) as Record<string, unknown>;
     const row: EventRow = {
       project_id: projectId,
@@ -170,6 +166,21 @@ export function normalizeBatch(projectId: string, batch: WireBatch, receivedAt =
     rows.push(row);
   }
   return rows;
+}
+
+/**
+ * Correction for badly-set client clocks (the SDK stamps sentAt right before sending). Coarse on purpose: a
+ * retried batch must map to the same `ts`, because (project_id, ts, id) dedupes retries.
+ */
+export function clockSkew(batch: WireBatch, receivedAt: number): number {
+  const raw = typeof batch.sentAt === 'number' ? receivedAt - batch.sentAt : 0;
+  return Math.abs(raw) > 120_000 ? Math.round(raw / 60_000) * 60_000 : 0;
+}
+
+/** An event time with the batch's skew applied, or the receive time when it's implausible. */
+export function eventTime(ts: unknown, skew: number, receivedAt: number): number {
+  const t = (num(ts) ?? receivedAt) + skew;
+  return t > receivedAt + MAX_FUTURE_SKEW_MS || t < receivedAt - MAX_AGE_MS ? receivedAt : t;
 }
 
 function safePath(url: unknown): string | null {

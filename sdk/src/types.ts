@@ -68,6 +68,32 @@ export interface Config {
   priorityClicks?: string[]
   /** Use the email (or username) in the app's JWT as the user id. Off by default: it's personal data. */
   autoIdentify?: boolean
+  /**
+   * Session recording follows the project's settings in the dashboard (off until a project owner turns it on).
+   * `false` never records on this site, whatever the project says.
+   */
+  record?: boolean
+}
+
+/** What to record, from GET /replay/config (the project's recording settings). */
+export interface ReplayTrigger { type: 'page' | 'click' | 'event' | 'error'; value?: string }
+export interface ReplayConfig { on: boolean; rate?: number; trg?: ReplayTrigger[]; mask?: boolean }
+
+/** @internal what the recorder (sdk/src/replay, its own script) needs from the main SDK */
+export interface ReplayHost {
+  c: ReplayConfig
+  k: string
+  ep: string
+  debug: boolean
+  /** cookieless: nothing may be stored on the device */
+  mem: boolean
+  ctx: Ctx
+  /** the current session id (without marking activity), and the anonymous id */
+  sid(): string
+  aid(): string
+  clean(url: string): string
+  /** every event the SDK sends (pageviews, custom events, errors): triggers watch them */
+  on(fn: (e: WireEvent) => void): () => void
 }
 
 export type ResolvedConfig = Required<Omit<Config, 'beforeSend' | 'release' | 'environment' | 'autocapture'>> &
