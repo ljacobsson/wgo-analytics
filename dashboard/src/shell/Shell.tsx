@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronsUpDown, Check, Plus, Search, RefreshCw, Sun, Moon, LogOut, PanelLeft, History } from 'lucide-react';
+import { ChevronsUpDown, Check, Plus, Search, RefreshCw, Sun, Moon, LogOut, PanelLeft, History, Menu, X } from 'lucide-react';
 import { Logo, LogoMark } from '../ui/Logo';
 import { PAGES, useProject } from '../lib/project';
 import { navigate, pageHref, useRoute } from '../lib/router';
@@ -77,7 +77,16 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
     const h = () => { setNarrow(m.matches); setForceOpen(null); };
     m.addEventListener('change', h); return () => m.removeEventListener('change', h);
   }, []);
-  const collapsed = forceOpen === null ? narrow : !forceOpen;
+  // Phones get the sidebar as a slide-in menu instead of a permanent rail.
+  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
+  const [navOpen, setNavOpen] = useState(false);
+  useEffect(() => {
+    const m = window.matchMedia('(max-width: 767px)');
+    const h = () => { setMobile(m.matches); setNavOpen(false); };
+    m.addEventListener('change', h); return () => m.removeEventListener('change', h);
+  }, []);
+  useEffect(() => { setNavOpen(false); }, [route.raw]);
+  const collapsed = mobile ? false : forceOpen === null ? narrow : !forceOpen;
 
   const paramsKey = route.params.toString();
   const range = useMemo(() => resolveRange(route.params, Date.now()), [paramsKey, tick, page]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -119,10 +128,14 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
   return (
     <TimeCtx.Provider value={timeCtx}>
       <div className="bg-atmos flex h-full">
-        <aside className={cn('relative z-30 flex shrink-0 flex-col border-r border-line bg-[color-mix(in_srgb,var(--bg)_88%,transparent)] backdrop-blur-xl transition-[width] duration-200', collapsed ? 'w-[60px] p-2' : 'w-[232px] p-3')}>
+        {mobile && navOpen && <div className="anim-fade fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px]" onClick={() => setNavOpen(false)} />}
+        <aside className={cn('z-30 flex shrink-0 flex-col border-r border-line backdrop-blur-xl',
+          mobile ? cn('fixed inset-y-0 left-0 z-50 w-[260px] max-w-[85vw] bg-[var(--raised)] p-3 shadow-2xl transition-transform duration-200', navOpen ? 'translate-x-0' : '-translate-x-full')
+            : cn('relative bg-[color-mix(in_srgb,var(--bg)_88%,transparent)] transition-[width] duration-200', collapsed ? 'w-[60px] p-2' : 'w-[232px] p-3'))}>
           <div className={cn('mb-4 flex items-center px-1 pt-1', collapsed ? 'justify-center' : 'justify-between')}>
             {collapsed ? <LogoMark /> : <Logo />}
-            {!collapsed && <button onClick={() => setForceOpen(false)} className="rounded-md p-1 text-faint hover:text-fg cursor-pointer" title="Collapse"><PanelLeft size={15} /></button>}
+            {mobile ? <button onClick={() => setNavOpen(false)} className="rounded-md p-1 text-faint hover:text-fg cursor-pointer" title="Close menu"><X size={17} /></button>
+              : !collapsed && <button onClick={() => setForceOpen(false)} className="rounded-md p-1 text-faint hover:text-fg cursor-pointer" title="Collapse"><PanelLeft size={15} /></button>}
           </div>
           <ProjectSwitcher collapsed={collapsed} />
           <nav className="mt-5 flex-1 space-y-5 overflow-y-auto">
@@ -144,6 +157,7 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
               ) : (<>
                 <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--line-strong)] text-[11px] font-semibold">{email.slice(0, 1).toUpperCase()}</span>
                 <span className="min-w-0 flex-1 truncate text-[12px] text-muted" title={email}>{email}</span>
+                {mobile && <button onClick={toggleTheme} title="Toggle theme" className="rounded-md p-1 text-faint hover:text-fg cursor-pointer">{theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}</button>}
                 <button onClick={() => void signOut()} title="Sign out" className="rounded-md p-1 text-faint hover:text-fg cursor-pointer"><LogOut size={14} /></button>
               </>)}
             </div>
@@ -152,22 +166,25 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="relative z-30 flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line bg-[color-mix(in_srgb,var(--bg)_70%,transparent)] px-6 backdrop-blur-xl">
-            <h1 className="text-[17px] font-semibold tracking-tight">{title}</h1>
-            <div className="flex items-center gap-2.5">
+          <header className="relative z-30 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-line bg-[color-mix(in_srgb,var(--bg)_70%,transparent)] px-3 backdrop-blur-xl sm:gap-4 md:px-6">
+            <div className="flex min-w-0 items-center gap-1.5">
+              {mobile && <button onClick={() => setNavOpen(true)} title="Menu" className="-ml-1 grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted hover:text-fg cursor-pointer"><Menu size={19} /></button>}
+              <h1 className="truncate text-[16px] font-semibold tracking-tight md:text-[17px]">{title}</h1>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 md:gap-2.5">
               <button onClick={() => setCmdOpen(true)} className="hidden h-8 items-center gap-2 rounded-lg border border-line bg-[var(--hl)] pl-2.5 pr-1.5 text-[12.5px] text-faint transition-colors hover:border-[var(--line-strong)] hover:text-muted md:flex cursor-pointer">
                 <Search size={14} />Jump to…<span className="ml-4 flex gap-1"><Kbd>⌘</Kbd><Kbd>K</Kbd></span>
               </button>
-              <ShowOnKioskButton page={page} />
+              {!mobile && <ShowOnKioskButton page={page} />}
               <TimePicker />
-              <div className="flex h-8 items-center gap-2 rounded-lg border border-line bg-[var(--hl)] pl-1 pr-2.5">
+              <div className="flex h-8 items-center gap-2 rounded-lg border border-line bg-[var(--hl)] px-1 sm:pr-2.5">
                 <button onClick={refresh} title="Refresh now" className="rounded-md p-1.5 text-muted hover:text-fg cursor-pointer"><RefreshCw size={14} /></button>
-                <Switch checked={auto} onChange={setAuto} label="Auto" />
+                <span className="hidden sm:contents"><Switch checked={auto} onChange={setAuto} label="Auto" /></span>
               </div>
-              <button onClick={toggleTheme} title="Toggle theme" className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-[var(--hl)] text-muted hover:text-fg cursor-pointer">{theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}</button>
+              {!mobile && <button onClick={toggleTheme} title="Toggle theme" className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-[var(--hl)] text-muted hover:text-fg cursor-pointer">{theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}</button>}
             </div>
           </header>
-          <main className="min-h-0 flex-1 overflow-y-auto"><div key={page} className="page-in mx-auto w-full max-w-[1680px] p-6"><RetentionNote page={page} range={range} />{children}</div></main>
+          <main className="min-h-0 flex-1 overflow-y-auto"><div key={page} className="page-in mx-auto w-full max-w-[1680px] p-3 sm:p-4 md:p-6"><RetentionNote page={page} range={range} />{children}</div></main>
         </div>
       </div>
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} toggleTheme={toggleTheme} />

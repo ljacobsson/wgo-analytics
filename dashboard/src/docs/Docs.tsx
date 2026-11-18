@@ -62,7 +62,7 @@ export function Docs() {
     <div ref={scroller} className="bg-atmos h-full overflow-y-auto">
       <SiteHeader />
 
-      <div className="mx-auto grid max-w-[1200px] gap-12 px-6 pb-24 pt-14 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <div className="mx-auto grid grid-cols-1 max-w-[1200px] gap-12 px-6 pb-24 pt-14 lg:grid-cols-[220px_minmax(0,1fr)]">
         <nav className="hidden lg:block" aria-label="Documentation">
           <div className="sticky top-24 max-h-[calc(100vh-7rem)] space-y-6 overflow-y-auto pb-6 text-[13.5px]">
             {GROUPS.map((g) => (

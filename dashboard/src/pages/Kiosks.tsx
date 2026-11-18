@@ -151,7 +151,7 @@ function KioskCard({ k, onSetup }: { k: Kiosk; onSetup: () => void }) {
         )}
       </div>
 
-      <div className="grid gap-4 border-t border-line px-4 py-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 border-t border-line px-4 py-3 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Switch screens every">
           <select className="field" value={draft.rotateSeconds} disabled={draft.screens.length < 2} onChange={(e) => patch({ rotateSeconds: Number(e.target.value) })}>
             {withCurrent(ROTATE, draft.rotateSeconds).map((s) => <option key={s} value={s}>{secs(s)}</option>)}

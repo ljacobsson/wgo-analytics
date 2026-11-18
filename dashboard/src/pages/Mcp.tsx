@@ -127,7 +127,7 @@ export function McpPage() {
         Connect Claude, VS Code, Cursor or any other MCP client to WGO and ask about traffic, conversions, errors, traces and metrics in plain
         language. The assistant looks up the numbers itself, so there are no screenshots to paste.
       </p>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <Card>
           <CardHeader title="Connect your assistant" sub={<span className="inline-flex items-center gap-1.5">Server URL <Mono className="text-muted">{url}</Mono></span>}
             right={<CopyButton text={url} />} />
@@ -159,11 +159,11 @@ export function McpPage() {
       </div>
       <Card>
         <CardHeader title="Tools" sub={`${TOOLS.reduce((n, g) => n + g.tools.length, 0)} read-only tools; the assistant picks which to call`} />
-        <div className="grid gap-x-8 gap-y-4 px-4 pb-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-4 px-4 pb-4 md:grid-cols-2">
           {TOOLS.map((g) => (
             <div key={g.group}>
               <div className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-faint">{g.group}</div>
-              <div className="grid gap-x-4 gap-y-1 sm:grid-cols-[auto_1fr]">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[auto_1fr]">
                 {g.tools.map(([name, what]) => <div key={name} className="contents"><Mono className="text-[12px] text-fg">{name}</Mono><span className="text-[12.5px] text-muted">{what}</span></div>)}
               </div>
             </div>))}

@@ -23,11 +23,11 @@ export function TimePicker() {
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div ref={ref} className="relative">
-      <button onClick={() => setOpen(!open)} className="flex h-8 items-center gap-2 rounded-lg border border-line bg-[var(--hl)] px-3 text-[12.5px] font-medium transition-colors hover:border-[var(--line-strong)] cursor-pointer">
+      <button onClick={() => setOpen(!open)} className="flex h-8 items-center gap-2 whitespace-nowrap rounded-lg border border-line bg-[var(--hl)] px-3 text-[12.5px] font-medium transition-colors hover:border-[var(--line-strong)] cursor-pointer">
         <CalendarClock size={14} className="text-muted" />{range.preset === 'custom' ? 'Custom' : range.label}<ChevronDown size={13} className="text-faint" />
       </button>
       {open && (
-        <div className="anim-pop absolute right-0 top-10 z-40 w-[300px] rounded-xl border border-line bg-[var(--raised)] p-2 shadow-2xl">
+        <div className="anim-pop absolute right-0 top-10 z-40 w-[300px] max-w-[calc(100vw-24px)] rounded-xl border border-line bg-[var(--raised)] p-2 shadow-2xl">
           {PRESETS.map((p) => (
             <button key={p} onClick={() => { set({ range: p === '24h' ? null : p, from: null, to: null }); setOpen(false); }}
               className={cn('flex w-full items-center justify-between rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-[var(--hl)] cursor-pointer', range.preset === p && 'text-accent')}>

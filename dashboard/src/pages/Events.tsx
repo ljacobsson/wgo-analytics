@@ -11,7 +11,7 @@ import { Badge, Card, EmptyState, ErrorState, Mono, Skeleton, TypeBadge, useDebo
 import { FilterBar } from '../ui/FilterBar';
 import { AttributeTable, eventAttributeRows } from './EventAttributes';
 import { useSentinel } from '../ui/useSentinel';
-import { ColumnsMenu, EventCell, useEventColumns, userFilter, type EventColumn } from '../ui/EventColumns';
+import { ColumnsMenu, EventCell, eventRowMinWidth, useEventColumns, userFilter, type EventColumn } from '../ui/EventColumns';
 import { mergeFilters, useFilters } from '../lib/filters';
 import { RowsSkeleton } from './common';
 import { Stack } from './Errors';
@@ -30,7 +30,7 @@ function EventDetails({ e, onSession }: { e: AnalyticsEvent; onSession: (s: stri
   const rows = eventAttributeRows(e);
   const { project } = useProject(); const route = useRoute();
   return (
-    <div className="space-y-4 border-b border-line/60 bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-5 py-4" onClick={(x) => x.stopPropagation()}>
+    <div className="sticky left-0 w-[100cqw] space-y-4 border-b border-line/60 bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-4 py-4 sm:px-5" onClick={(x) => x.stopPropagation()}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-faint">
         <span className="tnum">{fmtDateTime(e.ts)}</span><Mono>{e.id}</Mono>
         {e.sessionId && <button className="text-accent hover:underline cursor-pointer" onClick={() => onSession(e.sessionId!)}>Session timeline →</button>}
@@ -76,15 +76,15 @@ export function EventsPage() {
     <div className="space-y-4">
       <FilterBar scope="events" />
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap gap-1.5">{TYPES.map((t) => (
-          <button key={t || 'all'} onClick={() => set({ type: t || null })} className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-all cursor-pointer ${type === t ? 'border-accent/50 bg-accent/15 text-fg' : 'border-line text-muted hover:text-fg hover:border-[var(--line-strong)]'}`}>{t || 'All'}</button>))}</div>
-        <div className="ml-auto flex items-center gap-2"><ColumnsMenu value={cols} onChange={setCols} defaults={DEFAULT_COLUMNS} />
-          <div className="relative w-72"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Search path, selector, message…" value={qIn} onChange={(e) => { setQIn(e.target.value); }} onBlur={() => set({ q: qIn || null })} /></div></div>
+        <div className="-mx-3 flex gap-1.5 overflow-x-auto px-3 sm:mx-0 sm:flex-wrap sm:px-0">{TYPES.map((t) => (
+          <button key={t || 'all'} onClick={() => set({ type: t || null })} className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-[12px] font-medium transition-all cursor-pointer ${type === t ? 'border-accent/50 bg-accent/15 text-fg' : 'border-line text-muted hover:text-fg hover:border-[var(--line-strong)]'}`}>{t || 'All'}</button>))}</div>
+        <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto"><ColumnsMenu value={cols} onChange={setCols} defaults={DEFAULT_COLUMNS} />
+          <div className="relative min-w-0 flex-1 sm:w-72 sm:flex-none"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Search path, selector, message…" value={qIn} onChange={(e) => { setQIn(e.target.value); }} onBlur={() => set({ q: qIn || null })} /></div></div>
       </div>
-      {sessionId && <div className="flex items-center gap-2 text-[13px]"><Badge tone="accent" className="!py-1 !text-[12px]">Session timeline <Mono>{shortId(sessionId, 12)}</Mono><button onClick={() => set({ sessionId: null })} className="cursor-pointer"><X size={12} /></button></Badge><span className="text-muted">Showing every event from this session, newest first.</span></div>}
-      <Card className="overflow-hidden">
-        {ev.isPending ? <RowsSkeleton n={10} /> : events.length === 0 ? <EmptyState icon={<ListTree size={22} />} title="No events match">Try a wider time range or clear the filters.</EmptyState> : (
-          <div>{events.map((e) => (
+      {sessionId && <div className="flex flex-wrap items-center gap-2 text-[13px]"><Badge tone="accent" className="!py-1 !text-[12px]">Session timeline <Mono>{shortId(sessionId, 12)}</Mono><button onClick={() => set({ sessionId: null })} className="cursor-pointer"><X size={12} /></button></Badge><span className="text-muted">Showing every event from this session, newest first.</span></div>}
+      <Card className="@container overflow-x-auto">
+        {ev.isPending ? <RowsSkeleton n={10} /> : events.length === 0 ? <EmptyState pinned icon={<ListTree size={22} />} title="No events match">Try a wider time range or clear the filters.</EmptyState> : (
+          <div style={{ minWidth: eventRowMinWidth(cols, 32 + 13 + 68 + 84 + 160 + 52 + 48) }}>{events.map((e) => (
             <div key={e.id}>
             <div onClick={() => toggle(e.id)} className={`group flex h-10 cursor-pointer items-center gap-3 border-b border-line/60 px-4 text-[12.5px] transition-colors hover:bg-[var(--hl)] ${open.has(e.id) ? 'bg-[var(--hl)]' : ''}`}>
               <ChevronRight size={13} className={`shrink-0 text-faint transition-transform ${open.has(e.id) ? 'rotate-90' : ''}`} />

@@ -15,7 +15,7 @@ import { navigate, pageHref, useRoute } from '../lib/router';
 import { useProject } from '../lib/project';
 import { useClickAliases } from '../api/hooks';
 import { isKiosk } from '../lib/kiosk';
-import { ColumnsMenu, EventCell, useEventColumns, userFilter, type EventColumn } from '../ui/EventColumns';
+import { ColumnsMenu, EventCell, eventRowMinWidth, useEventColumns, userFilter, type EventColumn } from '../ui/EventColumns';
 import { currentFilters, mergeFilters } from '../lib/filters';
 
 /** Firehose columns until someone picks their own (saved per browser). */
@@ -167,9 +167,9 @@ function Firehose({ store }: { store: LiveStore }) {
   const toEvents = (extra: Record<string, string>) => navigate(pageHref(project.id, 'events', route.params, extra));
   return (
     <Card className="overflow-hidden">
-      <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line px-4 py-2.5">
         <div className="flex items-center gap-3"><h3 className="text-[13px] font-semibold">Firehose</h3>
-          <span className="text-[12px] text-faint tnum">{fmtNum(feed.length)} / 500 events{pending > 0 && <span className="ml-2 text-warn">+{pending} held</span>}</span></div>
+          <span className="whitespace-nowrap text-[12px] text-faint tnum">{fmtNum(feed.length)} / 500 events{pending > 0 && <span className="ml-2 text-warn">+{pending} held</span>}</span></div>
         {!isKiosk() && <div className="flex items-center gap-2">
           <ColumnsMenu value={cols} onChange={setCols} defaults={FIREHOSE_COLUMNS} />
           <Button size="sm" onClick={() => store.clearFeed()}><Eraser size={13} />Clear</Button>
@@ -177,8 +177,8 @@ function Firehose({ store }: { store: LiveStore }) {
         </div>}
       </div>
       {feed.length === 0 ? <EmptyState icon={<Radio size={22} />} title="Waiting for events…">New events from your site will stream in here the moment they are ingested.</EmptyState> : (
-        <div ref={boxRef} onScroll={(e) => setScroll(e.currentTarget.scrollTop)} className="relative overflow-y-auto" style={{ height: VH }}>
-          <div style={{ height: feed.length * RH, position: 'relative' }}>
+        <div ref={boxRef} onScroll={(e) => setScroll(e.currentTarget.scrollTop)} className="relative overflow-auto" style={{ height: VH }}>
+          <div style={{ height: feed.length * RH, position: 'relative', minWidth: eventRowMinWidth(cols, 32 + 84 + 140 + 40 + 64 + 36) }}>
             {slice.map((it, i) => {
               const e = it.ev, y = (start + i) * RH;
               return (
@@ -218,12 +218,12 @@ export function LivePage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span className={cn('inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[12px] font-medium', connected ? 'border-good/40 bg-good/10 text-good' : 'border-warn/40 bg-warn/10 text-warn')}>
             <i className={cn('h-2 w-2 rounded-full', connected ? 'bg-good' : 'bg-warn pulse-dot')} />{connected ? 'Connected' : store.status === 'connecting' ? 'Connecting…' : 'Reconnecting…'}</span>
           <span className="text-[12.5px] text-muted tnum">{fmtNum(store.eventsSeen)} events received this session</span>
         </div>
-        {!isKiosk() && <div className="flex items-center gap-4">
+        {!isKiosk() && <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
           <Switch checked={prefs.toasts} onChange={(b) => savePrefs({ ...prefs, toasts: b })} label="Toasts" />
           <Switch checked={prefs.notify} onChange={toggleNotify} label={<span className="inline-flex items-center gap-1">{prefs.notify ? <Bell size={13} /> : <BellOff size={13} />}Notifications</span>} />
           <Switch checked={firehose} onChange={setFirehose} label="Firehose stream" />
@@ -234,12 +234,12 @@ export function LivePage() {
       {store.watches.length === 0 ? isKiosk() ? null : (
         <Card><EmptyState icon={<Zap size={22} />} title="Watch anything, live" action={<Button variant="primary" onClick={() => setDlg({ open: true, w: null })}><Plus size={15} />Create your first watch</Button>}>A watch counts matching events in real time, for example every click on your signup button. Or start from the Clicks page with “Watch live”.</EmptyState></Card>
       ) : (
-        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))' }}>
           {store.watches.map((w) => <WatchCard key={w.id} w={w} store={store} onEdit={() => setDlg({ open: true, w })} />)}
         </div>
       )}
 
-      {firehose ? <div className="grid items-start gap-4 2xl:grid-cols-2"><LiveMap store={store} /><Firehose store={store} /></div> : <Card><EmptyState icon={<Radio size={22} />} title="Firehose is off" action={<Button onClick={() => setFirehose(true)}>Start stream</Button>}>Stream every incoming event, not just watch matches.</EmptyState></Card>}
+      {firehose ? <div className="grid grid-cols-1 items-start gap-4 2xl:grid-cols-2"><LiveMap store={store} /><Firehose store={store} /></div> : <Card><EmptyState icon={<Radio size={22} />} title="Firehose is off" action={<Button onClick={() => setFirehose(true)}>Start stream</Button>}>Stream every incoming event, not just watch matches.</EmptyState></Card>}
       <WatchDialog open={dlg.open} initial={dlg.w} onClose={() => setDlg({ open: false, w: null })} onSave={(w, id) => (id ? store.updateWatch({ ...w, id }) : store.addWatch(w))} />
     </div>
   );

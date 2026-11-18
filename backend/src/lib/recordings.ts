@@ -1,5 +1,5 @@
 import type {
-  RecordingChunk, RecordingResponse, RecordingSettings, RecordingSettingsResponse, RecordingsResponse, RecordingSummary, RecordingTrigger,
+  RecordingChunk, RecordingFilters, RecordingResponse, RecordingSettings, RecordingSettingsResponse, RecordingsResponse, RecordingSummary, RecordingTrigger,
   RecordingTriggerType,
 } from '../contract';
 import { query } from './db';
@@ -253,12 +253,14 @@ async function summarize(pid: string, recs: RecordingRow[]): Promise<RecordingSu
     rawQuery<{ session_id: string; first: Date; last: Date }>(pid, w,
       `SELECT session_id, min(ts) AS first, max(ts + to_milliseconds(dur::BIGINT)) AS last
          FROM replays WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND session_id IN ${ids} GROUP BY session_id`, params),
-    rawQuery<{ session_id: string; pages: number; clicks: number; errors: number; user_id: string | null; entry: string | null;
-      browser: string | null; os: string | null; device: string | null; country: string | null; city: string | null }>(pid, w,
+    rawQuery<{ session_id: string; pages: number; clicks: number; rage: number; errors: number; user_id: string | null; entry: string | null;
+      paths: string[] | null; browser: string | null; os: string | null; device: string | null; country: string | null; city: string | null }>(pid, w,
       `SELECT session_id,
               count(*) FILTER (WHERE type = 'pageview') AS pages,
               count(*) FILTER (WHERE type = 'click') AS clicks,
+              count(*) FILTER (WHERE type = 'click' AND TRY_CAST(json_extract_string(props, '$.rage') AS INTEGER) >= 3) AS rage,
               count(*) FILTER (WHERE type IN ('error', 'http_error')) AS errors,
+              list(path ORDER BY ts) FILTER (WHERE type = 'pageview' AND path IS NOT NULL) AS paths,
               max(user_id) AS user_id,
               arg_min(path, ts) FILTER (WHERE type = 'pageview') AS entry,
               any_value(browser) AS browser, any_value(os) AS os, any_value(device) AS device,
@@ -283,7 +285,9 @@ async function summarize(pid: string, recs: RecordingRow[]): Promise<RecordingSu
       entryPath: e?.entry ?? null,
       pages: e?.pages ?? 0,
       clicks: e?.clicks ?? 0,
+      rageClicks: e?.rage ?? 0,
       errors: e?.errors ?? 0,
+      paths: [...new Set(e?.paths ?? [])].slice(0, 20),
       browser: e?.browser ?? null,
       os: e?.os ?? null,
       device: e?.device ?? null,
@@ -299,22 +303,91 @@ const date = (v: string | undefined): Date | null => {
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
+/** Shorter recordings (a visitor who bounced, a tab opened by mistake) are never listed. */
+export const MIN_RECORDING_MS = 3000;
+
+const seconds = (v: string | undefined) => (v && Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : undefined);
+const flag = (v: string | undefined) => v === '1' || v === 'true';
+
+export function parseFilters(q: Record<string, string | undefined>): RecordingFilters {
+  return {
+    minDuration: seconds(q.minDuration),
+    maxDuration: seconds(q.maxDuration),
+    page: q.page?.trim() || undefined,
+    device: q.device?.trim().toLowerCase() || undefined,
+    reason: q.reason === 'sample' || q.reason === 'trigger' ? q.reason : undefined,
+    errors: flag(q.errors),
+    rage: flag(q.rage),
+    identified: flag(q.identified),
+    q: q.q?.trim().toLowerCase() || undefined,
+  };
+}
+
+/** `/checkout*`-style pattern, or (without `*`) any path containing the text. Case-insensitive. */
+function pageMatcher(pattern: string): (path: string) => boolean {
+  if (!pattern.includes('*')) {
+    const needle = pattern.toLowerCase();
+    return (p) => p.toLowerCase().includes(needle);
+  }
+  const re = new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i');
+  return (p) => re.test(p);
+}
+
+/** Whether a recording is listed under the given filters (always: it has data and lasts at least 3 seconds). */
+export function matchesFilters(r: RecordingSummary, f: RecordingFilters): boolean {
+  if (!r.endedAt || r.durationMs < MIN_RECORDING_MS) return false;
+  if (f.minDuration !== undefined && r.durationMs < f.minDuration * 1000) return false;
+  if (f.maxDuration !== undefined && r.durationMs > f.maxDuration * 1000) return false;
+  if (f.errors && !r.errors) return false;
+  if (f.rage && !r.rageClicks) return false;
+  if (f.identified && !r.userId) return false;
+  if (f.device && r.device?.toLowerCase() !== f.device) return false;
+  if (f.reason === 'sample' && r.reason !== 'sample') return false;
+  if (f.reason === 'trigger' && !r.reason.startsWith('trigger:')) return false;
+  if (f.page) {
+    const m = pageMatcher(f.page);
+    if (![r.entryPath, ...r.paths].some((p) => p && m(p))) return false;
+  }
+  if (f.q) {
+    const hay = [r.userId, r.anonId, r.entryPath, ...r.paths, r.country, r.city, r.browser, r.os, r.device, r.reason];
+    if (!hay.some((v) => v?.toLowerCase().includes(f.q!))) return false;
+  }
+  return true;
+}
+
+/** Sessions looked at per request at most: a narrow filter over a long range returns what it found so far. */
+const MAX_SCAN = 1000;
+const SCAN_BATCH = 200;
+
 /**
- * Recordings that started in [from, to), newest first. Sessions that got a slot but never sent anything are left
- * out once they're a few minutes old (the visitor left before the first chunk).
+ * Recordings that started in [from, to), newest first, that match the filters (see RecordingFilters). Recording
+ * slots are read from the newest down in batches, until `limit` match or MAX_SCAN were looked at; `nextBefore`
+ * continues from the last one looked at.
  */
 export async function listRecordings(pid: string, q: Record<string, string | undefined>): Promise<RecordingsResponse> {
   const to = date(q.before) ?? date(q.to) ?? new Date(Date.now() + 60_000);
   const from = date(q.from) ?? new Date(to.getTime() - 7 * DAY);
   const limit = Math.min(Math.max(Number(q.limit) || 50, 1), 200);
-  const rows = await query<RecordingRow>(
-    `SELECT session_id, started_at, anon_id, reason FROM recordings
-      WHERE project_id = $1 AND started_at >= $2 AND started_at < $3 ORDER BY started_at DESC LIMIT $4`,
-    [pid, from, to, limit],
-  );
-  const recent = Date.now() - 5 * 60_000;
-  const recordings = (await summarize(pid, rows)).filter((r, i) => r.endedAt || rows[i].started_at.getTime() > recent);
-  return { recordings, nextBefore: rows.length === limit ? rows[rows.length - 1].started_at.toISOString() : null };
+  const f = parseFilters(q);
+  const recordings: RecordingSummary[] = [];
+  let before = to;
+  let scanned = 0;
+  let more = true;
+  while (recordings.length < limit && more && scanned < MAX_SCAN) {
+    const rows = await query<RecordingRow>(
+      `SELECT session_id, started_at, anon_id, reason FROM recordings
+        WHERE project_id = $1 AND started_at >= $2 AND started_at < $3 ORDER BY started_at DESC LIMIT $4`,
+      [pid, from, before, SCAN_BATCH],
+    );
+    more = rows.length === SCAN_BATCH;
+    for (const [i, r] of (await summarize(pid, rows)).entries()) {
+      scanned++;
+      before = rows[i].started_at;
+      if (matchesFilters(r, f)) recordings.push(r);
+      if (recordings.length === limit) { more = more || i < rows.length - 1; break; }
+    }
+  }
+  return { recordings, nextBefore: more ? before.toISOString() : null };
 }
 
 /** Up to this many characters of chunk data per response; the dashboard asks for the rest with `after`. */

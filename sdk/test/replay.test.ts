@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as A from '../src/index'
 import { serialize } from '../src/replay/serialize'
-import { clickTrigger, eventTrigger, start } from '../src/replay/recorder'
+import { clickTrigger, eventTrigger, MIN_SESSION_MS, start } from '../src/replay/recorder'
 import { unit } from '../src/replay/sample'
 import type { ReplayHost, WireEvent } from '../src/types'
 import { EP, INGEST, batchOf, cfg, mockFetch, setBeacon } from './helpers'
@@ -135,6 +135,7 @@ describe('recorder', () => {
   beforeEach(() => {
     setBeacon(undefined) // the last chunks go out by fetch, where the tests can see them
     Object.defineProperty(navigator, 'webdriver', { value: false, configurable: true }) // happy-dom says true
+    vi.useFakeTimers({ shouldAdvanceTime: true })
   })
   function host(over: Partial<ReplayHost> = {}, subs: ((e: WireEvent) => void)[] = []): ReplayHost {
     return {
@@ -157,6 +158,7 @@ describe('recorder', () => {
       return { ok: true, status: 200 }
     })
     const stop = start(host())
+    await vi.advanceTimersByTimeAsync(MIN_SESSION_MS) // a sampled session asks after 3 s on the page
     await vi.waitFor(() => expect(replayEvents(f).length).toBeGreaterThan(0)) // granted: the buffer went out
     // never with keepalive: the page's 64 KB keepalive quota is left to the event queue
     expect(f.mock.calls.filter((c) => String(c[0]) === INGEST).map((c) => (c[1] as RequestInit).keepalive)).toEqual([false])
@@ -204,9 +206,19 @@ describe('recorder', () => {
     }
   })
 
+  it('sends nothing for a visitor who leaves within 3 seconds', async () => {
+    const f = mockFetch()
+    const stop = start(host())
+    await vi.advanceTimersByTimeAsync(MIN_SESSION_MS - 500)
+    stop()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(f).not.toHaveBeenCalled()
+  })
+
   it('records nothing when the limit is reached', async () => {
     const f = mockFetch((url) => (url.endsWith('/replay/start') ? { ok: true, status: 200, json: async () => ({ ok: false }) } : { ok: true, status: 200 }))
     const stop = start(host())
+    await vi.advanceTimersByTimeAsync(MIN_SESSION_MS)
     await vi.waitFor(() => expect(f).toHaveBeenCalledTimes(1))
     document.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     stop()

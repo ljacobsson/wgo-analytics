@@ -5,7 +5,7 @@ import type {
   BreakdownRow, ClickRow, ErrorGroup, EventsResponse, GeoResponse, HttpErrorGroup, LogsResponse, Me, Member, MetricInfo,
   MetricSeriesResponse, PageRow, Project, ServiceRow, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse, FieldsResponse, FieldValuesResponse, FilterScope, SlackIntegration, Trigger, TriggerInput, TriggerTestResult, SlackSetup,
   SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, ConversionsResponse, ClickAlias,
-  RecordingsResponse, RecordingResponse, RecordingSettings, RecordingSettingsResponse,
+  RecordingsResponse, RecordingResponse, RecordingSettings, RecordingSettingsResponse, RecordingFilters,
 } from './contract';
 import { previousWindow, type TimeRange } from '../lib/time';
 import { botsParam, filtersParam } from '../lib/filters';
@@ -392,10 +392,10 @@ export function useDeleteKiosk(pid: string) {
 }
 
 // ---------- session recordings ----------
-export function useRecordings(pid: string, r: TimeRange) {
+export function useRecordings(pid: string, r: TimeRange, f: RecordingFilters = {}) {
   return useInfiniteQuery({
-    queryKey: ['recordings', pid, r.from, r.to],
-    queryFn: ({ pageParam, signal }) => api<RecordingsResponse>(`${base(pid)}/recordings`, { params: { from: r.from, to: r.to, limit: 50, before: pageParam }, signal }),
+    queryKey: ['recordings', pid, r.from, r.to, f],
+    queryFn: ({ pageParam, signal }) => api<RecordingsResponse>(`${base(pid)}/recordings`, { params: { from: r.from, to: r.to, limit: 50, before: pageParam, ...f }, signal }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (l) => l.nextBefore ?? undefined,
     staleTime: STALE, placeholderData: keepPreviousData,

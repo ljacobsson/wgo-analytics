@@ -44,15 +44,15 @@ function ErrorDrawer({ g, onClose }: { g: ErrorGroup | null; onClose: () => void
         <div className="space-y-5 p-5">
           <div><h2 className="break-words text-[15px] font-semibold leading-snug">{g.message}</h2>
             <div className="mt-2 flex flex-wrap items-center gap-2">{g.kind && <Badge tone="bad">{g.kind}</Badge>}<Mono className="text-faint">{shortId(g.fingerprint, 12)}</Mono></div></div>
-          <div className="grid grid-cols-4 gap-3">{[['Events', fmtNum(g.count)], ['Sessions', fmtNum(g.sessions)], ['First seen', relTime(g.firstSeen)], ['Last seen', relTime(g.lastSeen)]].map(([k, v]) => (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Events', fmtNum(g.count)], ['Sessions', fmtNum(g.sessions)], ['First seen', relTime(g.firstSeen)], ['Last seen', relTime(g.lastSeen)]].map(([k, v]) => (
             <div key={k} className="rounded-xl border border-line bg-[var(--hl)] p-3"><div className="text-[11px] text-faint">{k}</div><div className="mt-0.5 text-[16px] font-semibold tnum">{v}</div></div>))}</div>
           <div><h4 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-faint">Stack trace</h4>{g.sampleStack ? <Stack stack={g.sampleStack} /> : <p className="text-[13px] text-muted">No stack captured.</p>}</div>
           <Dl rows={[['Sample URL', g.sampleUrl && <a className="inline-flex items-center gap-1 font-mono text-[12px] text-accent hover:underline" href={g.sampleUrl} target="_blank" rel="noreferrer">{g.sampleUrl}<ExternalLink size={11} /></a>], ['Source', g.source && <Mono>{g.source}</Mono>]]} />
           <div><h4 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-faint">Recent occurrences</h4>
             {occ.isPending ? <div className="space-y-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-9" />)}</div> : (
               <div className="divide-y divide-line/60 rounded-xl border border-line">{events.map((e) => (
-                <div key={e.id} className="flex items-center gap-3 px-3 py-2 text-[12.5px]"><span className="w-28 shrink-0 tnum text-faint">{fmtDateTime(e.ts)}</span><span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-muted">{e.path ?? eventTitle(e)}</span>
-                  <span className="text-faint">{e.browser}</span><UserCell e={e} className="w-[132px] shrink-0 justify-end" /></div>))}</div>)}</div>
+                <div key={e.id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2 text-[12.5px] sm:flex-nowrap"><span className="w-28 shrink-0 tnum text-faint">{fmtDateTime(e.ts)}</span><span className="order-last min-w-0 basis-full truncate font-mono text-[11.5px] text-muted sm:order-none sm:basis-auto sm:flex-1">{e.path ?? eventTitle(e)}</span>
+                  <span className="text-faint">{e.browser}</span><UserCell e={e} className="ml-auto w-[132px] shrink-0 justify-end sm:ml-0" /></div>))}</div>)}</div>
         </div>
       )}
     </Drawer>
@@ -67,10 +67,10 @@ export function ErrorsPage() {
   return (
     <>
       <FilterBar scope="events" className="mb-4" />
-      <Card className="overflow-x-auto">
+      <Card className="@container overflow-x-auto">
         <div className="min-w-[960px]">
           <TableHead className={COLS} cols={['Error', 'Kind', ['Events', 'text-right'], ['Sessions', 'text-right'], 'Trend', ['First seen', 'text-right'], ['Last seen', 'text-right']]} />
-          {isPending ? <RowsSkeleton /> : !data.length ? <EmptyState icon={<Bug size={22} />} title="No errors in this range">Nothing broke. Enjoy it. Uncaught exceptions, rejections and failed resources show up here.</EmptyState> :
+          {isPending ? <RowsSkeleton /> : !data.length ? <EmptyState pinned icon={<Bug size={22} />} title="No errors in this range">Nothing broke. Enjoy it. Uncaught exceptions, rejections and failed resources show up here.</EmptyState> :
             data.map((g) => (
               <div key={g.fingerprint} role="button" tabIndex={0} onClick={() => set({ fp: g.fingerprint }, false)} onKeyDown={(e) => { if (e.key === 'Enter') set({ fp: g.fingerprint }, false); }} className={`group grid w-full ${COLS} cursor-pointer items-center gap-4 border-b border-line/60 px-4 py-3 text-left text-[13px] transition-colors hover:bg-[var(--hl)]`}>
                 <div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><div className="truncate font-medium">{g.message}</div><div className="truncate font-mono text-[11.5px] text-faint">{g.source ?? g.sampleUrl}</div></div><RowActions scope="events" conditions={errorGroupConditions(g)} /></div>

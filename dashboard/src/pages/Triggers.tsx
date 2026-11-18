@@ -262,9 +262,9 @@ export function TriggersPage() {
   if (triggers.isError) return <ErrorState error={triggers.error} retry={() => triggers.refetch()} />;
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <p className="text-[13px] text-muted">Get a Slack message or webhook call when new events, logs or spans match your filters: errors on checkout, a click on your pricing CTA, an ERROR log from the payment service.</p>
-        <Button variant="primary" onClick={() => setDialog({ open: true, t: null, prefill: NO_PREFILL })}><Plus size={15} />New trigger</Button>
+        <Button variant="primary" className="shrink-0" onClick={() => setDialog({ open: true, t: null, prefill: NO_PREFILL })}><Plus size={15} />New trigger</Button>
       </div>
       <Card className="overflow-hidden">
         {triggers.isPending ? <div className="space-y-3 p-4">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-14" />)}</div>

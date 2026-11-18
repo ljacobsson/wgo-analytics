@@ -26,6 +26,11 @@ type Rec = unknown[]
 interface Chunk { ts: number; r: Rec[]; snap: boolean; bytes: number; last: number }
 
 const FLUSH_MS = 5000
+/**
+ * A sampled session asks for its slot only after this long on the page: a visitor who bounces sooner sent nothing
+ * and used none of the project's hourly and daily recordings. (The dashboard doesn't list shorter recordings.)
+ */
+export const MIN_SESSION_MS = 3000
 /** a trigger's recording starts this long before it matched */
 const BUFFER_MS = 60_000
 const BUFFER_BYTES = 3_000_000
@@ -329,8 +334,10 @@ export function start(h: ReplayHost): () => void {
   rec([4, innerWidth, innerHeight])
   if (granted) live()
   void snap(true)
-  if (!granted && sampled) void ask('sample')
-  else if (!granted) trigger(eventTrigger(trg, { t: 'pageview', path: location.pathname }))
-  log('recording', granted ? 'live' : sampled ? 'sampled, asking for a slot' : 'buffered until a trigger matches')
+  if (!granted && sampled) {
+    const t = setTimeout(() => void ask('sample'), MIN_SESSION_MS)
+    stops.push(() => clearTimeout(t))
+  } else if (!granted) trigger(eventTrigger(trg, { t: 'pageview', path: location.pathname }))
+  log('recording', granted ? 'live' : sampled ? `sampled, asking for a slot in ${MIN_SESSION_MS / 1000} s` : 'buffered until a trigger matches')
   return stop
 }

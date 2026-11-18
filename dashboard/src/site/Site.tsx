@@ -88,7 +88,7 @@ export function SiteFooter() {
   );
   return (
     <footer className="border-t border-line bg-[color-mix(in_srgb,var(--bg)_60%,transparent)]">
-      <div className="mx-auto grid max-w-[1200px] gap-10 px-6 py-14 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr]">
+      <div className="mx-auto grid grid-cols-1 max-w-[1200px] gap-10 px-6 py-14 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr]">
         <div className="max-w-[320px]">
           <Logo size={26} />
           <p className="mt-4 text-[13.5px] leading-relaxed text-muted">Open-source product analytics and observability that runs in your own AWS account.</p>

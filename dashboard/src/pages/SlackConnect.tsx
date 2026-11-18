@@ -71,7 +71,7 @@ export function SlackConnect({ compact, label = 'Add to Slack' }: { compact?: bo
         <span className={step}>2</span>
         <div className="min-w-0 flex-1 space-y-1.5">
           <p className="text-muted">On the app’s <b>Basic Information</b> page, copy the <b>Client ID</b> and <b>Client Secret</b> (click Show) here:</p>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <input className="field font-mono !text-[12px]" placeholder="Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} />
             <input className="field font-mono !text-[12px]" placeholder="Client Secret" type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
           </div>

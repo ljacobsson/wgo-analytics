@@ -37,7 +37,7 @@ export function SettingsPage() {
       <Card>
         <CardHeader title="Write key" sub="Public key used by the SDK and OpenTelemetry exporters. Safe to ship in client code." />
         <div className="flex flex-wrap items-center gap-3 px-4 pb-4">
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-line bg-[var(--hl)] px-3 py-2"><KeyRound size={14} className="text-faint" /><code className="min-w-0 flex-1 truncate font-mono text-[12.5px]">{reveal ? key : key.slice(0, 6) + '•'.repeat(Math.max(8, key.length - 10)) + key.slice(-4)}</code>
+          <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border border-line bg-[var(--hl)] px-3 py-2"><KeyRound size={14} className="text-faint" /><code className="min-w-0 flex-1 truncate font-mono text-[12.5px]">{reveal ? key : key.slice(0, 6) + '•'.repeat(Math.max(8, key.length - 10)) + key.slice(-4)}</code>
             <button onClick={() => setReveal(!reveal)} className="text-faint hover:text-fg cursor-pointer">{reveal ? <EyeOff size={15} /> : <Eye size={15} />}</button></div>
           <CopyButton text={key} className="!py-2" />
           {owner && <Button variant="danger" onClick={() => setConfirm(true)}><RotateCw size={14} />Rotate key</Button>}

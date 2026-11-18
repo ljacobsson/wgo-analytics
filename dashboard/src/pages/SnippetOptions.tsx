@@ -151,7 +151,7 @@ function Text({ label, value, onChange, placeholder, hint, type = 'text', suffix
 export function SnippetOptionsPanel({ value: o, onChange }: { value: SdkOptions; onChange: (o: SdkOptions) => void }) {
   const set = <K extends keyof SdkOptions>(k: K, v: SdkOptions[K]) => onChange({ ...o, [k]: v });
   return (
-    <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
       <Group title="Capture automatically">
         {KINDS.map((k) => (
           <Check key={k.kind} checked={o.capture[k.kind]} onChange={(b) => set('capture', { ...o.capture, [k.kind]: b })}>{k.label}</Check>
@@ -176,7 +176,7 @@ export function SnippetOptionsPanel({ value: o, onChange }: { value: SdkOptions;
           <Text label="Environment" value={o.environment} placeholder="production" onChange={(v) => set('environment', v)} />
         </div>
       </Group>
-      <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:col-span-2 sm:grid-cols-2">
         <Text label="Never report requests to" value={o.httpIgnore} placeholder="/health, ads.example.com" hint="Comma-separated parts of URLs." onChange={(v) => set('httpIgnore', v)} />
         <Text label="Priority clicks" value={o.priorityClicks} placeholder="button.buy, #signup" hint="CSS selectors. These clicks are sent within a second, for Live watches." onChange={(v) => set('priorityClicks', v)} />
       </div>

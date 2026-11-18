@@ -102,7 +102,7 @@ export function RecordingPlayerPage({ sessionId }: { sessionId: string }) {
       ) : rec.isError ? <Card><ErrorState error={rec.error} retry={() => rec.refetch()} /></Card> : !tl || !pb || !state ? (
         <Card><EmptyState icon={<MonitorPlay size={22} />} title="Nothing recorded yet">The first part of a recording arrives within a minute of the session starting.</EmptyState></Card>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
           <div ref={shell} className="flex flex-col gap-3 rounded-2xl bg-[var(--bg)] [&:fullscreen]:p-4">
             <Viewport tl={tl} pb={pb} className="h-[calc(100vh-300px)] min-h-[420px] [:fullscreen_&]:h-auto [:fullscreen_&]:flex-1" />
             <Controls tl={tl} pb={pb} state={state} markers={markers} extra={<FullscreenButton target={shell} />} />

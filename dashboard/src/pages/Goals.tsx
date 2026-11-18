@@ -144,18 +144,18 @@ export function GoalsPage() {
   return (
     <div className="space-y-4">
       <FilterBar scope="events" />
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <p className="text-[13px] text-muted">
           Any event can be a conversion: a signup click, a visit to /thank-you, a custom <code>checkout_completed</code> event. Hover a row in Events, Clicks or the Overview and click <Target size={12} className="inline -mt-0.5" /> to make it one.
         </p>
-        {!isKiosk() && <Button variant="primary" onClick={openNew}><Plus size={15} />New goal</Button>}
+        {!isKiosk() && <Button variant="primary" className="shrink-0" onClick={openNew}><Plus size={15} />New goal</Button>}
       </div>
-      <Card className="overflow-x-auto">
+      <Card className="@container overflow-x-auto">
         <div className="min-w-[860px]">
           <TableHead className={COLS} cols={['Goal', ['Conversions', 'text-right'], ['Sessions', 'text-right'], ['Conversion rate', 'text-right'], 'Conversions over time', '']} />
           {!data ? <RowsSkeleton n={4} />
             : data.goals.length === 0 ? (
-              <EmptyState icon={<Target size={22} />} title="No goals yet"
+              <EmptyState pinned icon={<Target size={22} />} title="No goals yet"
                 action={!isKiosk() && <Button variant="primary" onClick={openNew}><Plus size={15} />Create a goal</Button>}>
                 Track how many sessions sign up, buy or reach any page. Open <b>Events</b>, expand an event and click <b>Make this a goal</b>, or hover any row and click its target.
               </EmptyState>)

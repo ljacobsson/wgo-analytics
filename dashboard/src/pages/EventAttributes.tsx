@@ -25,7 +25,7 @@ export function flatten(value: unknown, prefix: string, depth = 0, out: Array<[s
 export function AttributeTable({ rows, scope, extra }: { rows: Array<[field: string, value: string]>; scope: FilterScope; extra?: Record<string, ReactNode> }) {
   const addFilter = useAddFilter(scope);
   return (
-    <div className="grid grid-cols-[minmax(140px,220px)_1fr_auto] gap-x-4 text-[12px]">
+    <div className="grid grid-cols-[minmax(96px,140px)_minmax(0,1fr)_auto] gap-x-3 text-[12px] sm:grid-cols-[minmax(140px,220px)_minmax(0,1fr)_auto] sm:gap-x-4">
       {rows.map(([field, value]) => (
         <div key={field} className="group contents">
           <div className="truncate py-1 text-faint" title={field}>{fieldLabel(field) !== field ? fieldLabel(field) : <span className="font-mono">{field}</span>}</div>

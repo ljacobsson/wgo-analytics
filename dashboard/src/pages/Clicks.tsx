@@ -77,15 +77,15 @@ export function ClicksPage() {
   return (
     <div className="space-y-4">
       <FilterBar scope="events" />
-      <div className="flex items-center justify-between">
-        <div className="relative w-72"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Filter by alias, text, name or selector" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-        <span className="text-[12.5px] text-muted tnum">{data ? `${fmtNum(data.reduce((a, r) => a + r.count, 0))} clicks · ${data.length} elements` : ''}</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="relative w-full sm:w-72"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Filter by alias, text, name or selector" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <span className="whitespace-nowrap text-[12.5px] text-muted tnum">{data ? `${fmtNum(data.reduce((a, r) => a + r.count, 0))} clicks · ${data.length} elements` : ''}</span>
       </div>
-      <Card className="overflow-x-auto">
+      <Card className="@container overflow-x-auto">
         <div className="min-w-[960px]">
           <TableHead className={COLS} cols={['Element', 'Track name', 'Selector', ['Clicks', ''], ['Sessions', 'text-right'], ['Rage', 'text-right'], ['Last seen', 'text-right'], '']} />
           {isPending ? <RowsSkeleton /> : rows.length === 0 ? (
-            <EmptyState icon={<MousePointerClick size={22} />} title={q ? 'No clicks match' : 'No clicks recorded'} action={!q && <Button variant="primary" onClick={() => navigate(pageHref(project.id, 'settings', route.params))}>Install the snippet</Button>}>Clicks are captured automatically once the SDK is on your site.</EmptyState>
+            <EmptyState pinned icon={<MousePointerClick size={22} />} title={q ? 'No clicks match' : 'No clicks recorded'} action={!q && <Button variant="primary" onClick={() => navigate(pageHref(project.id, 'settings', route.params))}>Install the snippet</Button>}>Clicks are captured automatically once the SDK is on your site.</EmptyState>
           ) : rows.map((r) => (
             <div key={JSON.stringify([r.selector, r.elementText, r.trackName])} className={`group grid ${COLS} items-center gap-4 border-b border-line/60 px-4 py-2.5 text-[13px] transition-colors hover:bg-[var(--hl)]`}>
               <div className="flex min-w-0 items-center gap-1.5">

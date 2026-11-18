@@ -1,4 +1,4 @@
-import type { AnalyticsEvent, RecordingChunk, RecordingResponse, RecordingSettings, RecordingsResponse, RecordingSummary } from '../api/contract';
+import type { AnalyticsEvent, RecordingFilters, RecordingChunk, RecordingResponse, RecordingSettings, RecordingsResponse, RecordingSummary } from '../api/contract';
 import { events } from './data';
 import { rnd } from './rng';
 
@@ -126,11 +126,33 @@ function summary(block: number, sk: number, evs: AnalyticsEvent[]): RecordingSum
     reason: errors && rnd(block, sk, 78) < 0.6 ? 'trigger:error' : checkout && rnd(block, sk, 79) < 0.5 ? 'trigger:page:/checkout*' : 'sample',
     anonId: e.anonId, userId: evs.find((x) => x.userId)?.userId ?? null, entryPath: evs.find((x) => x.type === 'pageview')?.path ?? e.path,
     pages: evs.filter((x) => x.type === 'pageview').length, clicks: evs.filter((x) => x.type === 'click').length, errors,
+    rageClicks: evs.filter((x) => x.type === 'click' && x.props?.rage).length * 3,
+    paths: [...new Set(evs.map((x) => x.path).filter((p): p is string => !!p))].slice(0, 20),
     browser: e.browser, os: e.os, device: e.device, country: e.country, city: e.city,
   };
 }
 
-export function listRecordings(from: number, to: number, before: number | undefined, limit = 50): RecordingsResponse {
+/** The backend's filter rules (backend/src/lib/recordings.ts matchesFilters), for mock mode. */
+function matches(r: RecordingSummary, f: RecordingFilters): boolean {
+  if (!r.endedAt || r.durationMs < 3000) return false;
+  if (f.minDuration && r.durationMs < f.minDuration * 1000) return false;
+  if (f.errors && !r.errors) return false;
+  if (f.rage && !r.rageClicks) return false;
+  if (f.identified && !r.userId) return false;
+  if (f.device && r.device !== f.device) return false;
+  if (f.reason === 'sample' && r.reason !== 'sample') return false;
+  if (f.reason === 'trigger' && !r.reason.startsWith('trigger:')) return false;
+  if (f.page) {
+    const p = f.page.toLowerCase();
+    const re = p.includes('*') ? new RegExp('^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$') : null;
+    if (![r.entryPath, ...r.paths].some((x) => x && (re ? re.test(x.toLowerCase()) : x.toLowerCase().includes(p)))) return false;
+  }
+  const q = f.q?.toLowerCase();
+  if (q && ![r.userId, r.anonId, ...r.paths, r.country, r.city, r.browser, r.os, r.device].some((v) => v?.toLowerCase().includes(q))) return false;
+  return true;
+}
+
+export function listRecordings(from: number, to: number, before: number | undefined, limit = 50, f: RecordingFilters = {}): RecordingsResponse {
   const out: RecordingSummary[] = [];
   let b = Math.floor(Math.min(to, before ?? Infinity, Date.now()) / BLOCK);
   const lo = Math.floor(from / BLOCK);
@@ -140,7 +162,7 @@ export function listRecordings(from: number, to: number, before: number | undefi
       const evs = sessionEvents(b, sk);
       if (evs.length < 2) continue;
       const s = summary(b, sk, evs);
-      if (Date.parse(s.startedAt) < (before ?? Infinity)) out.push(s);
+      if (Date.parse(s.startedAt) < (before ?? Infinity) && matches(s, f)) out.push(s);
     }
   }
   return { recordings: out, nextBefore: out.length >= limit ? out[out.length - 1].startedAt : null };

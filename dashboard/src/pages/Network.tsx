@@ -36,8 +36,8 @@ function NetDrawer({ g, onClose }: { g: HttpErrorGroup | null; onClose: () => vo
           <div><h4 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-faint">Recent occurrences</h4>
             {occ.isPending ? <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-9" />)}</div> : events.length === 0 ? <p className="text-[13px] text-muted">No recent occurrences loaded.</p> : (
               <div className="divide-y divide-line/60 rounded-xl border border-line">{events.map((e) => (
-                <div key={e.id} className="flex items-center gap-3 px-3 py-2 text-[12.5px]"><span className="w-28 shrink-0 tnum text-faint">{fmtDateTime(e.ts)}</span><span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-muted">{e.httpUrl}</span>
-                  <span className="tnum text-faint">{fmtMs(e.durationMs)}</span><UserCell e={e} className="w-[132px] shrink-0 justify-end" /></div>))}</div>)}</div>
+                <div key={e.id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2 text-[12.5px] sm:flex-nowrap"><span className="w-28 shrink-0 tnum text-faint">{fmtDateTime(e.ts)}</span><span className="order-last min-w-0 basis-full truncate font-mono text-[11.5px] text-muted sm:order-none sm:basis-auto sm:flex-1">{e.httpUrl}</span>
+                  <span className="tnum text-faint">{fmtMs(e.durationMs)}</span><UserCell e={e} className="ml-auto w-[132px] shrink-0 justify-end sm:ml-0" /></div>))}</div>)}</div>
         </div>
       )}
     </Drawer>
@@ -53,11 +53,11 @@ export function NetworkPage() {
   return (
     <>
       <FilterBar scope="events" className="mb-4" />
-      <Card className="overflow-x-auto">
+      <Card className="@container overflow-x-auto">
         <div className="min-w-[900px]">
           <TableHead className={COLS} sort={sort} onSort={(k) => onSort(k as keyof typeof SORT)}
             cols={[['Method', '', 'method'], ['Route', '', 'route'], ['Status', '', 'status'], ['Failures', 'text-right', 'count'], ['Sessions', 'text-right', 'sessions'], ['Avg duration', 'text-right', 'avg'], ['Last seen', 'text-right', 'lastSeen']]} />
-          {isPending ? <RowsSkeleton /> : !data.length ? <EmptyState icon={<Globe size={22} />} title="No failing requests">4xx, 5xx and network failures from fetch / XHR are listed here.</EmptyState> :
+          {isPending ? <RowsSkeleton /> : !data.length ? <EmptyState pinned icon={<Globe size={22} />} title="No failing requests">4xx, 5xx and network failures from fetch / XHR are listed here.</EmptyState> :
             sorted!.map((g) => (
               <div key={gid(g)} role="button" tabIndex={0} onClick={() => set({ g: gid(g) }, false)} onKeyDown={(e) => { if (e.key === 'Enter') set({ g: gid(g) }, false); }} className={`group grid w-full ${COLS} cursor-pointer items-center gap-4 border-b border-line/60 px-4 py-2.5 text-left text-[13px] transition-colors hover:bg-[var(--hl)]`}>
                 <MethodBadge method={g.method} /><div className="flex min-w-0 items-center gap-2"><Mono className="min-w-0 flex-1 truncate">{g.route}</Mono><RowActions scope="events" conditions={httpGroupConditions(g)} /></div><StatusPill status={g.status} />

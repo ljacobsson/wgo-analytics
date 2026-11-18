@@ -250,7 +250,11 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
         if (!r) throw new MockHttpError(404, 'No recording of that session');
         return r;
       }
-      return REC.listRecordings(from, to, qp('before') ? Date.parse(qp('before')!) : undefined, limit);
+      const flag = (k: string) => qp(k) === '1' || qp(k) === 'true' || undefined;
+      return REC.listRecordings(from, to, qp('before') ? Date.parse(qp('before')!) : undefined, limit, {
+        minDuration: qp('minDuration') ? Number(qp('minDuration')) : undefined, page: qp('page'), device: qp('device'), q: qp('q'),
+        reason: qp('reason') as 'sample' | 'trigger' | undefined, errors: flag('errors'), rage: flag('rage'), identified: flag('identified'),
+      });
     }
     case 'events': return D.events({ from, to, before: qp('before') ? Date.parse(qp('before')!) : undefined, type: qp('type'), q: qp('q'), sessionId: qp('sessionId'), fingerprint: qp('fingerprint'), filters: F.parse(qp('filters')), located: qp('located') === '1', lat: qp('lat') ? Number(qp('lat')) : undefined, lon: qp('lon') ? Number(qp('lon')) : undefined, limit });
     case 'services': return D.services(from, to);

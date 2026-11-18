@@ -31,17 +31,17 @@ function LogRow({ l, open, toggle, traceHref }: { l: LogRecord; open: boolean; t
   const conditions = useMemo(() => logConditions(l), [l]);
   return (
     <div className={cn('border-b border-line/50', open && 'bg-[var(--hl)]')}>
-      <div onClick={toggle} className="group flex min-h-[28px] cursor-pointer items-start gap-2.5 px-3 py-[5px] hover:bg-[var(--hl)]" style={{ boxShadow: `inset 2px 0 0 ${s.color}` }}>
+      <div onClick={toggle} className="group flex min-h-[28px] cursor-pointer flex-wrap items-start gap-x-2.5 gap-y-0.5 px-3 py-[5px] md:flex-nowrap hover:bg-[var(--hl)]" style={{ boxShadow: `inset 2px 0 0 ${s.color}` }}>
         <ChevronRight size={12} className={cn('mt-[3px] shrink-0 text-faint transition-transform', open && 'rotate-90')} />
-        <span className="w-[84px] shrink-0 font-mono text-[11.5px] text-faint tnum">{fmtTime(l.ts)}</span>
+        <span className="w-[60px] shrink-0 font-mono text-[11.5px] text-faint tnum md:w-[84px]">{fmtTime(l.ts)}</span>
         <span className="w-[50px] shrink-0 font-mono text-[11px] font-semibold" style={{ color: s.color }}>{s.name}</span>
-        <span className="w-[110px] shrink-0 truncate text-[12px] text-muted">{l.service}</span>
-        <span className={cn('min-w-0 flex-1 font-mono text-[12px] leading-[1.5]', open ? 'whitespace-pre-wrap break-words' : 'truncate')}>{l.body}</span>
-        {l.traceId && <button onClick={(e) => { e.stopPropagation(); traceHref(l.traceId!, l.ts); }} className="shrink-0 font-mono text-[11px] text-faint hover:text-accent cursor-pointer" title="Open trace">{l.traceId.slice(0, 8)}</button>}
+        <span className="min-w-0 flex-1 truncate text-[12px] text-muted md:w-[110px] md:flex-none md:shrink-0">{l.service}</span>
+        <span className={cn('order-last min-w-0 basis-full pl-[22px] font-mono text-[12px] leading-[1.5] md:order-none md:basis-auto md:flex-1 md:pl-0', open ? 'whitespace-pre-wrap break-words' : 'truncate')}>{l.body}</span>
+        {l.traceId && <button onClick={(e) => { e.stopPropagation(); traceHref(l.traceId!, l.ts); }} className="hidden shrink-0 font-mono text-[11px] text-faint hover:text-accent cursor-pointer sm:block" title="Open trace">{l.traceId.slice(0, 8)}</button>}
         <RowActions scope="logs" conditions={conditions} className="-my-0.5" />
       </div>
       {open && (
-        <div className="grid gap-3 px-9 pb-3 pt-1 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 px-3 pb-3 pt-1 md:px-9 lg:grid-cols-2">
           <div><h4 className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-faint">Attributes</h4><AttributeTable scope="logs" rows={Object.entries(l.attributes).map(([k, v]) => [`attributes.${k}`, typeof v === 'object' ? JSON.stringify(v) : String(v)])} /></div>
           <div><h4 className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-faint">Resource</h4><AttributeTable scope="logs" rows={Object.entries(l.resource).map(([k, v]) => [`resource.${k}`, typeof v === 'object' ? JSON.stringify(v) : String(v)])} />
             {(l.traceId || l.spanId) && <div className="mt-2 font-mono text-[11px] text-faint">trace {l.traceId} · span {l.spanId}</div>}</div>
@@ -73,7 +73,7 @@ export function LogsPage() {
         <div className="inline-flex rounded-lg border border-line bg-[var(--hl)] p-0.5">{SEV.map((s) => (
           <button key={s.label} onClick={() => set({ sev: s.min ? String(s.min) : null })} className={cn('rounded-md px-2.5 py-1 text-[12px] font-medium transition-all cursor-pointer', sev === s.min ? 'bg-[var(--raised)] text-fg shadow-sm' : 'text-muted hover:text-fg')}>{s.label}</button>))}</div>
         <select className="field !w-44" value={service} onChange={(e) => set({ service: e.target.value || null })}><option value="">All services</option>{services.data?.map((s) => <option key={s.service}>{s.service}</option>)}</select>
-        <div className="relative w-72"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Search log body…" value={qIn} onChange={(e) => setQIn(e.target.value)} onBlur={() => set({ q: qIn || null })} /></div>
+        <div className="relative w-full sm:w-72"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Search log body…" value={qIn} onChange={(e) => setQIn(e.target.value)} onBlur={() => set({ q: qIn || null })} /></div>
         {traceId && <Badge tone="accent" className="!py-1 !text-[12px]">trace <Mono>{traceId.slice(0, 12)}</Mono><button onClick={() => set({ traceId: null })} className="cursor-pointer"><X size={12} /></button></Badge>}
         <div className="ml-auto flex items-center gap-2">{live && <i className="h-2 w-2 rounded-full bg-good pulse-dot" />}<Switch checked={live} onChange={setLive} label={<span className="inline-flex items-center gap-1"><Radio size={13} />Live tail</span>} /></div>
       </div>

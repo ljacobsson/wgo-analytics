@@ -9,7 +9,7 @@ export function Card({ className, children, hover, ...rest }: { className?: stri
 }
 export function CardHeader({ title, sub, right }: { title: ReactNode; sub?: ReactNode; right?: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 pt-3.5 pb-2">
       <div className="min-w-0"><h3 className="text-[13px] font-semibold tracking-tight">{title}</h3>{sub && <p className="text-[11.5px] text-faint mt-0.5">{sub}</p>}</div>
       {right}
     </div>
@@ -76,17 +76,18 @@ export function Mono({ children, className, title }: { children: ReactNode; clas
 
 export function Segmented<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: Array<{ value: T; label: ReactNode }> }) {
   return (
-    <div className="inline-flex rounded-lg border border-line bg-[var(--hl)] p-0.5">
+    <div className="inline-flex max-w-full overflow-x-auto rounded-lg border border-line bg-[var(--hl)] p-0.5">
       {options.map((o) => (
-        <button key={o.value} onClick={() => onChange(o.value)} className={cn('rounded-md px-2.5 py-1 text-[12px] font-medium transition-all duration-150 cursor-pointer', value === o.value ? 'bg-[var(--raised)] text-fg shadow-sm' : 'text-muted hover:text-fg')}>{o.label}</button>
+        <button key={o.value} onClick={() => onChange(o.value)} className={cn('shrink-0 whitespace-nowrap rounded-md px-2.5 py-1 text-[12px] font-medium transition-all duration-150 cursor-pointer', value === o.value ? 'bg-[var(--raised)] text-fg shadow-sm' : 'text-muted hover:text-fg')}>{o.label}</button>
       ))}
     </div>
   );
 }
 
-export function EmptyState({ icon, title, children, action }: { icon?: ReactNode; title: string; children?: ReactNode; action?: ReactNode }) {
+/** `pinned`: inside a sideways-scrolling table, stay as wide as the visible card (needs an `@container` scroller). */
+export function EmptyState({ icon, title, children, action, pinned }: { icon?: ReactNode; title: string; children?: ReactNode; action?: ReactNode; pinned?: boolean }) {
   return (
-    <div className="flex flex-col items-center justify-center text-center py-14 px-6 anim-fade">
+    <div className={cn('flex flex-col items-center justify-center text-center py-14 px-6 anim-fade', pinned && 'sticky left-0 w-[100cqw]')}>
       <div className="relative mb-4">
         <div className="absolute inset-0 -m-3 rounded-full blur-xl opacity-60" style={{ background: 'radial-gradient(circle, var(--glow1), transparent 70%)' }} />
         <div className="relative grid h-12 w-12 place-items-center rounded-2xl border border-line bg-[var(--raised)] text-accent">{icon ?? <Inbox size={22} />}</div>
@@ -138,13 +139,16 @@ export function Dialog({ open, onClose, title, children, footer, width = 460 }: 
   useEsc(onClose);
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-[60] grid place-items-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm anim-fade" onClick={onClose} />
+    <div className="fixed inset-0 z-[60] overflow-y-auto">
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm anim-fade" />
+      {/* Tall dialogs scroll with the page instead of being cut off at the top and bottom. */}
+      <div className="relative flex min-h-full items-center justify-center p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="anim-pop relative w-full rounded-2xl border border-line bg-[var(--raised)] shadow-2xl" style={{ maxWidth: width }}>
         <div className="flex items-center justify-between px-5 pt-4"><h3 className="text-[15px] font-semibold">{title}</h3>
           <button onClick={onClose} className="rounded-md p-1 text-muted hover:bg-[var(--hl)] cursor-pointer"><X size={17} /></button></div>
         <div className="px-5 py-4">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t border-line px-5 py-3">{footer}</div>}
+        {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-line px-5 py-3">{footer}</div>}
+      </div>
       </div>
     </div>, document.body);
 }
@@ -201,8 +205,8 @@ export function CountUp({ value, format }: { value: number; format: (n: number) 
 
 export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (b: boolean) => void; label?: ReactNode }) {
   return (
-    <button role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="inline-flex items-center gap-2 text-[12px] text-muted hover:text-fg cursor-pointer">
-      <span className={cn('relative h-[18px] w-8 rounded-full transition-colors duration-200', checked ? 'grad-bg' : 'bg-[var(--line-strong)]')}>
+    <button role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-[12px] text-muted hover:text-fg cursor-pointer">
+      <span className={cn('relative h-[18px] w-8 shrink-0 rounded-full transition-colors duration-200', checked ? 'grad-bg' : 'bg-[var(--line-strong)]')}>
         <span className={cn('absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-all duration-200', checked ? 'left-[16px]' : 'left-[2px]')} />
       </span>{label}
     </button>

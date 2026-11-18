@@ -93,7 +93,9 @@ export function UserCell({ e, onClick, className }: { e: Pick<AnalyticsEvent, 'u
 export const userFilter = (e: Pick<AnalyticsEvent, 'userId' | 'anonId'>) =>
   e.userId ? { field: 'userId', op: 'eq' as const, value: e.userId } : e.anonId ? { field: 'anonId', op: 'eq' as const, value: e.anonId } : null;
 
-/** One optional cell, fixed width so rows line up. */
+const COL_BASIS: Record<EventColumn, number> = { user: 132, path: 180, selector: 200, browser: 64, os: 64, device: 64, location: 130, session: 72 };
+/** Narrowest an event row may get before its list scrolls sideways: the fixed parts plus every chosen column. */
+export const eventRowMinWidth = (cols: EventColumn[], fixed: number) => fixed + cols.reduce((s, c) => s + COL_BASIS[c] + 12, 0);
 
 /** One optional cell: a fixed basis so rows line up, shrinking only when the list is narrow. */
 export function EventCell({ col, e, onUser, onSession }: {

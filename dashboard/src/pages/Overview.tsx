@@ -197,7 +197,7 @@ function Visitors() {
   const d = g.data;
   const coverage = d && d.total ? Math.round((d.located / d.total) * 100) : null;
   return (
-    <div className="grid gap-4 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
       <Card className="overflow-hidden xl:col-span-2">
         <CardHeader title="Where visitors are" sub={d ? `${fmtNum(d.points.length)} places · approximate, from IP at the edge` : 'approximate, from IP at the edge'}
           right={<div className="flex items-center gap-3">
@@ -261,7 +261,7 @@ export function Overview() {
 
       <GoalTiles />
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
       <Card className="xl:col-span-2">
         <CardHeader title="Events over time" sub={`${range.label} · ${s ? Math.round(s.bucketSeconds / 60) || 1 : '…'} min buckets`} right={s && <span className="tnum text-[12px] text-muted">{fmtNum(s.totals.events)} events</span>} />
         <div className="px-3 pb-3">
@@ -275,7 +275,7 @@ export function Overview() {
 
       <Visitors />
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Card>
           <CardHeader title="Top pages" sub="by views" />
           {pages.isPending ? <div className="space-y-2 p-4">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-7" />)}</div>

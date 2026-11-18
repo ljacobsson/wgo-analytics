@@ -30,8 +30,8 @@ export function MetricsPage() {
   }, [ser.data, info]);
   if (metrics.isError) return <ErrorState error={metrics.error} retry={() => metrics.refetch()} />;
   return (
-    <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-      <Card className="flex max-h-[calc(100vh-130px)] flex-col overflow-hidden">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+      <Card className="flex max-h-[340px] flex-col overflow-hidden xl:max-h-[calc(100vh-130px)]">
         <div className="border-b border-line p-3"><div className="relative"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Filter metrics" value={filter} onChange={(e) => setFilter(e.target.value)} /></div></div>
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {metrics.isPending ? <div className="space-y-2 p-2">{Array.from({ length: 7 }, (_, i) => <Skeleton key={i} className="h-14" />)}</div> : list.length === 0 ? <EmptyState icon={<LineChart size={22} />} title="No metrics">Send OTLP metrics to your ingest endpoint.</EmptyState> : list.map((m) => (
@@ -43,8 +43,8 @@ export function MetricsPage() {
       </Card>
       <Card>
         <CardHeader title={<span className="font-mono">{sel ?? '–'}</span>} sub={info ? `${info.type}${info.unit ? ' · ' + info.unit : ''} · ${info.service} · last seen ${relTime(info.lastSeen)}` : undefined}
-          right={<div className="flex items-center gap-3"><Segmented value={agg} onChange={(v) => set({ agg: v === 'avg' ? null : v })} options={AGGS.map((a) => ({ value: a, label: a }))} />
-            <input className="field !w-48 font-mono" placeholder="Group by attribute key" value={gIn} onChange={(e) => setGIn(e.target.value)} onBlur={() => set({ groupBy: gIn || null })} onKeyDown={(e) => e.key === 'Enter' && set({ groupBy: gIn || null })} /></div>} />
+          right={<div className="flex flex-wrap items-center gap-3"><Segmented value={agg} onChange={(v) => set({ agg: v === 'avg' ? null : v })} options={AGGS.map((a) => ({ value: a, label: a }))} />
+            <input className="field font-mono sm:!w-48" placeholder="Group by attribute key" value={gIn} onChange={(e) => setGIn(e.target.value)} onBlur={() => set({ groupBy: gIn || null })} onKeyDown={(e) => e.key === 'Enter' && set({ groupBy: gIn || null })} /></div>} />
         {info?.description && <p className="px-4 text-[12.5px] text-muted">{info.description}</p>}
         <div className="p-3">
           {!sel ? <EmptyState title="Select a metric" /> : ser.isPending ? <Skeleton className="h-[340px]" /> : ser.isError ? <ErrorState error={ser.error} /> : !chart ? <EmptyState icon={<LineChart size={22} />} title="No data points in this range" /> :

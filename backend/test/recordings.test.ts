@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_CHUNK_CHARS, normalizeReplays, validateSettings } from '../src/lib/recordings';
+import type { RecordingSummary } from '../src/contract';
+import { MAX_CHUNK_CHARS, matchesFilters, normalizeReplays, parseFilters, validateSettings } from '../src/lib/recordings';
 import { chunkJson, eventsFromMessages, rowsFromMessages } from '../src/lib/store/queue';
 
 const ok = { enabled: true, samplePercent: 5, triggers: [], maxPerHour: 10, maxPerDay: null, maskAllText: false };
@@ -65,5 +66,55 @@ describe('the events queue', () => {
     expect(events).toEqual([{ ...ev, ts: new Date(1000) }]);
     expect(replays).toEqual([{ ...rp, ts: new Date(2000) }]);
     expect(eventsFromMessages(bodies)).toEqual(events);
+  });
+});
+
+describe('recording filters', () => {
+  const rec = (over: Partial<RecordingSummary> = {}): RecordingSummary => ({
+    sessionId: 's', startedAt: '2026-11-18T10:00:00Z', endedAt: '2026-11-18T10:01:00Z', durationMs: 60_000, reason: 'sample',
+    anonId: 'anon-1', userId: null, entryPath: '/', pages: 2, clicks: 4, rageClicks: 0, errors: 0, paths: ['/', '/checkout/pay'],
+    browser: 'Chrome', os: 'macOS', device: 'desktop', country: 'SE', city: 'Stockholm', ...over,
+  });
+  const ok = (q: Record<string, string>, over: Partial<RecordingSummary> = {}) => matchesFilters(rec(over), parseFilters(q));
+
+  it('never lists recordings under 3 seconds, or without data', () => {
+    expect(ok({}, { durationMs: 2999 })).toBe(false);
+    expect(ok({}, { durationMs: 3000 })).toBe(true);
+    expect(ok({}, { endedAt: null, durationMs: 0 })).toBe(false);
+  });
+
+  it('filters by length in seconds', () => {
+    expect(ok({ minDuration: '30' })).toBe(true);
+    expect(ok({ minDuration: '61' })).toBe(false);
+    expect(ok({ maxDuration: '59' })).toBe(false);
+    expect(ok({ minDuration: 'abc' })).toBe(true); // ignored
+  });
+
+  it('matches pages by substring or * pattern, against every page viewed', () => {
+    expect(ok({ page: 'checkout' })).toBe(true);
+    expect(ok({ page: '/CHECKOUT*' })).toBe(true);
+    expect(ok({ page: '/pay*' })).toBe(false);
+    expect(ok({ page: '*pay' })).toBe(true);
+    expect(ok({ page: 'pricing' })).toBe(false);
+  });
+
+  it('filters by errors, rage clicks, known user, device and reason', () => {
+    expect(ok({ errors: '1' })).toBe(false);
+    expect(ok({ errors: '1' }, { errors: 2 })).toBe(true);
+    expect(ok({ rage: '1' }, { rageClicks: 3 })).toBe(true);
+    expect(ok({ identified: '1' })).toBe(false);
+    expect(ok({ identified: '1' }, { userId: 'alice@x.com' })).toBe(true);
+    expect(ok({ device: 'Mobile' })).toBe(false);
+    expect(ok({ device: 'desktop' })).toBe(true);
+    expect(ok({ reason: 'trigger' })).toBe(false);
+    expect(ok({ reason: 'trigger' }, { reason: 'trigger:error' })).toBe(true);
+    expect(ok({ reason: 'sample' }, { reason: 'trigger:page:/x' })).toBe(false);
+  });
+
+  it('searches user, pages, location and browser', () => {
+    expect(ok({ q: 'stockholm' })).toBe(true);
+    expect(ok({ q: 'pay' })).toBe(true);
+    expect(ok({ q: 'alice' }, { userId: 'Alice@x.com' })).toBe(true);
+    expect(ok({ q: 'firefox' })).toBe(false);
   });
 });

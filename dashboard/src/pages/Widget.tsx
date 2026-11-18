@@ -91,7 +91,7 @@ export function WidgetPage() {
   });
 
   return (
-    <div className="mx-auto grid max-w-[1180px] gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div className="mx-auto grid grid-cols-1 max-w-[1180px] gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
       <div className="min-w-0 space-y-4">
         <Card className="relative overflow-hidden p-6">
           <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-[var(--glow1)] blur-3xl" />

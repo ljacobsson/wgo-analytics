@@ -98,9 +98,14 @@ d('session recordings (PostgreSQL)', async () => {
     expect(JSON.parse((res as { body: string }).body)).toEqual({ accepted: 5 });
 
     const list = await R.listRecordings(pid, { from: new Date(now - 3600_000).toISOString(), to: new Date(now + 60_000).toISOString() });
-    expect(list.recordings.map((r) => r.sessionId)).toEqual(['s2', 's1']); // s2: granted moments ago, no data yet
+    expect(list.recordings.map((r) => r.sessionId)).toEqual(['s1']); // s2 got a slot but sent nothing: not listed
     const s1 = list.recordings.find((r) => r.sessionId === 's1')!;
-    expect(s1).toMatchObject({ reason: 'sample', anonId: 'anon-s1', entryPath: '/', pages: 1, clicks: 1, errors: 1, browser: 'Chrome', durationMs: 30_000 + 500 });
+    expect(s1).toMatchObject({ reason: 'sample', anonId: 'anon-s1', entryPath: '/', pages: 1, clicks: 1, rageClicks: 0, errors: 1, paths: ['/'], browser: 'Chrome', durationMs: 30_000 + 500 });
+    const range = { from: new Date(now - 3600_000).toISOString(), to: new Date(now + 60_000).toISOString() };
+    const ids = async (f: Record<string, string>) => (await R.listRecordings(pid, { ...range, ...f })).recordings.map((r) => r.sessionId);
+    expect(await ids({ errors: '1', page: '/' })).toEqual(['s1']);
+    expect(await ids({ minDuration: '60' })).toEqual([]);
+    expect(await ids({ reason: 'trigger' })).toEqual([]);
     expect(s1.startedAt).toBe(new Date(now - 60_000).toISOString()); // the lead-up before the slot counts
 
     const rec = await R.getRecording(pid, 's1', {});

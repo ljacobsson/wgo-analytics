@@ -39,18 +39,18 @@ function TraceList() {
   return (
     <div className="space-y-4">
       <FilterBar scope="spans" />
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <Card>
           <CardHeader title="Services" sub="click to filter" />
           {services.isPending ? <div className="space-y-2 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-8" />)}</div> : (
-            <div className="px-2 pb-2 text-[12.5px]">
-              <div className="grid grid-cols-[1fr_60px_60px_64px_64px] gap-2 px-2 py-1 text-[10.5px] font-semibold uppercase tracking-wider text-faint"><span>Service</span><span className="text-right">Spans</span><span className="text-right">Err</span><span className="inline-flex items-center justify-end gap-1">p50<InfoTip align="end" label="What is p50?"><b className="text-fg">p50, the median.</b> Half of this service’s spans were faster than this, half slower.</InfoTip></span><span className="inline-flex items-center justify-end gap-1">p95<InfoTip align="end" label="What is p95?"><b className="text-fg">p95, the 95th percentile.</b> 95% of spans were faster than this. It shows the slow tail your unluckiest users hit, which an average hides.</InfoTip></span></div>
+            <div className="overflow-x-auto px-2 pb-2 text-[12.5px]"><div className="min-w-[400px]">
+              <div className="grid grid-cols-[minmax(110px,1fr)_60px_60px_64px_64px] gap-2 px-2 py-1 text-[10.5px] font-semibold uppercase tracking-wider text-faint"><span>Service</span><span className="text-right">Spans</span><span className="text-right">Err</span><span className="inline-flex items-center justify-end gap-1">p50<InfoTip align="end" label="What is p50?"><b className="text-fg">p50, the median.</b> Half of this service’s spans were faster than this, half slower.</InfoTip></span><span className="inline-flex items-center justify-end gap-1">p95<InfoTip align="end" label="What is p95?"><b className="text-fg">p95, the 95th percentile.</b> 95% of spans were faster than this. It shows the slow tail your unluckiest users hit, which an average hides.</InfoTip></span></div>
               {services.data!.map((s) => (
-                <button key={s.service} onClick={() => set({ service: service === s.service ? null : s.service })} className={cn('grid w-full grid-cols-[1fr_60px_60px_64px_64px] items-center gap-2 rounded-md px-2 py-1.5 text-left tnum transition-colors hover:bg-[var(--hl)] cursor-pointer', service === s.service && 'bg-accent/12')}>
-                  <span className="flex items-center gap-2 font-sans font-medium"><i className="h-2 w-2 rounded-[3px]" style={{ background: serviceColor(names, s.service) }} />{s.service}</span>
+                <button key={s.service} onClick={() => set({ service: service === s.service ? null : s.service })} className={cn('grid w-full grid-cols-[minmax(110px,1fr)_60px_60px_64px_64px] items-center gap-2 rounded-md px-2 py-1.5 text-left tnum transition-colors hover:bg-[var(--hl)] cursor-pointer', service === s.service && 'bg-accent/12')}>
+                  <span className="flex min-w-0 items-center gap-2 font-sans font-medium"><i className="h-2 w-2 shrink-0 rounded-[3px]" style={{ background: serviceColor(names, s.service) }} /><span className="truncate" title={s.service}>{s.service}</span></span>
                   <span className="text-right text-muted">{fmtNum(s.spans)}</span><span className={cn('text-right', s.errors ? 'text-bad' : 'text-faint')}>{fmtNum(s.errors)}</span>
                   <span className="text-right text-muted">{fmtMs(s.p50Ms)}</span><span className="text-right text-muted">{fmtMs(s.p95Ms)}</span></button>))}
-            </div>)}
+            </div></div>)}
         </Card>
         <Card>
           <CardHeader title="Trace duration" sub="each dot is a trace · red has errors" />
@@ -62,12 +62,12 @@ function TraceList() {
         <select className="field !w-44" value={service} onChange={(e) => set({ service: e.target.value || null })}><option value="">All services</option>{names.map((n) => <option key={n}>{n}</option>)}</select>
         <input className="field !w-40" type="number" min={0} placeholder="Min duration (ms)" value={minD} onChange={(e) => setMinD(e.target.value)} onBlur={() => set({ min: minD || null })} />
         <Switch checked={errorsOnly} onChange={(b) => set({ errors: b ? '1' : null })} label="Errors only" />
-        <div className="relative ml-auto w-64"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Search root span…" value={qIn} onChange={(e) => setQIn(e.target.value)} onBlur={() => set({ q: qIn || null })} /></div>
+        <div className="relative w-full sm:ml-auto sm:w-64"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Search root span…" value={qIn} onChange={(e) => setQIn(e.target.value)} onBlur={() => set({ q: qIn || null })} /></div>
       </div>
-      <Card className="overflow-x-auto">
+      <Card className="@container overflow-x-auto">
         <div className="min-w-[860px]">
           <TableHead className={COLS} cols={['Root span', 'Service', 'Started', 'Duration', ['Spans', 'text-right'], ['Errors', 'text-right']]} />
-          {traces.isPending ? <RowsSkeleton /> : !traces.data.length ? <EmptyState icon={<Waypoints size={22} />} title="No traces found" action={<Button onClick={() => navigate(pageHref(project.id, 'settings', route.params))}>OpenTelemetry setup</Button>}>Send OTLP traces to your ingest endpoint, or relax the filters.</EmptyState> :
+          {traces.isPending ? <RowsSkeleton /> : !traces.data.length ? <EmptyState pinned icon={<Waypoints size={22} />} title="No traces found" action={<Button onClick={() => navigate(pageHref(project.id, 'settings', route.params))}>OpenTelemetry setup</Button>}>Send OTLP traces to your ingest endpoint, or relax the filters.</EmptyState> :
             traces.data.map((t) => (
               <div key={t.traceId} role="button" tabIndex={0} onClick={() => open(t)} onKeyDown={(e) => { if (e.key === 'Enter') open(t); }} className={`group grid w-full ${COLS} cursor-pointer items-center gap-4 border-b border-line/60 px-4 py-2.5 text-left text-[13px] transition-colors hover:bg-[var(--hl)]`}>
                 <div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><div className="truncate font-medium">{t.rootName}</div><Mono className="text-faint">{t.traceId.slice(0, 16)}</Mono></div><RowActions scope="spans" conditions={traceConditions(t)} /></div>
@@ -112,13 +112,13 @@ function Waterfall({ spans }: { spans: Span[] }) {
   const sel = spans.find((s) => s.spanId === selId) ?? rows[0]?.span;
   const ticks = [0, 0.25, 0.5, 0.75, 1];
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
       <Card className="flex max-h-[calc(100dvh-180px)] min-h-[320px] flex-col overflow-hidden">
-        <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-2.5"><div className="flex flex-wrap gap-x-4 gap-y-1">{svc.map((s) => <span key={s} className="inline-flex items-center gap-1.5 text-[12px] text-muted"><i className="h-2 w-2 rounded-[3px]" style={{ background: serviceColor(svc, s) }} />{s}</span>)}</div>
-          <span className="tnum text-[12px] text-muted">{spans.length} spans · {fmtMs(total)}</span></div>
-        <div className="grid shrink-0 grid-cols-[300px_1fr] border-b border-line text-[10.5px] text-faint">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-2.5"><div className="flex flex-wrap gap-x-4 gap-y-1">{svc.map((s) => <span key={s} className="inline-flex items-center gap-1.5 text-[12px] text-muted"><i className="h-2 w-2 rounded-[3px]" style={{ background: serviceColor(svc, s) }} />{s}</span>)}</div>
+          <span className="shrink-0 whitespace-nowrap tnum text-[12px] text-muted">{spans.length} spans · {fmtMs(total)}</span></div>
+        <div className="grid shrink-0 grid-cols-[minmax(130px,38%)_1fr] border-b border-line md:grid-cols-[300px_1fr] text-[10.5px] text-faint">
           <div className="px-4 py-1.5 font-semibold uppercase tracking-wider">Span</div>
-          <div className="relative h-7 mr-4">{ticks.map((k) => <span key={k} className="absolute top-1.5 tnum" style={{ left: `${k * 100}%`, transform: k === 1 ? 'translateX(-100%)' : k === 0 ? undefined : 'translateX(-50%)' }}>{fmtMs(total * k)}</span>)}</div>
+          <div className="relative h-7 mr-4">{ticks.map((k) => <span key={k} className={cn('absolute top-1.5 tnum', (k === 0.25 || k === 0.75) && 'hidden md:inline')} style={{ left: `${k * 100}%`, transform: k === 1 ? 'translateX(-100%)' : k === 0 ? undefined : 'translateX(-50%)' }}>{fmtMs(total * k)}</span>)}</div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {rows.map((n) => {
@@ -126,7 +126,7 @@ function Waterfall({ spans }: { spans: Span[] }) {
             const color = err ? 'var(--s8)' : serviceColor(svc, s.service), active = sel?.spanId === s.spanId;
             const labelInside = width > 22;
             return (
-              <div key={s.spanId} onClick={() => setSelId(s.spanId)} className={cn('grid h-8 cursor-pointer grid-cols-[300px_1fr] items-center transition-colors hover:bg-[var(--hl)]', active && 'bg-accent/10')}>
+              <div key={s.spanId} onClick={() => setSelId(s.spanId)} className={cn('grid h-8 cursor-pointer grid-cols-[minmax(130px,38%)_1fr] items-center md:grid-cols-[300px_1fr] transition-colors hover:bg-[var(--hl)]', active && 'bg-accent/10')}>
                 <div className="flex min-w-0 items-center gap-1 px-4" style={{ paddingLeft: 16 + n.depth * 14 }}>
                   {n.children.length ? <button onClick={(e) => { e.stopPropagation(); setCollapsed((c) => { const x = new Set(c); x.has(s.spanId) ? x.delete(s.spanId) : x.add(s.spanId); return x; }); }} className="text-faint hover:text-fg cursor-pointer">{collapsed.has(s.spanId) ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</button> : <i className="w-[13px]" />}
                   <span className="truncate text-[12.5px]" title={s.name}>{s.name}</span>
@@ -165,9 +165,9 @@ function TraceDetail({ traceId }: { traceId: string }) {
   const root = t.data?.spans.find((s) => !s.parentSpanId) ?? t.data?.spans[0];
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Button onClick={() => navigate(pageHref(project.id, 'traces', route.params))}><ArrowLeft size={14} />Traces</Button>
-        <div className="min-w-0"><div className="truncate text-[15px] font-semibold">{root?.name ?? 'Trace'}</div><div className="flex items-center gap-2"><Mono className="text-faint">{traceId}</Mono><CopyButton text={traceId} /></div></div>
+        <div className="min-w-0 flex-1"><div className="truncate text-[15px] font-semibold">{root?.name ?? 'Trace'}</div><div className="flex min-w-0 items-center gap-2"><Mono className="min-w-0 truncate text-faint">{traceId}</Mono><CopyButton text={traceId} className="shrink-0" /></div></div>
       </div>
       {t.isPending ? <Skeleton className="h-[420px]" /> : t.isError ? <ErrorState error={t.error} retry={() => t.refetch()} /> : t.data.spans.length === 0 ? <EmptyState title="Trace not found" /> : <Waterfall spans={t.data.spans} />}
     </div>

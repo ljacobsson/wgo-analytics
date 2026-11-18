@@ -119,7 +119,7 @@ export function FilterChips({ scope, value: filters, onChange: setFilters, class
     <div ref={ref} className={cn('relative z-20 flex flex-wrap items-center gap-2', className)}>
       <FilterIcon size={14} className="text-faint" />
       {filters.map((f, i) => (
-        <span key={i} className={cn('inline-flex max-w-[420px] items-center gap-1 rounded-full border py-0.5 pl-3 pr-1 text-[12px]', editing === i ? 'border-accent/60 bg-accent/15' : 'border-line bg-[var(--hl)]')}>
+        <span key={i} className={cn('inline-flex max-w-full sm:max-w-[420px] items-center gap-1 rounded-full border py-0.5 pl-3 pr-1 text-[12px]', editing === i ? 'border-accent/60 bg-accent/15' : 'border-line bg-[var(--hl)]')}>
           <button onClick={() => setEditing(editing === i ? null : i)} className="truncate cursor-pointer" title={describeFilter(f)}>
             <span className="font-medium">{fieldLabel(f.field)}</span> <span className="text-muted">{OP_LABEL[f.op]}</span>{needsValue(f.op) && <> <span className="font-mono">{f.value}</span></>}
             {valueHint(f.field, f.op, f.value) && <span className="text-faint"> ({valueHint(f.field, f.op, f.value)})</span>}
@@ -162,7 +162,7 @@ function BotsToggle() {
   const shown = route.params.get('bots') === '1';
   return (
     <button onClick={() => set({ bots: shown ? null : '1' })}
-      className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] cursor-pointer',
+      className={cn('inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[12px] cursor-pointer',
         shown ? 'border-warn/50 bg-warn/10 text-warn' : 'border-line text-muted hover:border-[var(--line-strong)] hover:text-fg')}
       title={shown ? 'Bot traffic is included in every number. Click to leave it out again.' : 'Scrapers, crawlers and automated browsers are left out of the numbers. Click to include them.'}>
       <Bot size={12} />{shown ? 'Bots included' : 'Bots hidden'}
@@ -181,11 +181,11 @@ export function FilterBar({ scope, className }: { scope: FilterScope; className?
   return (
     <FilterChips scope={scope} value={filters} onChange={setFilters} className={className}>
       {!filters.length && <QuickFilters scope={scope} onPick={setFilters} />}
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
         {scope === 'events' && <BotsToggle />}
         {triggerFilters.length > 0 && (
           <button onClick={() => navigate(newTriggerHref(project.id, route.params, scope, triggerFilters))}
-            className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-0.5 text-[12px] text-muted hover:border-[var(--line-strong)] hover:text-fg cursor-pointer"
+            className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 text-[12px] text-muted hover:border-[var(--line-strong)] hover:text-fg cursor-pointer"
             title={`Get notified in Slack or by webhook when new ${scope === 'events' ? 'events' : scope} match what this page shows`}>
             <BellPlus size={12} />Create trigger
           </button>)}
@@ -277,7 +277,7 @@ function ViewsMenu({ scope, page, onPick }: { scope: FilterScope; page: string; 
   return (
     <>
       <button ref={anchor} onClick={() => setOpen(!open)}
-        className={cn('inline-flex max-w-[240px] items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] cursor-pointer',
+        className={cn('inline-flex max-w-[240px] shrink-0 items-center whitespace-nowrap gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] cursor-pointer',
           active ? 'border-accent/50 bg-accent/12 text-fg' : 'border-line text-muted hover:border-[var(--line-strong)] hover:text-fg')}
         title={active ? `Saved view: ${active.name}` : 'Saved views, recent and most used filters'}>
         {active ? <BookmarkCheck size={12} className="shrink-0" /> : <Bookmark size={12} className="shrink-0" />}

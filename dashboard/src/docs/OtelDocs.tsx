@@ -195,7 +195,7 @@ def handler(event, context):
     <div className="bg-atmos h-full overflow-y-auto">
       <SiteHeader />
 
-      <div className="mx-auto grid max-w-[1200px] gap-12 px-6 pb-24 pt-14 lg:grid-cols-[200px_minmax(0,1fr)]">
+      <div className="mx-auto grid grid-cols-1 max-w-[1200px] gap-12 px-6 pb-24 pt-14 lg:grid-cols-[200px_minmax(0,1fr)]">
         <nav className="hidden lg:block">
           <div className="sticky top-28 space-y-1 text-[13px]">
             <p className="mb-3 text-[12px] font-medium text-faint">On this page</p>

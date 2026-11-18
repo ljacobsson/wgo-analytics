@@ -52,7 +52,7 @@ export function Popover({ anchor, open, onClose, children, align = 'end', width 
   return createPortal(
     <div ref={panel} onClick={(e) => e.stopPropagation()}
       className="anim-pop fixed z-[60] overflow-y-auto rounded-xl border border-line bg-[var(--raised)] p-3 shadow-2xl"
-      style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, width, maxHeight: pos?.maxH, visibility: pos ? 'visible' : 'hidden' }}>
+      style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, width, maxWidth: 'calc(100vw - 16px)', maxHeight: pos?.maxH, visibility: pos ? 'visible' : 'hidden' }}>
       {children}
     </div>,
     document.body,

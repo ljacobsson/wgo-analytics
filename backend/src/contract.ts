@@ -752,7 +752,11 @@ export interface RecordingSummary {
   entryPath: string | null;
   pages: number;
   clicks: number;
+  /** clicks that were part of a rage-click burst (3+ quick clicks on one element) */
+  rageClicks: number;
   errors: number;
+  /** distinct pages viewed, in the order first seen (at most 20) */
+  paths: string[];
   browser: string | null;
   os: string | null;
   device: string | null;
@@ -760,9 +764,29 @@ export interface RecordingSummary {
   city: string | null;
 }
 
+/**
+ * Filters of GET /recordings (query parameters). Recordings shorter than 3 seconds are never listed.
+ * - minDuration / maxDuration: length in seconds
+ * - page: a page viewed in the session; `*` is a wildcard, otherwise any path containing the text
+ * - device: desktop | mobile | tablet; reason: sample | trigger
+ * - errors=1, rage=1, identified=1: only sessions with errors / rage clicks / a known user
+ * - q: text in the user, visitor id, pages, location, browser, OS or reason
+ */
+export interface RecordingFilters {
+  minDuration?: number;
+  maxDuration?: number;
+  page?: string;
+  device?: string;
+  reason?: 'sample' | 'trigger';
+  errors?: boolean;
+  rage?: boolean;
+  identified?: boolean;
+  q?: string;
+}
+
 export interface RecordingsResponse {
   recordings: RecordingSummary[];
-  /** pass as `before` for the next (older) page */
+  /** pass as `before` for the next (older) page; set while older recordings may match */
   nextBefore: string | null;
 }
 
