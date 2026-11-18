@@ -77,6 +77,8 @@ export function start(h: ReplayHost): () => void {
   const transport = new Transport({
     url: `${h.ep}/ingest`, storageKey: '', flushInterval: 3000, priorityFlushDelay: 1000, maxBatchSize: 20,
     maxBatchBytes: 200_000, maxQueueSize: 200, maxRetries: 4, persist: false, compress: true,
+    // the page's keepalive quota (64 KB) is the event queue's: recording chunks must never make its sends fail
+    keepalive: false,
     meta: () => ({ k: h.k, a: h.aid(), ctx: h.ctx }), log,
   })
   const pageId = uuid()

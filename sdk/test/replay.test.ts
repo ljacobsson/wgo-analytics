@@ -158,6 +158,8 @@ describe('recorder', () => {
     })
     const stop = start(host())
     await vi.waitFor(() => expect(replayEvents(f).length).toBeGreaterThan(0)) // granted: the buffer went out
+    // never with keepalive: the page's 64 KB keepalive quota is left to the event queue
+    expect(f.mock.calls.filter((c) => String(c[0]) === INGEST).map((c) => (c[1] as RequestInit).keepalive)).toEqual([false])
     document.getElementById('b')!.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 20 }))
     const input = document.getElementById('i') as HTMLInputElement
     input.value = 'private'

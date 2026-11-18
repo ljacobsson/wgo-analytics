@@ -12,6 +12,11 @@ export interface TransportOpts {
   maxRetries: number
   persist: boolean
   compress: boolean
+  /**
+   * Send ordinary batches with `keepalive` (default true). Browsers cap all in-flight keepalive requests of a page
+   * at 64 KB together: a second queue on the page (the session recorder) turns it off so it never crowds out events.
+   */
+  keepalive?: boolean
   meta: () => { k: string; a: string; ctx: Ctx }
   log: (...a: unknown[]) => void
 }
@@ -196,7 +201,7 @@ export class Transport {
         method: 'POST',
         body: data as BodyInit,
         headers: { 'Content-Type': type },
-        keepalive: size < BEACON_LIMIT,
+        keepalive: this.o.keepalive !== false && size < BEACON_LIMIT,
       })
       if (res.status >= 200 && res.status < 300) return 'ok'
       if (res.status === 429 || res.status >= 500) return 'retry'

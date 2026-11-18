@@ -190,6 +190,11 @@ Resources:
       Timeout: 60
       Policies:
         - S3WritePolicy: { BucketName: !Ref DataBucket }
+        # identities (lib/identities.ts): which user each anonymous browser turned out to be
+        - Statement:
+            - Effect: Allow
+              Action: dsql:DbConnectAdmin
+              Resource: !GetAtt DsqlCluster.ResourceArn
       Events:
         Queue:
           Type: SQS
