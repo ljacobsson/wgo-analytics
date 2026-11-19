@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { MapCallout } from '../charts/MapCallout';
@@ -8,19 +8,21 @@ import { useBreakdown, useClicks, useConversions, useGeo, usePages, usePreviousC
 import { markerLabel } from './Releases';
 import { conversionRate, fmtRate, goalEventsHref, previousRate } from './Goals';
 import { countryName, flag } from '../lib/geo';
-import { clickLabel } from '../lib/events';
+import { clickLabel, eventTitle, userLabel } from '../lib/events';
+import { LiveCtx, useFirehose, type FeedItem } from '../live/store';
+import { botsParam, filtersParam } from '../lib/filters';
 
 const GeoMap = lazy(() => import('../charts/GeoMap'));
 import { useProject } from '../lib/project';
 import { navigate, pageHref, useRoute } from '../lib/router';
 import { useTime } from '../lib/time';
-import { Card, CardHeader, CountUp, Delta, EmptyState, ErrorState, Segmented, Skeleton, TYPE_COLOR, Button } from '../ui/kit';
+import { Card, CardHeader, CountUp, Delta, EmptyState, ErrorState, Segmented, Skeleton, TYPE_COLOR, TypeBadge, Button } from '../ui/kit';
 import { Sparkline } from '../charts/Sparkline';
 import { TimeChart } from '../charts/TimeChart';
 import { BarList } from '../charts/BarList';
 import { RowActions } from '../ui/RowActions';
 import { clickConditions, type RowCondition } from '../lib/rowFilters';
-import { fmtNum } from '../lib/format';
+import { fmtNum, relTime } from '../lib/format';
 import type { AnalyticsEvent, EventsResponse, Totals } from '../api/contract';
 import type { TimeRange } from '../lib/time';
 
@@ -239,8 +241,63 @@ function Visitors() {
   );
 }
 
+const NO_ITEMS: FeedItem[] = [];
+/** How long after the newest live event the overview keeps asking the warehouse for it. */
+const CATCH_UP_MS = 3 * 60_000;
+const CATCH_UP_POLL_MS = 5_000;
+
+/**
+ * Events the live connection has seen in the range, for while the warehouse shows none of them yet: right after
+ * the first events of a new project it lags the live feed by up to a minute. Only listens (and only turns on the
+ * firehose) while `on`, so a busy project's overview doesn't re-render for every event.
+ */
+function useLiveFill(on: boolean, range: TimeRange): AnalyticsEvent[] {
+  const store = useContext(LiveCtx);
+  useFirehose(on);
+  const recent = useSyncExternalStore(store.subscribe, () => (on ? store.recent : NO_ITEMS));
+  const bots = botsParam() === '1';
+  return useMemo(() => {
+    const from = Date.parse(range.from);
+    return recent.map((it) => it.ev).filter((e) => Date.parse(e.ts) >= from && (bots || !e.bot));
+  }, [recent, range.from, bots]);
+}
+
+function liveTotals(evs: AnalyticsEvent[]): Totals {
+  const n = (t: AnalyticsEvent['type']) => evs.filter((e) => e.type === t).length;
+  const distinct = (k: 'sessionId' | 'anonId') => new Set(evs.map((e) => e[k]).filter(Boolean)).size;
+  return { events: evs.length, pageviews: n('pageview'), clicks: n('click'), errors: n('error'), httpErrors: n('http_error'), sessions: distinct('sessionId'), users: distinct('anonId') };
+}
+
+const LIVE_ROWS = 7;
+/** Stands in for the chart while the warehouse catches up with what the live feed already delivered. */
+function LiveLatest({ events }: { events: AnalyticsEvent[] }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  return (
+    <div className="flex h-[280px] flex-col">
+      <div className="flex items-center gap-2 px-1 pb-2 text-[12px] text-muted">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-accent2 pulse-dot" />
+        Arriving live. The charts fill in as soon as these are processed, usually within a minute.
+      </div>
+      <ul className="min-h-0 flex-1 divide-y divide-line/60 overflow-hidden">
+        {events.slice(0, LIVE_ROWS).map((e) => {
+          const who = userLabel(e);
+          return (
+            <li key={e.id} className="anim-pop flex items-center gap-3 px-1 py-1.5 text-[12.5px]">
+              <TypeBadge type={e.type} />
+              <span className="min-w-0 flex-1 truncate">{eventTitle(e) || e.path || ''}</span>
+              {who && <span className="hidden max-w-[160px] truncate font-mono text-[11.5px] text-faint sm:inline">{who.text}</span>}
+              <span className="tnum w-16 shrink-0 text-right text-[11.5px] text-faint">{relTime(e.ts, now)}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export function Overview() {
-  const { project } = useProject(); const { range } = useTime(); const route = useRoute();
+  const { project } = useProject(); const { range, refresh } = useTime(); const route = useRoute();
   const stats = useStats(project.id, range);
   const prev = usePreviousTotals(project.id, range);
   const pages = usePages(project.id, range);
@@ -256,10 +313,23 @@ export function Overview() {
     const mk = (key: 'pageview' | 'click' | 'custom' | 'http_error' | 'error', label: string) => ({ key, label, color: TYPE_COLOR[key], values: s.series.map((p) => p[key]) });
     return { times, series: [mk('pageview', 'Pageviews'), mk('click', 'Clicks'), mk('custom', 'Custom'), mk('http_error', 'HTTP errors'), mk('error', 'Errors')] };
   }, [s]);
-  const T = (k: keyof Totals) => s?.totals[k];
-  const P = (k: keyof Totals) => prev.data?.[k];
-  const sp = (k: 'pageview' | 'click' | 'error' | 'http_error') => s?.series.map((p) => p[k]);
+  // nothing in the warehouse yet: show what the live feed has (filters can't be applied to it, so not when filtering)
   const empty = s && s.totals.events === 0;
+  const liveEvents = useLiveFill(!!empty && !filtersParam('events'), range);
+  const live = liveEvents.length > 0;
+  const totals = live ? liveTotals(liveEvents) : s?.totals;
+  const newest = useRef(0);
+  newest.current = live ? Date.parse(liveEvents[0].ts) : 0;
+  // the range ends at a snapped "now" and isn't refreshed on its own: keep moving it until the warehouse has them
+  useEffect(() => {
+    if (!live) return;
+    const t = setInterval(() => { if (Date.now() - newest.current < CATCH_UP_MS) refresh(); }, CATCH_UP_POLL_MS);
+    return () => clearInterval(t);
+  }, [live]); // eslint-disable-line react-hooks/exhaustive-deps
+  const T = (k: keyof Totals) => totals?.[k];
+  // live counts aren't comparable with the warehouse's previous window
+  const P = (k: keyof Totals) => (live ? undefined : prev.data?.[k]);
+  const sp = (k: 'pageview' | 'click' | 'error' | 'http_error') => s?.series.map((p) => p[k]);
 
   if (stats.isError) return <ErrorState error={stats.error} retry={() => stats.refetch()} />;
   return (
@@ -267,8 +337,8 @@ export function Overview() {
       <FilterBar scope="events" />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <Kpi label="Pageviews" icon={<Eye size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('pageview'), label: 'Pageviews' })} cur={T('pageviews')} prev={P('pageviews')} spark={sp('pageview')} color="var(--s1)" />
-        <Kpi label="Sessions" icon={<Layers size={14} />} onWhy={() => setWhy({ metric: 'sessions', label: 'Sessions' })} cur={T('sessions')} prev={P('sessions')} color="var(--s7)" note={s && s.totals.sessions ? `${(s.totals.pageviews / s.totals.sessions).toFixed(1)} pages / session${s.botSessions ? ` · ${fmtNum(s.botSessions)} bot sessions hidden` : ''}` : s?.botSessions ? `${fmtNum(s.botSessions)} bot sessions hidden` : ''} />
-        <Kpi label="Users" icon={<Users size={14} />} cur={T('users')} prev={P('users')} color="var(--s7)" note={s && s.totals.users ? `${(s.totals.sessions / s.totals.users).toFixed(2)} sessions / user` : ''} />
+        <Kpi label="Sessions" icon={<Layers size={14} />} onWhy={() => setWhy({ metric: 'sessions', label: 'Sessions' })} cur={T('sessions')} prev={P('sessions')} color="var(--s7)" note={totals && totals.sessions ? `${(totals.pageviews / totals.sessions).toFixed(1)} pages / session${s?.botSessions ? ` · ${fmtNum(s.botSessions)} bot sessions hidden` : ''}` : s?.botSessions ? `${fmtNum(s.botSessions)} bot sessions hidden` : ''} />
+        <Kpi label="Users" icon={<Users size={14} />} cur={T('users')} prev={P('users')} color="var(--s7)" note={totals && totals.users ? `${(totals.sessions / totals.users).toFixed(2)} sessions / user` : ''} />
         <Kpi label="Clicks" icon={<MousePointerClick size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('click'), label: 'Clicks' })} cur={T('clicks')} prev={P('clicks')} spark={sp('click')} color="var(--s3)" />
         <Kpi label="Errors" icon={<Bug size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('error'), label: 'Errors' })} cur={T('errors')} prev={P('errors')} spark={sp('error')} color="var(--s8)" invert />
         <Kpi label="HTTP errors" icon={<Globe size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('http_error'), label: 'Failed requests' })} cur={T('httpErrors')} prev={P('httpErrors')} spark={sp('http_error')} color="var(--s2)" invert />
@@ -278,9 +348,9 @@ export function Overview() {
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
       <Card className="xl:col-span-2">
-        <CardHeader title="Events over time" sub={`${range.label} · ${s ? Math.round(s.bucketSeconds / 60) || 1 : '…'} min buckets`} right={s && <span className="tnum text-[12px] text-muted">{fmtNum(s.totals.events)} events</span>} />
+        <CardHeader title="Events over time" sub={`${range.label} · ${s ? Math.round(s.bucketSeconds / 60) || 1 : '…'} min buckets`} right={totals && <span className="tnum text-[12px] text-muted">{fmtNum(totals.events)} events</span>} />
         <div className="px-3 pb-3">
-          {!chart ? <Skeleton className="h-[280px]" /> : empty ? (
+          {!chart ? <Skeleton className="h-[280px]" /> : live ? <LiveLatest events={liveEvents} /> : empty ? (
             <EmptyState icon={<Download size={22} />} title="No events in this range" action={<Button variant="primary" onClick={() => navigate(pageHref(project.id, 'settings', route.params))}>Install the snippet</Button>}>Add the snippet to your site and events will show up here within seconds.</EmptyState>
           ) : <TimeChart times={chart.times} series={chart.series} mode="bars" height={280} markers={markers} bucketMs={s!.bucketSeconds * 1000} />}
         </div>

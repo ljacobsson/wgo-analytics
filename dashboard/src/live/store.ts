@@ -7,6 +7,19 @@ import { KIOSK_TOKEN } from '../lib/kiosk';
 export type LiveStatus = 'connecting' | 'connected' | 'reconnecting';
 export interface FeedItem { ev: LiveEvent; at: number }
 const FEED_CAP = 500;
+// The latest firehose events are kept per project in localStorage, so a page opened right after them (the
+// overview after onboarding, a reload) can show what arrived before the warehouse has it.
+const RECENT_CAP = 100;
+const RECENT_MAX_AGE = 60 * 60_000;
+const recentKey = (pid: string) => `wgo.recent.${pid}`;
+function loadRecent(pid: string): FeedItem[] {
+  try {
+    const items = JSON.parse(localStorage.getItem(recentKey(pid)) ?? '[]') as FeedItem[];
+    return Array.isArray(items) ? items.filter((it) => it?.ev && Date.now() - it.at < RECENT_MAX_AGE) : [];
+  } catch { return []; }
+}
+/** Keeps what the overview shows; stacks and payloads would only fill up the storage. */
+const slim = (ev: LiveEvent): LiveEvent => ({ ...ev, errorStack: null, props: {} });
 
 export class LiveStore {
   pid: string;
@@ -17,6 +30,8 @@ export class LiveStore {
   perSec: Record<string, Map<number, number>> = {};
   feed: FeedItem[] = [];
   frozen: FeedItem[] | null = null;
+  /** Latest firehose events, newest first, kept across page loads (see loadRecent). */
+  recent: FeedItem[];
   eventsSeen = 0;
   onFire: ((w: Watch, e: LiveEvent) => void) | null = null;
 
@@ -29,9 +44,11 @@ export class LiveStore {
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
+  private persistTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(pid: string) {
     this.pid = pid;
+    this.recent = KIOSK_TOKEN ? [] : loadRecent(pid);
     // a kiosk gets its watches from its configuration (setWatches), not from this browser's storage
     try { this.watches = KIOSK_TOKEN ? [] : JSON.parse(localStorage.getItem(`wgo.watches.${pid}`) ?? '[]'); } catch { this.watches = []; }
   }
@@ -75,10 +92,17 @@ export class LiveStore {
   }
 
   // ---- connection ----
-  start() { this.stopped = false; void this.connect(); }
+  start() {
+    this.stopped = false;
+    // read again: the store this one replaces (onboarding's, say) saves its last events when it stops,
+    // which happens after this one was created
+    if (!KIOSK_TOKEN && this.eventsSeen === 0) this.recent = loadRecent(this.pid);
+    void this.connect();
+  }
   stop() {
     this.stopped = true;
     clearTimeout(this.reconnectTimer); clearInterval(this.pingTimer); clearTimeout(this.notifyTimer);
+    if (this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = undefined; this.saveRecent(); }
     const ws = this.ws; this.ws = null;
     if (ws) { ws.onclose = null; ws.close(); }
   }
@@ -135,8 +159,13 @@ export class LiveStore {
     if (this.fh.size > 0) {
       const items = events.map((ev) => ({ ev, at: now })).reverse();
       this.feed = [...items, ...this.feed].slice(0, FEED_CAP);
+      this.recent = [...items.map((it) => ({ ev: slim(it.ev), at: it.at })), ...this.recent].slice(0, RECENT_CAP);
+      if (!KIOSK_TOKEN) this.persistTimer ??= setTimeout(() => { this.persistTimer = undefined; this.saveRecent(); }, 1000);
     }
     this.bump();
+  }
+  private saveRecent() {
+    try { localStorage.setItem(recentKey(this.pid), JSON.stringify(this.recent)); } catch { /* full or unavailable: memory only */ }
   }
 }
 
