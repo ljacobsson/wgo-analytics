@@ -9,7 +9,7 @@ import { startHttp } from './capture/http'
 import { startPageviews } from './capture/pageviews'
 import { startVitals } from './capture/vitals'
 import { bearer, findIdentity, jwtIdentity } from './identity'
-import { ls, memoryStore, on, uuid } from './util'
+import { ls, matchesAny, memoryStore, on, uuid } from './util'
 import { unit } from './replay/sample'
 
 function resolve(c: Config): ResolvedConfig {
@@ -29,6 +29,8 @@ function resolve(c: Config): ResolvedConfig {
     sessionTimeout: c.sessionTimeout ?? 30 * 60 * 1000,
     sampleRate: c.sampleRate ?? 1,
     httpIgnore: c.httpIgnore ?? [],
+    tracePropagation: c.tracePropagation ?? true,
+    traceOrigins: c.traceOrigins ?? [],
     captureQueryParams: c.captureQueryParams ?? false,
     compress: c.compress ?? true,
     beforeSend: c.beforeSend,
@@ -87,8 +89,9 @@ export class Client {
       cfg,
       emit: (t, d, o) => this.emit(t, d, o),
       queued: (e) => this.transport.has(e),
-      skipUrl: (u) => u.startsWith(this.ingest) || u.startsWith(`${cfg.endpoint}/replay/`) || cfg.httpIgnore.some((p) => (typeof p === 'string' ? u.includes(p) : (p.lastIndex = 0, p.test(u)))),
+      skipUrl: (u) => u.startsWith(this.ingest) || u.startsWith(`${cfg.endpoint}/replay/`) || matchesAny(cfg.httpIgnore, u),
       clean: (u) => this.clean(u),
+      traceparent: (u) => this.traceparent(u),
       log,
     }
     if (cfg.autoIdentify) hooks.onAuth = (v) => this.fromHeader(v)
@@ -102,7 +105,7 @@ export class Client {
     }
     start(ac.clicks, () => startClicks(hooks))
     start(ac.errors, () => this.errors.listen())
-    start(ac.http || cfg.autoIdentify, () => startHttp(hooks, ac.http))
+    start(ac.http || cfg.autoIdentify || cfg.tracePropagation, () => startHttp(hooks, ac.http))
     if (cfg.autoIdentify) {
       this.scan()
       // another tab logged in or out
@@ -139,6 +142,17 @@ export class Client {
         document.head.appendChild(el)
       })
       .catch(() => { /* no recording */ })
+  }
+
+  /**
+   * W3C trace context ids for one of the page's requests: same-origin ones, and those matching `traceOrigins`. A
+   * cross-origin header triggers a CORS preflight the API has to allow, so other origins are opt-in.
+   */
+  private traceparent(u: string): [string, string] | null {
+    const c = this.cfg
+    try { if (!c.tracePropagation || (new URL(u).origin !== location.origin && !matchesAny(c.traceOrigins, u))) return null } catch { return null }
+    // random v4 uuids: never all zeros, as W3C requires
+    return [uuid().replace(/-/g, ''), uuid().replace(/-/g, '').slice(16)]
   }
 
   /** @internal */

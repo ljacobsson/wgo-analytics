@@ -13,6 +13,10 @@ export function uuid(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
+/** True when `u` matches a string (substring) or RegExp of `list`. */
+export const matchesAny = (list: (string | RegExp)[], u: string): boolean =>
+  list.some((p) => (typeof p === 'string' ? u.includes(p) : (p.lastIndex = 0, p.test(u))))
+
 /** localStorage that never throws (Safari private mode, quota, disabled storage). */
 export const ls = {
   get(k: string): string | null {

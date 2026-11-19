@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as A from '../src/index'
-import { NO_AUTO, cfg, eventsOf, mockFetch } from './helpers'
+import { EP, NO_AUTO, cfg, eventsOf, ingestCalls, mockFetch } from './helpers'
 
 const on = { ...NO_AUTO, http: true }
 const httpErrors = (f: ReturnType<typeof mockFetch>) => eventsOf(f).filter((e) => e.t === 'http_error')
@@ -182,5 +182,108 @@ describe('xhr interceptor', () => {
     A.shutdown()
     expect(FakeXHR.prototype.open).toBe(open)
     expect(FakeXHR.prototype.send).toBe(send)
+  })
+})
+
+describe('trace propagation', () => {
+  const TP = /^00-([0-9a-f]{32})-([0-9a-f]{16})-01$/
+  const sent = (f: ReturnType<typeof mockFetch>, url: string) => {
+    const call = f.mock.calls.find((c) => String(c[0]) === url || (c[0] as Request)?.url === url)!
+    const init = call[1] as RequestInit
+    return new Headers(init?.headers ?? (call[0] as Request).headers).get('traceparent')
+  }
+
+  it('adds a sampled traceparent to same-origin requests and reports its trace on failure', async () => {
+    const f = appFetch(502)
+    A.init(cfg({ autocapture: on }))
+    const url = `${location.origin}/api/checkout`
+    await fetch(url, { method: 'POST', headers: { 'x-app': '1' } })
+    await A.flush()
+    const tp = sent(f, url)!
+    expect(tp).toMatch(TP)
+    const [, trace, span] = TP.exec(tp)!
+    expect(httpErrors(f)[0].d).toMatchObject({ trace, span, status: 502 })
+    // the app's own headers are kept
+    const init = f.mock.calls.find((c) => String(c[0]) === url)![1] as RequestInit
+    expect(new Headers(init.headers).get('x-app')).toBe('1')
+  })
+
+  it('leaves cross-origin requests alone unless their origin is listed', async () => {
+    const f = appFetch(200)
+    A.init(cfg({ autocapture: on, traceOrigins: ['https://api.partner.test', /^https:\/\/svc\d\.test\//] }))
+    await fetch('https://app.test/x')
+    await fetch('https://api.partner.test/y')
+    await fetch('https://svc2.test/z')
+    expect(sent(f, 'https://app.test/x')).toBeNull()
+    expect(sent(f, 'https://api.partner.test/y')).toMatch(TP)
+    expect(sent(f, 'https://svc2.test/z')).toMatch(TP)
+  })
+
+  it('keeps an existing traceparent, skips no-cors, and can be turned off', async () => {
+    const f = appFetch(200)
+    A.init(cfg({ autocapture: on }))
+    const own = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'
+    await fetch(`${location.origin}/a`, { headers: [['TraceParent', own]] })
+    await fetch(`${location.origin}/b`, { mode: 'no-cors' })
+    expect(new Headers((f.mock.calls.find((c) => String(c[0]).endsWith('/a'))![1] as RequestInit).headers).get('traceparent')).toBe(own)
+    expect(sent(f, `${location.origin}/b`)).toBeNull()
+    A.shutdown()
+    const g = appFetch(200)
+    A.init(cfg({ autocapture: on, tracePropagation: false }))
+    await fetch(`${location.origin}/c`)
+    expect(sent(g, `${location.origin}/c`)).toBeNull()
+  })
+
+  it('carries a Request object\'s own headers over', async () => {
+    const f = appFetch(200)
+    A.init(cfg({ autocapture: on }))
+    const url = `${location.origin}/r`
+    await fetch(new Request(url, { method: 'PUT', headers: { 'x-app': '2' } }))
+    const call = f.mock.calls.find((c) => (c[0] as Request).url === url)!
+    const hd = new Headers((call[1] as RequestInit).headers)
+    expect(hd.get('x-app')).toBe('2')
+    expect(hd.get('traceparent')).toMatch(TP)
+  })
+
+  it('never sends one to the ingest endpoint', async () => {
+    const f = mockFetch()
+    A.init(cfg({ autocapture: on, traceOrigins: [EP] }))
+    A.track('x')
+    await A.flush()
+    expect(new Headers((ingestCalls(f)[0][1] as RequestInit).headers).get('traceparent')).toBeNull()
+  })
+
+  it('works with http autocapture off', async () => {
+    const f = appFetch(200)
+    A.init(cfg({ autocapture: NO_AUTO }))
+    await fetch(`${location.origin}/q`)
+    expect(sent(f, `${location.origin}/q`)).toMatch(TP)
+  })
+
+  it('sets the header on same-origin XHR unless the app set one', async () => {
+    const headers: Array<[string, string]> = []
+    class X extends EventTarget {
+      status = 500
+      statusText = ''
+      open() { /* noop */ }
+      setRequestHeader(n: string, v: string) { headers.push([n, v]) }
+      send() { setTimeout(() => this.dispatchEvent(new Event('loadend')), 5) }
+    }
+    vi.stubGlobal('XMLHttpRequest', X)
+    const f = appFetch(200)
+    A.init(cfg({ autocapture: on }))
+    const a = new XMLHttpRequest()
+    a.open('GET', `${location.origin}/xa`)
+    a.send()
+    const b = new XMLHttpRequest()
+    b.open('GET', `${location.origin}/xb`)
+    b.setRequestHeader('traceparent', 'mine')
+    b.send()
+    await vi.advanceTimersByTimeAsync(20)
+    await A.flush()
+    expect(headers.filter(([n]) => n === 'traceparent').map(([, v]) => v)).toEqual([expect.stringMatching(TP), 'mine'])
+    const [first] = httpErrors(f)
+    expect(first.d!.trace).toBe(TP.exec(headers[0][1])![1])
+    expect(httpErrors(f)[1].d!.trace).toBeUndefined()
   })
 })

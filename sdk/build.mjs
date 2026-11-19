@@ -16,6 +16,6 @@ const raw = readFileSync('dist/wgo.js')
 const gz = gzipSync(raw, { level: 9 }).length
 console.log(`dist/wgo.js: ${raw.length} bytes minified, ${gz} bytes gzipped (${(gz / 1024).toFixed(2)} KB)`)
 // 10 KB plus the session recording loader (the recorder itself is wgo-replay.js, loaded only when needed)
-if (gz > 10.5 * 1024) { console.error('Over the 10.5 KB gzip budget'); process.exit(1) }
+if (gz > 11 * 1024) { console.error('Over the 11 KB gzip budget'); process.exit(1) }
 const rp = readFileSync('dist/wgo-replay.js')
 console.log(`dist/wgo-replay.js: ${rp.length} bytes minified, ${gzipSync(rp, { level: 9 }).length} bytes gzipped`)

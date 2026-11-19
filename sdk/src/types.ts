@@ -37,7 +37,8 @@ export interface Batch {
 
 export interface ClickData { sel: string; tag: string; text?: string; name?: string; href?: string; x: number; y: number; vw: number; vh: number; rage?: number }
 export interface ErrorData { msg: string; stack?: string; src?: string; line?: number; col?: number; kind: 'error' | 'rejection' | 'resource' | 'manual'; count?: number; extra?: object }
-export interface HttpErrorData { method: string; url: string; status: number; statusText?: string; dur: number; kind: 'fetch' | 'xhr' }
+/** `trace`/`span`: the W3C trace context the SDK sent with the request (see tracePropagation), linking it to the backend trace */
+export interface HttpErrorData { method: string; url: string; status: number; statusText?: string; dur: number; kind: 'fetch' | 'xhr'; trace?: string; span?: string }
 export interface VitalsData { ttfb?: number; fcp?: number; lcp?: number; cls?: number; inp?: number; load?: number }
 
 export interface AutocaptureConfig { clicks?: boolean; errors?: boolean; http?: boolean; pageviews?: boolean; vitals?: boolean }
@@ -58,6 +59,16 @@ export interface Config {
   sessionTimeout?: number
   sampleRate?: number
   httpIgnore?: (string | RegExp)[]
+  /**
+   * Send a W3C `traceparent` header with the page's own requests, so a failed request links to its backend trace.
+   * Same-origin requests only, plus the origins in `traceOrigins`. Default true.
+   */
+  tracePropagation?: boolean
+  /**
+   * Other APIs that get the header too: strings (substring match, e.g. "https://api.example.com/") or RegExps of
+   * URLs, like `httpIgnore`. Their CORS configuration must allow the `traceparent` request header.
+   */
+  traceOrigins?: (string | RegExp)[]
   captureQueryParams?: boolean
   compress?: boolean
   beforeSend?: (event: WireEvent) => WireEvent | null
@@ -109,6 +120,8 @@ export interface Hooks {
   skipUrl(absUrl: string): boolean
   clean(url: string): string
   log(...a: unknown[]): void
+  /** [trace id, span id] for a request's traceparent header, or null (cross-origin, turned off) */
+  traceparent(absUrl: string): [string, string] | null
   /** an outgoing request's Authorization header (only set with autoIdentify) */
   onAuth?(value: string): void
 }

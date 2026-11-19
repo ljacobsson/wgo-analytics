@@ -142,6 +142,8 @@ Only `writeKey` and `endpoint` are required.
 | `sessionTimeout` | `1800000` | Inactivity (ms) after which a new session starts |
 | `sampleRate` | `1` | 0..1, decided once per session |
 | `httpIgnore` | `[]` | Strings (substring match) or RegExps of URLs never reported |
+| `tracePropagation` | `true` | Send a W3C `traceparent` header with same-origin requests, so a failed request links to its backend trace ([details](#linking-requests-to-backend-traces)) |
+| `traceOrigins` | `[]` | Other API URLs that get the header too: strings (substring match) or RegExps. Their CORS must allow `traceparent` |
 | `captureQueryParams` | `false` | Keep query strings in URLs (privacy default: stripped) |
 | `compress` | `true` | gzip payloads over 1 KB when `CompressionStream` exists (see note) |
 | `beforeSend` | | `(event) => event \| null` to modify or drop events |
@@ -153,6 +155,22 @@ Only `writeKey` and `endpoint` are required.
 | `record` | `true` | Follow the project's [session recording](#session-recording) settings; `false` never records |
 
 **Compression and CORS.** Uncompressed batches are sent as `text/plain;charset=UTF-8`, a CORS simple request (no preflight). Compressed batches use `application/octet-stream`, which browsers preflight cross-origin; the server must answer the `OPTIONS` request, or set `compress: false`. The backend detects gzip by its magic bytes (`1f 8b`). Beacon sends are never compressed.
+
+## Linking requests to backend traces
+
+The SDK sends a W3C `traceparent` header with the page's own requests (fetch and XHR), and a failed request
+reports the trace id it sent. When your backend sends OpenTelemetry traces to the same WGO project, the failed
+request opens its backend trace, with the browser request as the root span, and the trace links back to the
+session and its recording.
+
+* **Same-origin requests only, by default.** A custom header on a cross-origin request makes the browser send a
+  CORS preflight, which an API that doesn't allow the header would reject. List other APIs in `traceOrigins`
+  (`traceOrigins: ['https://api.example.com/']`, or `data-trace-origins="https://api.example.com/"`) after adding
+  `traceparent` to their `Access-Control-Allow-Headers`.
+* **The header is sampled** (flags `01`). A backend using OpenTelemetry's default parent-based sampler records every
+  request the browser starts, whatever its own sample ratio.
+* A request that already has a `traceparent` (your own browser OpenTelemetry) keeps it, and `no-cors` requests are
+  left alone. Turn it off with `tracePropagation: false` or `data-trace-propagation="false"`.
 
 ## Delivery
 

@@ -47,6 +47,8 @@ function fromScript(s: HTMLScriptElement | null): Config | null {
     persist: bool(d.persist),
     compress: bool(d.compress),
     httpIgnore: list(d.httpIgnore),
+    tracePropagation: bool(d.tracePropagation),
+    traceOrigins: list(d.traceOrigins),
     // one CSS selector list ("a.buy, #signup"): commas are part of the selector syntax
     priorityClicks: d.priorityClicks?.trim() ? [d.priorityClicks.trim()] : undefined,
   }
