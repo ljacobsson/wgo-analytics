@@ -228,6 +228,14 @@ function payload(s: Snap): Promise<Payload | null> {
 const PLAYER_CSS = '<style>*,*::before,*::after{transition:none!important;animation-duration:0s!important;animation-delay:0s!important;caret-color:transparent!important}html{scroll-behavior:auto!important}</style>';
 
 /**
+ * The page's stylesheets and images load from the dashboard's origin, not the site's. So no CORS requests (older
+ * SDKs kept `crossorigin`, and a site's own assets rarely allow other origins), and no Referer: hotlink protection
+ * rejects the dashboard's, and the site has no business seeing the dashboard's URLs.
+ */
+const NO_REFERRER = '<meta name="referrer" content="no-referrer">';
+const CROSSORIGIN = /(<(?:link|img)\b[^>]*?)\s+crossorigin(?:="[^"]*")?(?=[\s/>])/gi;
+
+/**
  * The snapshot as a document for the player's iframe (srcdoc): stylesheets filled in, from an earlier snapshot
  * when the recorder didn't send them again because they hadn't changed.
  */
@@ -242,8 +250,10 @@ export function snapshotHtml(tl: Timeline, s: Snap): Promise<string | null> {
         if (o.meta.ch === s.meta.ch) css = (await payload(o))?.css ?? null;
       }
     }
-    const html = p.html.replace(/<style data-wgo-c="(\d+)"([^>]*)><\/style>/g, (_, i: string, rest: string) =>
-      `<style${rest}>${(css?.[Number(i)] ?? '').replace(/<\/style/gi, '<\\/style')}</style>`);
+    // markup first, before the CSS (which is text) is filled in
+    const html = p.html.replace(CROSSORIGIN, '$1').replace(/<head\b[^>]*>/i, (m) => m + NO_REFERRER)
+      .replace(/<style data-wgo-c="(\d+)"([^>]*)><\/style>/g, (_, i: string, rest: string) =>
+        `<style${rest}>${(css?.[Number(i)] ?? '').replace(/<\/style/gi, '<\\/style')}</style>`);
     const at = html.indexOf('</head>');
     return at >= 0 ? html.slice(0, at) + PLAYER_CSS + html.slice(at) : PLAYER_CSS + html;
   })();

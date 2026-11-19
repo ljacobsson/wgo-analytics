@@ -70,6 +70,9 @@ export function serialize(doc: Document, opts: SerializeOpts = {}): Snapshot {
       const n = a.name
       let v = a.value
       if (/^on/i.test(n) || n === 'srcdoc' || n === 'nonce' || n === 'integrity' || n === 'autofocus' || n === 'autoplay') continue
+      // the replay loads stylesheets and images from the dashboard's origin, where a CORS request to the site's own
+      // assets usually fails (no Access-Control-Allow-Origin); a plain request works
+      if (n === 'crossorigin') continue
       if (n === 'value' || n === 'checked' || n === 'selected') continue // the live state is written below
       if (n === 'srcset' || n === 'imagesrcset') {
         if (bare) continue

@@ -19,6 +19,8 @@ export interface TransportOpts {
   keepalive?: boolean
   meta: () => { k: string; a: string; ctx: Ctx }
   log: (...a: unknown[]) => void
+  /** Called with the events of a batch the server accepted (2xx). Never for beacons: their fate is unknown. */
+  sent?: (events: WireEvent[]) => void
 }
 
 interface Item { e: WireEvent; n: number }
@@ -131,8 +133,10 @@ export class Transport {
       while (this.q.length && !this.offline() && Date.now() >= this.blockedUntil) {
         const items = this.take(this.o.maxBatchBytes)
         this.inflight = items
-        const r = await this.send(items.map((i) => i.e))
+        const events = items.map((i) => i.e)
+        const r = await this.send(events)
         this.inflight = []
+        if (r === 'ok') { try { this.o.sent?.(events) } catch { /* the listener's problem */ } }
         if (r !== 'retry') { this.attempt = 0; this.persistSoon(); continue }
         if (this.offline()) { this.requeue(items); break } // not the server's fault: don't burn a retry
         if (++this.attempt > this.o.maxRetries) {

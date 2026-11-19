@@ -23,7 +23,8 @@ import { unit } from './sample'
  * led up to it.
  */
 type Rec = unknown[]
-interface Chunk { ts: number; r: Rec[]; snap: boolean; bytes: number; last: number }
+/** `css`: hash of the inline CSS its snapshot carries, if it carries it */
+interface Chunk { ts: number; r: Rec[]; snap: boolean; bytes: number; last: number; css?: string }
 
 const FLUSH_MS = 5000
 /**
@@ -34,7 +35,7 @@ export const MIN_SESSION_MS = 3000
 /** a trigger's recording starts this long before it matched */
 const BUFFER_MS = 60_000
 const BUFFER_BYTES = 3_000_000
-/** below the backend's MAX_CHUNK_CHARS (lib/recordings.ts), with room for the chunk's other records */
+/** below the backend's MAX_CHUNK_CHARS (lib/recordings.ts), with room for the snapshot's metadata (it has a chunk of its own) */
 const MAX_SNAPSHOT = 150_000
 const MOVE_MS = 50
 const SCROLL_MS = 100
@@ -85,6 +86,7 @@ export function start(h: ReplayHost): () => void {
     // the page's keepalive quota (64 KB) is the event queue's: recording chunks must never make its sends fail
     keepalive: false,
     meta: () => ({ k: h.k, a: h.aid(), ctx: h.ctx }), log,
+    sent: (events) => { for (const e of events) { const c = cssOf.get(e); if (c) acked.add(c) } },
   })
   const pageId = uuid()
 
@@ -96,7 +98,12 @@ export function start(h: ReplayHost): () => void {
   let buf: Chunk[] = []
   let seq = 0
   let lastHash = ''
-  let sentCss = ''
+  /**
+   * Hashes of inline CSS the server has accepted in a snapshot. Only those may be left out of later snapshots: the
+   * player fills them in from the earlier one, so CSS that never arrived must be sent again.
+   */
+  const acked = new Set<string>()
+  const cssOf = new WeakMap<WireEvent, string>()
   let lastSnap = 0
   let gap = 1000
   let snapTimer: ReturnType<typeof setTimeout> | undefined
@@ -120,6 +127,7 @@ export function start(h: ReplayHost): () => void {
       id: uuid(), t: 'replay', ts: c.ts, s: sid, url: h.clean(location.href), path: location.pathname,
       d: { p: pageId, q: seq++, dur: c.last, r: c.r },
     } as unknown as WireEvent
+    if (c.css) cssOf.set(ev, c.css)
     transport.push(ev, c.snap)
   }
 
@@ -163,8 +171,8 @@ export function start(h: ReplayHost): () => void {
     const hh = hash(s.html) + ch
     if (hh === lastHash && !force) return
     lastHash = hh
-    // in live mode a stylesheet that hasn't changed isn't sent again; buffered snapshots may be dropped, so they keep it
-    const omit = mode === 'live' && ch === sentCss
+    // in live mode CSS the server already has isn't sent again; buffered snapshots may be dropped, so they keep it
+    const omit = mode === 'live' && acked.has(ch)
     const body = JSON.stringify({ html: s.html, css: omit ? null : s.css })
     const meta = { w: innerWidth, h: innerHeight, sx: Math.round(scrollX), sy: Math.round(scrollY), u: h.clean(location.href), ti: document.title, ch }
     let z: string | null = null
@@ -172,8 +180,11 @@ export function start(h: ReplayHost): () => void {
     if ((mode as string) === 'off') return // stopped while compressing
     const size = z ? z.length : body.length
     if (size > MAX_SNAPSHOT) { rec([0, { ...meta, big: 1 }], at); log('page too large to record', size); return }
-    if (mode === 'live') sentCss = ch
+    // the snapshot gets a chunk of its own: the backend silently drops chunks over MAX_CHUNK_CHARS, and an accepted
+    // request must mean the snapshot (and its CSS) was stored
+    flush()
     rec([0, z ? { ...meta, z } : { ...meta, j: { html: s.html, css: omit ? null : s.css } }], at)
+    if (cur && !omit) cur.css = ch
     flush()
   }
 

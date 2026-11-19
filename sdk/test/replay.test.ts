@@ -9,6 +9,17 @@ import { EP, INGEST, batchOf, cfg, mockFetch, setBeacon } from './helpers'
 beforeEach(() => { localStorage.clear(); sessionStorage.clear(); document.head.innerHTML = ''; document.body.innerHTML = '' })
 afterEach(() => { A.shutdown(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
+interface SnapPayload { html: string; css: string[] | null }
+async function payloadOf(m: { z?: string; j?: SnapPayload }): Promise<SnapPayload> {
+  if (m.j) return m.j
+  return JSON.parse(await gunzip(Uint8Array.from(atob(m.z!), (c) => c.charCodeAt(0))))
+}
+
+const gunzip = (bin: Uint8Array<ArrayBuffer>) => new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'))).text()
+async function bodyOf(body: unknown): Promise<{ e: Array<{ d: { r: unknown[][] } }> }> {
+  return JSON.parse(typeof body === 'string' ? body : await gunzip(body as Uint8Array<ArrayBuffer>))
+}
+
 describe('snapshot serializer', () => {
   it('never captures what was typed: text fields become bullets, textareas too', () => {
     document.body.innerHTML = '<input id="a" value="default"><input id="p" type="password"><textarea id="t"></textarea><input type="submit" value="Send">'
@@ -65,6 +76,14 @@ describe('snapshot serializer', () => {
     expect(html).toContain(`<link rel="stylesheet" href="${origin}/app.css">`)
     expect(html).not.toContain('preload')
     expect(html).toContain(`<img src="${origin}/logo.png" srcset="${origin}/a.png 1x, ${origin}/b.png 2x">`)
+  })
+
+  it('drops crossorigin: the replay loads assets from another origin, without CORS', () => {
+    document.head.innerHTML = '<link rel="stylesheet" crossorigin href="/app.css"><link rel="stylesheet" crossorigin="use-credentials" href="/b.css">'
+    document.body.innerHTML = '<img crossorigin="anonymous" src="/logo.png">'
+    const { html } = serialize(document)
+    expect(html).not.toContain('crossorigin')
+    expect(html).toContain(`<link rel="stylesheet" href="${location.origin}/app.css">`)
   })
 
   it('returns inline CSS separately, with placeholders in the HTML', () => {
@@ -224,6 +243,52 @@ describe('recorder', () => {
     stop()
     await new Promise((r) => setTimeout(r, 20))
     expect(replayEvents(f)).toEqual([])
+  })
+
+  it('leaves inline CSS out of a snapshot only once the server has accepted it', async () => {
+    document.head.innerHTML = '<style>p { color: red; }</style>'
+    document.body.innerHTML = '<p>one</p>'
+    // every snapshot the server sees, in order, and whether it accepted it: the first batch with one is rejected
+    const seen: Array<{ ok: boolean; snap: SnapPayload }> = []
+    mockFetch(async (url, init) => {
+      if (url.endsWith('/replay/start')) return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      const snaps = await Promise.all((await bodyOf(init.body)).e.flatMap((e) => e.d.r).filter((r) => r[0] === 0)
+        .map((r) => payloadOf(r[2] as { z?: string; j?: SnapPayload })))
+      const ok = !snaps.length || seen.length > 0
+      seen.push(...snaps.map((snap) => ({ ok, snap })))
+      return ok ? { ok: true, status: 200 } : { ok: false, status: 400 }
+    })
+    const stop = start(host())
+    await vi.advanceTimersByTimeAsync(MIN_SESSION_MS)
+    // snapshots compress in real time, then wait for fake timers (the next snapshot, the queue's flush): advance both
+    const until = (n: number) => vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+      expect(seen).toHaveLength(n)
+    }, { timeout: 4000, interval: 10 })
+    await until(1)
+    expect(seen[0].ok).toBe(false)
+    expect(seen[0].snap.css).toHaveLength(1)
+
+    document.body.innerHTML = '<p>two</p>'
+    await until(2)
+    expect(seen[1].snap.css).toHaveLength(1) // sent again: the server never got it
+    expect(seen[1].ok).toBe(true)
+
+    document.body.innerHTML = '<p>three</p>'
+    await until(3)
+    expect(seen[2].snap.html).toContain('three')
+    expect(seen[2].snap.css).toBeNull() // the server has it from the second: the player takes it from there
+    stop()
+  }, 15_000)
+
+  it('gives a snapshot a chunk of its own', async () => {
+    const f = mockFetch((url) => (url.endsWith('/replay/start') ? { ok: true, status: 200, json: async () => ({ ok: true }) } : { ok: true, status: 200 }))
+    const stop = start(host())
+    await vi.advanceTimersByTimeAsync(MIN_SESSION_MS)
+    await vi.waitFor(() => expect(replayEvents(f).some((e) => e.d.r.some((r) => r[0] === 0))).toBe(true))
+    expect(replayEvents(f).flatMap((e) => e.d.r)).toContainEqual([4, expect.any(Number), expect.any(Number), expect.any(Number)]) // recorded before it
+    for (const e of replayEvents(f)) if (e.d.r.some((r) => r[0] === 0)) expect(e.d.r).toHaveLength(1)
+    stop()
   })
 
   it('records a session granted on an earlier page straight away', async () => {
