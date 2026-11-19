@@ -11,15 +11,18 @@ import { Onboarding } from './pages/Onboarding';
 import { LiveProvider } from './live/LiveProvider';
 import { Skeleton, ErrorState, ToastProvider } from './ui/kit';
 import { Overview } from './pages/Overview';
+import { ProjectsPage } from './pages/Projects';
 import { LivePage } from './pages/LivePage';
 import { ClicksPage } from './pages/Clicks';
 import { ErrorsPage } from './pages/Errors';
 import { NetworkPage } from './pages/Network';
+import { ReleasesPage } from './pages/Releases';
 import { EventsPage } from './pages/Events';
 import { RecordingsPage } from './pages/Recordings';
 import { RecordingPlayerPage } from './pages/RecordingPlayer';
 import { TriggersPage } from './pages/Triggers';
 import { GoalsPage } from './pages/Goals';
+import { RetentionPage } from './pages/Retention';
 import { GoalFunnelPage } from './pages/GoalFunnel';
 import { TracesPage } from './pages/Traces';
 import { LogsPage } from './pages/Logs';
@@ -27,6 +30,8 @@ import { MetricsPage } from './pages/Metrics';
 import { SettingsPage } from './pages/Settings';
 import { WidgetPage } from './pages/Widget';
 import { KiosksPage } from './pages/Kiosks';
+import { UptimePage } from './pages/Uptime';
+import { CostsPage } from './pages/Costs';
 import { McpPage } from './pages/Mcp';
 import { OtelDocs } from './docs/OtelDocs';
 import { Docs } from './docs/Docs';
@@ -41,8 +46,10 @@ function Authed({ email }: { email: string }) {
 
   useEffect(() => {
     if (!me.data) return;
-    if (seg0 === 'new' || created) return;
-    if (projects.length && (seg0 !== 'p' || !project)) navigate(`/p/${projects[0].id}/overview`, true);
+    if (seg0 === 'new' || created || !projects.length) return;
+    if (seg0 === 'projects') return;
+    // with several projects, land on the overview of all of them; with one, go straight in
+    if (seg0 !== 'p' || !project) navigate(projects.length > 1 ? '/projects' : `/p/${projects[0].id}/overview`, true);
   }, [me.data, seg0, pid, project]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (me.isLoading) return <div className="bg-atmos h-full p-8"><Skeleton className="h-10 w-60" /><Skeleton className="mt-6 h-64" /></div>;
@@ -51,6 +58,7 @@ function Authed({ email }: { email: string }) {
     return <Onboarding first={!projects.length} project={created} setProject={setCreated} onBack={() => navigate(`/p/${projects[0].id}/overview`)}
       onDone={(p) => { setCreated(null); navigate(`/p/${p.id}/overview`); }} />;
   }
+  if (seg0 === 'projects') return <ProjectsPage projects={projects} email={email} />;
   if (!project) return null;
 
   const body = (() => {
@@ -59,9 +67,11 @@ function Authed({ email }: { email: string }) {
       case 'clicks': return <ClicksPage />;
       case 'errors': return <ErrorsPage />;
       case 'network': return <NetworkPage />;
+      case 'releases': return <ReleasesPage />;
       case 'events': return <EventsPage />;
       case 'recordings': return sub ? <RecordingPlayerPage sessionId={decodeURIComponent(sub)} /> : <RecordingsPage />;
       case 'goals': return sub ? <GoalFunnelPage goalId={sub} /> : <GoalsPage />;
+      case 'retention': return <RetentionPage />;
       case 'triggers': return <TriggersPage />;
       case 'traces': return <TracesPage traceId={sub ?? null} />;
       case 'logs': return <LogsPage />;
@@ -69,6 +79,8 @@ function Authed({ email }: { email: string }) {
       case 'settings': return <SettingsPage />;
       case 'widget': return <WidgetPage />;
       case 'kiosks': return <KiosksPage />;
+      case 'uptime': return <UptimePage />;
+      case 'costs': return <CostsPage />;
       case 'mcp': return <McpPage />;
       default: return <Overview />;
     }

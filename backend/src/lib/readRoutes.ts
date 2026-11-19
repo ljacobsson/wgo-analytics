@@ -1,5 +1,9 @@
 import * as A from './analytics';
+import * as F from './frustration';
+import * as C from './cohorts';
 import * as G from './goals';
+import * as REL from './releases';
+import * as EX from './explain';
 
 type Q = Record<string, string | undefined>;
 export type ProjectRoute = (pid: string, q: Q, rest: string[]) => Promise<unknown>;
@@ -12,6 +16,8 @@ export const READ_ROUTES: Record<string, ProjectRoute> = {
   stats: (pid, q) => A.stats(pid, q),
   totals: (pid, q) => A.totalsFor(pid, q),
   clicks: (pid, q) => A.clicks(pid, q),
+  frustration: (pid, q) => F.frustration(pid, q),
+  heatmap: (pid, q) => F.heatmap(pid, q),
   pages: (pid, q) => A.pages(pid, q),
   errors: (pid, q) => A.errors(pid, q),
   'http-errors': (pid, q) => A.httpErrors(pid, q),
@@ -21,8 +27,11 @@ export const READ_ROUTES: Record<string, ProjectRoute> = {
   fields: (pid, q, rest) => (rest[0] === 'values' ? A.fieldValues(pid, q) : A.fields(pid, q)),
   events: (pid, q) => A.events(pid, q),
   conversions: (pid, q) => G.conversions(pid, q),
+  retention: (pid, q) => C.retention(pid, q),
   traces: (pid, q, rest) => (rest[0] ? A.trace(pid, rest[0], q) : A.traces(pid, q)),
   services: (pid, q) => A.services(pid, q),
   logs: (pid, q) => A.logs(pid, q),
+  releases: (pid, q) => REL.releases(pid, q),
+  explain: (pid, q) => EX.explain(pid, q),
   metrics: (pid, q, rest) => (rest[0] === 'series' ? A.metricSeries(pid, q) : A.metrics(pid, q)),
 };

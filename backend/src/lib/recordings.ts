@@ -135,6 +135,9 @@ export interface PublicConfig { on: boolean; rate?: number; trg?: RecordingTrigg
 export async function publicConfig(writeKey: string | undefined): Promise<PublicConfig> {
   const pid = await projectIdForWriteKey(writeKey);
   if (!pid) return { on: false };
+  // a cost budget stopped collection: don't start recorders that would only send chunks to be dropped
+  const { collectionPaused } = await import('./budgets');
+  if (await collectionPaused(pid)) return { on: false };
   const s = await settingsOf(pid);
   if (!s.enabled || (s.samplePercent <= 0 && !s.triggers.length)) return { on: false };
   return { on: true, rate: s.samplePercent / 100, trg: s.triggers, mask: s.maskAllText };
@@ -240,13 +243,18 @@ export async function replayRows(pid: string, batch: WireBatch, receivedAt = Dat
 
 // ---------------------------------------------------------------- reading
 
-interface RecordingRow { session_id: string; started_at: Date; anon_id: string | null; reason: string }
+export interface RecordingRow { session_id: string; started_at: Date; anon_id: string | null; reason: string }
+
+/** A window covering the data of these recordings: up to 10 minutes of lead-up before each and a day after. */
+export function recordingsWindow(recs: RecordingRow[]): { from: Date; to: Date } {
+  const starts = recs.map((r) => r.started_at.getTime());
+  return { from: new Date(Math.min(...starts) - 10 * 60_000), to: new Date(Math.min(Date.now() + 60_000, Math.max(...starts) + DAY)) };
+}
 
 /** Event and replay aggregates for the given sessions, over a window that covers them. */
-async function summarize(pid: string, recs: RecordingRow[]): Promise<RecordingSummary[]> {
+export async function summarize(pid: string, recs: RecordingRow[]): Promise<RecordingSummary[]> {
   if (!recs.length) return [];
-  const starts = recs.map((r) => r.started_at.getTime());
-  const w = { from: new Date(Math.min(...starts) - 10 * 60_000), to: new Date(Math.min(Date.now() + 60_000, Math.max(...starts) + DAY)) };
+  const w = recordingsWindow(recs);
   const params: unknown[] = [pid, w.from, w.to];
   const ids = inList(params, recs.map((r) => r.session_id));
   const [replays, events] = await Promise.all([

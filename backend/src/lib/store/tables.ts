@@ -19,7 +19,7 @@ export interface TableDef {
   columns: Array<[string, ColType]>;
 }
 
-export type RawTable = 'events' | 'logs' | 'spans' | 'metric_points' | 'replays';
+export type RawTable = 'events' | 'logs' | 'spans' | 'metric_points' | 'replays' | 'checks' | 'visitor_days';
 
 const s = 'string' as const, j = 'json' as const, ts = 'timestamp' as const, i = 'int' as const, d = 'double' as const;
 
@@ -62,6 +62,21 @@ export const TABLES: Record<RawTable, TableDef> = {
     name: 'replays', time: 'ts', key: ['id'], sort: ['session_id', 'ts'],
     columns: [
       ['ts', ts], ['id', s], ['session_id', s], ['anon_id', s], ['page_id', s], ['seq', i], ['dur', i], ['url', s], ['data', s],
+    ],
+  },
+  // one row per uptime check run (lib/uptime.ts); ok is 1 or 0
+  checks: {
+    name: 'checks', time: 'ts', key: ['id'], sort: ['ts'],
+    columns: [['ts', ts], ['id', s], ['check_id', s], ['ok', i], ['status', i], ['duration_ms', d], ['error', s], ['region', s]],
+  },
+  // one row per visitor and UTC day (lib/visitors.ts), kept ROLLUP_RETENTION_DAYS: retention cohorts need more history
+  // than raw events. The time column is `day`, not `dt`: `dt` is the hive partition column every view adds.
+  // The key includes the day because unmerged files of several days are deduplicated together (store/duck.ts relation).
+  visitor_days: {
+    name: 'visitor_days', time: 'day', key: ['day', 'person'], sort: ['person'],
+    columns: [
+      ['day', ts], ['person', s], ['anon_id', s], ['user_id', s], ['sessions', i], ['events', i], ['device', s], ['country', s],
+      ['source', s], ['goals', j],
     ],
   },
 };

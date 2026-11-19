@@ -1,4 +1,4 @@
-import type { AnalyticsEvent, RecordingFilters, RecordingChunk, RecordingResponse, RecordingSettings, RecordingsResponse, RecordingSummary } from '../api/contract';
+import type { AnalyticsEvent, HeatmapResponse, RecordingFilters, RecordingChunk, RecordingResponse, RecordingSettings, RecordingsResponse, RecordingSummary } from '../api/contract';
 import { events } from './data';
 import { rnd } from './rng';
 
@@ -249,4 +249,44 @@ export function getRecording(sessionId: string): RecordingResponse | null {
     cur.dur = off;
   }
   return { recording: rec, chunks, nextAfter: null };
+}
+
+/**
+ * Mock click heatmap of a page: clusters on the page's clickable elements (page coordinates, 8 px buckets) plus a
+ * few stray clicks on text, with the newest recorded desktop session that viewed the page as the snapshot.
+ * Mobile has no mock snapshots (the mock recordings are all desktop pages).
+ */
+export function heatmap(path: string, from: number, to: number, device: 'desktop' | 'mobile'): HeatmapResponse {
+  const hours = Math.max(1, (to - from) / 3_600_000);
+  const mobile = device === 'mobile';
+  const vw = mobile ? 390 : VW;
+  const cells = new Map<string, { x: number; y: number; n: number }>();
+  const add = (x: number, y: number, n: number) => {
+    const bx = Math.floor(x / 8) * 8, by = Math.floor(y / 8) * 8;
+    if (bx < 0 || by < 0 || bx >= vw) return;
+    const k = `${bx},${by}`;
+    const c = cells.get(k) ?? { x: bx, y: by, n: 0 };
+    c.n += n; cells.set(k, c);
+  };
+  const boxes = Object.entries({ ...TARGETS['*'], ...TARGETS[path] });
+  let i = 0;
+  for (const [, [bx, by, bw, bh]] of boxes) {
+    const w = 0.5 + rnd(i, 61, path.length) * 1.5;
+    const cx = mobile ? 40 + rnd(i, 62) * 300 : X0 + bx + bw / 2, cy = (mobile ? 200 + i * 160 : HEADER + by + bh / 2);
+    const count = Math.round(70 * w * Math.min(8, hours));
+    for (let k = 0; k < count; k++) {
+      const a = rnd(i, k, 63) * Math.PI * 2, d = Math.sqrt(rnd(i, k, 64));
+      add(cx + Math.cos(a) * d * (mobile ? 30 : bw / 2 + 6), cy + Math.sin(a) * d * (mobile ? 20 : bh / 2 + 6), 1 + Math.floor(rnd(i, k, 65) * 2));
+    }
+    i++;
+  }
+  const h = pageHeight(path);
+  for (let k = 0; k < 18 * Math.min(8, hours); k++) add((mobile ? 10 : X0) + rnd(k, 66) * (mobile ? 370 : 1200), HEADER + rnd(k, 67, path.length) ** 1.6 * (h - HEADER - 160), 1);
+  const points = [...cells.values()].sort((a, b) => b.n - a.n).slice(0, 5000);
+  let snapshot: HeatmapResponse['snapshot'] = null;
+  if (!mobile) {
+    const rec = listRecordings(from, to, undefined, 60, {}).recordings.find((r) => r.device === 'desktop' && r.paths.includes(path));
+    if (rec) snapshot = { sessionId: rec.sessionId, at: Date.parse(rec.startedAt) + 3000 };
+  }
+  return { vw, points, total: points.reduce((a, p) => a + p.n, 0), snapshot };
 }

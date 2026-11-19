@@ -4,8 +4,10 @@ import type {
   Device, DeviceCreated, Kiosk, KioskConfig,
   BreakdownRow, ClickRow, ErrorGroup, EventsResponse, GeoResponse, HttpErrorGroup, LogsResponse, Me, Member, MetricInfo,
   MetricSeriesResponse, PageRow, Project, ServiceRow, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse, FieldsResponse, FieldValuesResponse, FilterScope, SlackIntegration, Trigger, TriggerInput, TriggerTestResult, SlackSetup,
-  SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, ConversionsResponse, ClickAlias,
-  RecordingsResponse, RecordingResponse, RecordingSettings, RecordingSettingsResponse, RecordingFilters,
+  SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, ConversionsResponse, ClickAlias, RetentionResponse,
+  ReleasesResponse, Explanation, ExplainMetric, Filter, UploadKey, FrustrationRow, HeatmapResponse,
+  UptimeCheck, UptimeCheckInput, UptimeResults, UptimeRunResult, CostsResponse, TriggerPreview, ErrorSuppression, ErrorSuppressionInput, Budget, BudgetInput,
+  RecordingsResponse, RecordingResponse, RecordingSettings, RecordingSettingsResponse, RecordingFilters, ProjectSite,
 } from './contract';
 import { previousWindow, type TimeRange } from '../lib/time';
 import { botsParam, filtersParam } from '../lib/filters';
@@ -26,8 +28,8 @@ export function useMe() {
 
 // which filter scope (URL param) applies to each endpoint
 const SCOPE: Record<string, FilterScope | undefined> = {
-  stats: 'events', totals: 'events', clicks: 'events', pages: 'events', errors: 'events', 'http-errors': 'events', breakdown: 'events',
-  vitals: 'events', geo: 'events', conversions: 'events', services: 'spans', traces: 'spans',
+  stats: 'events', totals: 'events', clicks: 'events', frustration: 'events', heatmap: 'events', pages: 'events', errors: 'events', 'http-errors': 'events', breakdown: 'events',
+  vitals: 'events', geo: 'events', conversions: 'events', releases: 'events', explain: 'events', services: 'spans', traces: 'spans',
 };
 
 function q<T>(pid: string, name: string, r: TimeRange, path: string, extra: Record<string, string | number | boolean | undefined> = {}, enabled = true) {
@@ -46,11 +48,21 @@ export function usePreviousTotals(pid: string, r: TimeRange) {
   return useQuery({ ...q<Totals>(pid, 'totals', { ...r, ...w }, 'totals'), queryKey: ['totals', pid, w.from, w.to, filtersParam('events'), botsParam()] as const, staleTime: 10 * 60_000 });
 }
 export const useClicks = (pid: string, r: TimeRange) => useQuery(q<ClickRow[]>(pid, 'clicks', r, 'clicks', { limit: 100 }));
-export const usePages = (pid: string, r: TimeRange) => useQuery(q<PageRow[]>(pid, 'pages', r, 'pages', { limit: 10 }));
+export const usePages = (pid: string, r: TimeRange, limit = 10) => useQuery(q<PageRow[]>(pid, 'pages', r, 'pages', { limit }));
+export const useFrustration = (pid: string, r: TimeRange) => useQuery(q<FrustrationRow[]>(pid, 'frustration', r, 'frustration', { limit: 100 }));
+export const useHeatmap = (pid: string, r: TimeRange, path: string, device: 'desktop' | 'mobile') =>
+  useQuery(q<HeatmapResponse>(pid, 'heatmap', r, 'heatmap', { path, device }, !!path));
 export const useErrors = (pid: string, r: TimeRange) => useQuery(q<ErrorGroup[]>(pid, 'errors', r, 'errors', { limit: 100 }));
 export const useHttpErrors = (pid: string, r: TimeRange) => useQuery(q<HttpErrorGroup[]>(pid, 'http-errors', r, 'http-errors', { limit: 100 }));
 export const useBreakdown = (pid: string, r: TimeRange, dim: string) => useQuery(q<BreakdownRow[]>(pid, 'breakdown', r, 'breakdown', { dim }));
 export const useVitals = (pid: string, r: TimeRange) => useQuery(q<VitalsResponse>(pid, 'vitals', r, 'vitals'));
+export const useReleases = (pid: string, r: TimeRange) => useQuery(q<ReleasesResponse>(pid, 'releases', r, 'releases'));
+/** What a metric's change in the range (vs the window before) comes from. */
+export const useExplain = (pid: string, r: TimeRange, spec: { metric: ExplainMetric; where?: Filter[]; goalId?: string; label?: string } | null) =>
+  useQuery({ ...q<Explanation>(pid, 'explain', r, 'explain', spec ? { metric: spec.metric, where: spec.where?.length ? JSON.stringify(spec.where) : undefined, goalId: spec.goalId, label: spec.label } : {}, !!spec), placeholderData: undefined, staleTime: 60_000 });
+/** Deploys in the range (releases first seen in it), for chart markers. */
+export const useReleaseMarkers = (pid: string, r: TimeRange) =>
+  useQuery({ queryKey: ['release-markers', pid, r.from, r.to], queryFn: () => api<ReleasesResponse>(`${base(pid)}/releases`, { params: { ...rp(r), markers: 1 } }), staleTime: 60_000, select: (d) => d.markers });
 export const useGeo = (pid: string, r: TimeRange) => useQuery(q<GeoResponse>(pid, 'geo', r, 'geo'));
 export const useConversions = (pid: string, r: TimeRange) => useQuery(q<ConversionsResponse>(pid, 'conversions', r, 'conversions'));
 /** The same-length window before `r`, without sparklines, refreshed far less often (like usePreviousTotals). */
@@ -66,6 +78,13 @@ export function useGoalFunnel(pid: string, goalId: string, r: TimeRange, steps?:
   const o = q<GoalFunnel>(pid, 'conversions', r, `goals/${goalId}/funnel`, { steps: steps && JSON.stringify(steps) });
   return useQuery({ ...o, queryKey: [...o.queryKey, 'funnel', goalId] as const });
 }
+export interface RetentionParams { from: string; to: string; period: string; start: string; return: string; split: string }
+/** Retention cohorts. Not scoped to the page filters: visitor_days hold their own 400 days, so the page picks its own range. */
+export const useRetention = (pid: string, p: RetentionParams) => useQuery({
+  queryKey: ['retention', pid, p] as const,
+  queryFn: ({ signal }: { signal: AbortSignal }) => api<RetentionResponse>(`${base(pid)}/retention`, { params: { ...p }, signal }),
+  staleTime: 60_000, placeholderData: keepPreviousData,
+});
 export const useServices = (pid: string, r: TimeRange) => useQuery(q<ServiceRow[]>(pid, 'services', r, 'services'));
 export const useMetrics = (pid: string, r: TimeRange) => useQuery(q<MetricInfo[]>(pid, 'metrics', r, 'metrics'));
 export const useMetricSeries = (pid: string, r: TimeRange, name: string | null, agg: string, groupBy: string) =>
@@ -145,6 +164,22 @@ export function useRotateKey(pid: string) {
   return useMutation({
     mutationFn: () => api<Project>(`/api/projects/${pid}/rotate-key`, { method: 'POST' }),
     onSuccess: (p) => qc.setQueryData<Me>(keys.me, (m) => m && { ...m, projects: m.projects.map((x) => (x.id === pid ? p : x)) }),
+  });
+}
+export function useDeleteProject(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<{ ok: true }>(`/api/projects/${pid}`, { method: 'DELETE' }),
+    // dropping it from the list sends the app to another project (or onboarding when it was the last one)
+    onSuccess: () => qc.setQueryData<Me>(keys.me, (m) => m && { ...m, projects: m.projects.filter((x) => x.id !== pid) }),
+  });
+}
+export const useUploadKey = (pid: string, enabled: boolean) => useQuery({ queryKey: ['upload-key', pid] as const, queryFn: () => api<UploadKey>(`/api/projects/${pid}/upload-key`), enabled, staleTime: Infinity });
+export function useRotateUploadKey(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<UploadKey>(`/api/projects/${pid}/rotate-upload-key`, { method: 'POST' }),
+    onSuccess: (k) => qc.setQueryData(['upload-key', pid], k),
   });
 }
 export const useMembers = (pid: string) => useQuery({ queryKey: keys.members(pid), queryFn: () => api<Member[]>(`${base(pid)}/members`), staleTime: 30_000 });
@@ -314,6 +349,31 @@ export function useDeleteTrigger(pid: string) {
     onSettled: () => qc.invalidateQueries({ queryKey: triggersKey(pid) }),
   });
 }
+const suppressionsKey = (pid: string) => ['error-suppressions', pid] as const;
+export const useSuppressions = (pid: string) =>
+  useQuery({ queryKey: suppressionsKey(pid), queryFn: () => api<ErrorSuppression[]>(`${base(pid)}/error-suppressions`), staleTime: 30_000 });
+export function useSaveSuppression(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ErrorSuppressionInput) => api<ErrorSuppression>(`${base(pid)}/error-suppressions`, { method: 'POST', body: input }),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: suppressionsKey(pid) }); void qc.invalidateQueries({ queryKey: ['errors', pid] }); },
+  });
+}
+export function useDeleteSuppression(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>(`${base(pid)}/error-suppressions/${id}`, { method: 'DELETE' }),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: suppressionsKey(pid) }); void qc.invalidateQueries({ queryKey: ['errors', pid] }); },
+  });
+}
+/** The current value of an unsaved threshold/anomaly trigger (debounced by the query key). */
+export function useTriggerPreview(pid: string, input: Partial<TriggerInput> | null) {
+  const key = input ? JSON.stringify(input) : '';
+  return useQuery({
+    queryKey: ['trigger-preview', pid, key], enabled: !!input, staleTime: 30_000, retry: false,
+    queryFn: () => api<TriggerPreview>(`${base(pid)}/triggers/preview`, { method: 'POST', body: input! }),
+  });
+}
 export function useTestTrigger(pid: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -402,8 +462,9 @@ export function useRecordings(pid: string, r: TimeRange, f: RecordingFilters = {
   });
 }
 /** A whole recording: the API sends it in parts of a few MB, fetched one after another. */
-export function useRecording(pid: string, sessionId: string) {
+export function useRecording(pid: string, sessionId: string, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: ['recording', pid, sessionId],
     queryFn: async ({ signal }) => {
       const first = await api<RecordingResponse>(`${base(pid)}/recordings/${encodeURIComponent(sessionId)}`, { signal });
@@ -427,3 +488,99 @@ export function useSaveRecordingSettings(pid: string) {
     onSuccess: (r) => qc.setQueryData(['recording-settings', pid], r),
   });
 }
+
+// ---------- uptime checks ----------
+const uptimeKey = (pid: string) => ['uptime', pid] as const;
+
+export const useUptime = (pid: string, r: TimeRange) =>
+  useQuery({
+    queryKey: [...uptimeKey(pid), r.from, r.to] as const,
+    queryFn: ({ signal }) => api<UptimeCheck[]>(`${base(pid)}/uptime`, { params: rp(r), signal }),
+    staleTime: 15_000, placeholderData: keepPreviousData, refetchInterval: 60_000,
+  });
+export const useUptimeResults = (pid: string, id: string | null, r: TimeRange) =>
+  useQuery({
+    queryKey: ['uptime-results', pid, id, r.from, r.to] as const,
+    queryFn: ({ signal }) => api<UptimeResults>(`${base(pid)}/uptime/${id}/results`, { params: rp(r), signal }),
+    enabled: !!id, staleTime: 15_000, placeholderData: keepPreviousData,
+  });
+export function useSaveUptime(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id?: string; input: Partial<UptimeCheckInput> }) =>
+      id ? api<UptimeCheck>(`${base(pid)}/uptime/${id}`, { method: 'PATCH', body: input }) : api<UptimeCheck>(`${base(pid)}/uptime`, { method: 'POST', body: input }),
+    onSettled: () => qc.invalidateQueries({ queryKey: uptimeKey(pid) }),
+  });
+}
+export function useDeleteUptime(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>(`${base(pid)}/uptime/${id}`, { method: 'DELETE' }),
+    onSettled: () => qc.invalidateQueries({ queryKey: uptimeKey(pid) }),
+  });
+}
+export function useRunUptime(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<UptimeRunResult>(`${base(pid)}/uptime/${id}/run`, { method: 'POST' }),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: uptimeKey(pid) }); void qc.invalidateQueries({ queryKey: ['uptime-results', pid] }); },
+  });
+}
+
+// ---------- budgets ----------
+const budgetsKey = ['budgets'] as const;
+export const useBudgets = () => useQuery({ queryKey: budgetsKey, queryFn: () => api<Budget[]>('/api/costs/budgets'), staleTime: 30_000, retry: false });
+export function useSaveBudget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id?: string; input: Partial<BudgetInput> }) =>
+      id ? api<Budget>(`/api/costs/budgets/${id}`, { method: 'PATCH', body: input }) : api<Budget>('/api/costs/budgets', { method: 'POST', body: input }),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: budgetsKey }); void qc.invalidateQueries({ queryKey: ['collection'] }); },
+  });
+}
+export function useDeleteBudget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>(`/api/costs/budgets/${id}`, { method: 'DELETE' }),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: budgetsKey }); void qc.invalidateQueries({ queryKey: ['collection'] }); },
+  });
+}
+export function useResumeBudget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<Budget>(`/api/costs/budgets/${id}/resume`, { method: 'POST' }),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: budgetsKey }); void qc.invalidateQueries({ queryKey: ['collection'] }); },
+  });
+}
+/** Whether a cost budget stopped collecting this project's data. */
+export const useCollection = (pid: string) =>
+  useQuery({ queryKey: ['collection', pid] as const, queryFn: () => api<{ paused: boolean }>(`${base(pid)}/collection`), staleTime: 60_000, retry: false });
+
+// ---------- the project's public website (All projects page) ----------
+export const useSite = (pid: string) =>
+  useQuery({ queryKey: ['site', pid] as const, queryFn: () => api<ProjectSite>(`${base(pid)}/site`), staleTime: 10 * 60_000, retry: false });
+
+/** The homepage screenshot of `day`. A new one is taken at most once a day, so it's kept in localStorage per day. */
+export function useSiteImage(pid: string, day: string | null) {
+  return useQuery({
+    queryKey: ['site-image', pid, day] as const,
+    enabled: !!day,
+    staleTime: Infinity,
+    gcTime: 60 * 60_000,
+    retry: false,
+    queryFn: async ({ signal }) => {
+      const key = `wgo.site.${pid}`;
+      try {
+        const hit = JSON.parse(localStorage.getItem(key) ?? 'null') as { day: string; image: string } | null;
+        if (hit?.day === day) return hit.image;
+      } catch { /* fetch it */ }
+      const { image } = await api<{ image: string }>(`${base(pid)}/site/image`, { params: { day: day! }, signal });
+      try { localStorage.setItem(key, JSON.stringify({ day, image })); } catch { /* storage full: still shown */ }
+      return image;
+    },
+  });
+}
+
+// ---------- what the install costs ----------
+export const useCosts = (pid: string) =>
+  useQuery({ queryKey: ['costs', pid] as const, queryFn: () => api<CostsResponse>('/api/costs', { params: { pid } }), staleTime: 5 * 60_000, retry: false });

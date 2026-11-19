@@ -1,6 +1,7 @@
 import type { ReplayHost, ReplayTrigger, WireEvent } from '../types'
 import { Transport } from '../transport'
 import { selector } from '../selector'
+import { labelOf, TARGET } from '../capture/clicks'
 import { ls, memoryStore, on, uuid } from '../util'
 import { serialize } from './serialize'
 import { unit } from './sample'
@@ -16,6 +17,9 @@ import { unit } from './sample'
  *   [4, t, w, h]              viewport resized
  *   [5, t, selector, kind, v] form field changed: kind 0 = text (v = length), 1 = checked (v = 0/1), 2 = select (v = index)
  *   [6, t, hidden]            tab hidden (1) or visible again (0)
+ *   [7, t, selector, ms, text?, name?]
+ *                             the mouse rested on a clickable element (the one a click there would report) for `ms`,
+ *                             recorded when it left: label (none when the project masks all text) and data-track name
  *
  * Chunks travel as `replay` events through their own queue to /ingest. A session is recorded only once the server
  * grants it a slot (POST /replay/start), which enforces the project's hourly and daily limits. Until then (and
@@ -39,6 +43,8 @@ const BUFFER_BYTES = 3_000_000
 const MAX_SNAPSHOT = 150_000
 const MOVE_MS = 50
 const SCROLL_MS = 100
+/** a shorter hover is the pointer passing over on its way somewhere else */
+export const HOVER_MS = 300
 
 function hash(s: string): string {
   let h = 2166136261
@@ -108,6 +114,8 @@ export function start(h: ReplayHost): () => void {
   let gap = 1000
   let snapTimer: ReturnType<typeof setTimeout> | undefined
   let stops: (() => void)[] = []
+  /** ends the hover in progress (recording it if it lasted long enough) */
+  let endHover = () => {}
 
   const key = () => `wgo:rec:${sid}`
 
@@ -248,6 +256,16 @@ export function start(h: ReplayHost): () => void {
     const sel = (el: Element) => { let s = sels.get(el); if (!s) { s = selector(el); sels.set(el, s) } return s }
     const opts = { capture: true, passive: true } as unknown as boolean // `on` passes it through
     const xy = (e: { clientX: number; clientY: number }) => [Math.round(e.clientX), Math.round(e.clientY)]
+    let hov: { el: Element; at: number; sel: string; text?: string; name?: string | null } | null = null
+    endHover = (now = Date.now()) => {
+      const x = hov
+      hov = null
+      if (!x || now - x.at < HOVER_MS) return
+      const r: Rec = [7, x.sel, now - x.at]
+      if (x.text || x.name) r.push(x.text ?? null)
+      if (x.name) r.push(x.name)
+      rec(r, now)
+    }
 
     const mo = new MutationObserver(() => schedule())
     mo.observe(document, { childList: true, subtree: true, attributes: true, characterData: true })
@@ -259,6 +277,23 @@ export function start(h: ReplayHost): () => void {
         moved = now
         rec([1, ...xy(e)])
       }, opts),
+      // mouse only: a tap fires pointerover too, but nothing hovered
+      on(document, 'pointerover', (e: PointerEvent) => {
+        if (e.pointerType !== 'mouse') return
+        const raw = e.target instanceof Element && !e.target.closest('[data-wgo-ignore]') ? e.target : null
+        // clickable elements, and the images and fields a click would report on their own
+        const el = raw && (raw.closest(TARGET) ?? (raw.matches('img,input,textarea') ? raw : null))
+        if (el === hov?.el) return
+        endHover()
+        if (!el) return
+        const named = el.closest('[data-track],[data-wgo]')
+        hov = {
+          el, at: Date.now(), sel: sel(el),
+          text: h.c.mask ? undefined : labelOf(el),
+          name: named && (named.getAttribute('data-track') || named.getAttribute('data-wgo')),
+        }
+      }, opts),
+      on(document, 'pointerout', (e: PointerEvent) => { if (!e.relatedTarget) endHover() }, opts),
       on(document, 'click', (e: MouseEvent) => {
         rec([2, ...xy(e)])
         interacted()
@@ -313,6 +348,7 @@ export function start(h: ReplayHost): () => void {
   }
 
   function hide(): void {
+    endHover()
     flush()
     if (mode === 'live') transport.flushBeacon()
   }

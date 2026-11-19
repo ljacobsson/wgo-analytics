@@ -1,7 +1,8 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
-import type { AnalyticsEvent, Filter, FilterScope, LogRecord, Span, Trigger, TriggerDestination, TriggerInput, TriggerTestResult, TriggerWebhookPayload } from '../contract';
+import type { AnalyticsEvent, Filter, FilterScope, LogRecord, Span, Trigger, TriggerCondition, TriggerDestination, TriggerInput, TriggerKind, TriggerMetric, TriggerStatus, TriggerTestResult, TriggerWebhookPayload } from '../contract';
+import { TRIGGER_WINDOWS } from '../contract';
 import { query } from './db';
 import { matchesAll, type MatchRow } from './filterMatch';
 import { filterSql, parseFilters } from './filters';
@@ -12,26 +13,40 @@ import { HttpError } from './http';
 const PRIVATE_V4 = [/^10\./, /^127\./, /^169\.254\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./, /^0\./, /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./];
 
 /**
- * Webhooks go to the public internet only: https, and never loopback, link-local, private or internal names.
+ * Whether a hostname is a public one: never loopback, link-local, private or internal names.
  * (Lambda has no VPC access here, so this mostly stops probing the runtime's own localhost services.)
  */
-export function assertPublicHttpsUrl(raw: string): URL {
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    throw new HttpError(400, 'Webhook URL is not a valid URL');
-  }
-  if (u.protocol !== 'https:') throw new HttpError(400, 'Webhook URL must use https');
-  if (u.username || u.password) throw new HttpError(400, 'Webhook URL must not contain credentials');
-  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+export function isPublicHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   const ipv = isIP(host);
   const bad =
     host === 'localhost' || /\.(localhost|local|internal|lan|home|corp)$/.test(host) || !host.includes('.') ||
     (ipv === 4 && PRIVATE_V4.some((r) => r.test(host))) ||
     (ipv === 6 && (host === '::1' || /^(fc|fd|fe80|::ffff:)/i.test(host)));
-  if (bad) throw new HttpError(400, 'Webhook URL must point to a public host');
+  return !bad;
+}
+
+function assertPublicUrl(raw: string, label: string, allowHttp: boolean): URL {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new HttpError(400, `${label} is not a valid URL`);
+  }
+  if (u.protocol !== 'https:' && !(allowHttp && u.protocol === 'http:')) throw new HttpError(400, `${label} must use ${allowHttp ? 'http or https' : 'https'}`);
+  if (u.username || u.password) throw new HttpError(400, `${label} must not contain credentials`);
+  if (!isPublicHost(u.hostname)) throw new HttpError(400, `${label} must point to a public host`);
   return u;
+}
+
+/** Webhooks go to the public internet only: https, and never loopback, link-local, private or internal names. */
+export function assertPublicHttpsUrl(raw: string): URL {
+  return assertPublicUrl(raw, 'Webhook URL', false);
+}
+
+/** Like assertPublicHttpsUrl, but `http` is accepted too (uptime checks). `label` names the URL in error messages. */
+export function assertPublicHttpUrl(raw: string, label = 'URL'): URL {
+  return assertPublicUrl(raw, label, true);
 }
 
 const SCOPES: FilterScope[] = ['events', 'logs', 'spans'];
@@ -42,9 +57,10 @@ function validateScope(v: unknown): FilterScope {
   return v as FilterScope;
 }
 
-function validateFilters(filters: unknown, scope: FilterScope): Filter[] {
+function validateFilters(filters: unknown, scope: FilterScope, kind: TriggerKind = 'match'): Filter[] {
   const list = parseFilters(JSON.stringify(filters ?? []));
-  if (!list.length) throw new HttpError(400, 'A trigger needs at least one filter');
+  // a threshold/anomaly trigger may watch every row of its scope ("no pageviews in 30 minutes")
+  if (!list.length && kind === 'match') throw new HttpError(400, 'A trigger needs at least one filter');
   filterSql(list, scope, []); // rejects unknown fields with a 400
   return list;
 }
@@ -78,6 +94,44 @@ export function dashboardOrigin(origin: string | undefined): string | null {
   }
 }
 
+const KINDS: TriggerKind[] = ['match', 'threshold', 'anomaly'];
+const AGGS = ['count', 'sessions', 'session_rate', 'avg', 'p75', 'p95'] as const;
+
+function validateKind(v: unknown): TriggerKind {
+  if (v === undefined || v === null) return 'match';
+  if (!KINDS.includes(v as TriggerKind)) throw new HttpError(400, 'kind must be match, threshold or anomaly');
+  return v as TriggerKind;
+}
+
+/** Metric, condition and window of a threshold/anomaly trigger (all null for match triggers). */
+export function validateAggregate(kind: TriggerKind, scope: FilterScope, body: Partial<TriggerInput>): { metric: TriggerMetric | null; condition: TriggerCondition | null; windowMinutes: number | null } {
+  if (kind === 'match') return { metric: null, condition: null, windowMinutes: null };
+  const m = body.metric as Partial<TriggerMetric> | undefined;
+  if (!m || !AGGS.includes(m.agg as never)) throw new HttpError(400, `metric.agg must be one of ${AGGS.join(', ')}`);
+  if ((m.agg === 'sessions' || m.agg === 'session_rate') && scope !== 'events') throw new HttpError(400, 'Sessions can only be counted for product events');
+  const metric: TriggerMetric = { agg: m.agg! };
+  if (m.agg === 'avg' || m.agg === 'p75' || m.agg === 'p95') {
+    if (typeof m.field !== 'string' || !m.field) throw new HttpError(400, `metric.field is required for ${m.agg}`);
+    filterSql([{ field: m.field, op: 'set' }], scope, []); // rejects unknown fields
+    metric.field = m.field;
+  }
+  const w = Number(body.windowMinutes);
+  if (!(TRIGGER_WINDOWS as readonly number[]).includes(w)) throw new HttpError(400, `windowMinutes must be one of ${TRIGGER_WINDOWS.join(', ')}`);
+  const c = (body.condition ?? {}) as Record<string, unknown>;
+  let condition: TriggerCondition;
+  if (kind === 'threshold') {
+    const value = Number(c.value);
+    if ((c.op !== 'above' && c.op !== 'below') || !Number.isFinite(value)) throw new HttpError(400, 'condition must be { op: "above" | "below", value: number }');
+    condition = { op: c.op, value };
+  } else {
+    if (!['up', 'down', 'either'].includes(c.direction as string) || !['low', 'medium', 'high'].includes(c.sensitivity as string)) {
+      throw new HttpError(400, 'condition must be { direction: "up" | "down" | "either", sensitivity: "low" | "medium" | "high" }');
+    }
+    condition = { direction: c.direction as 'up', sensitivity: c.sensitivity as 'low' };
+  }
+  return { metric, condition, windowMinutes: w };
+}
+
 const cooldown = (v: unknown) => {
   const n = v === undefined ? 300 : Number(v);
   if (!Number.isInteger(n) || n < 0 || n > 86400) throw new HttpError(400, 'cooldownSeconds must be 0-86400');
@@ -95,14 +149,26 @@ interface TriggerRow {
   project_id: string; id: string; name: string; scope: FilterScope | null; filters: Filter[]; destination: TriggerDestination; cooldown_seconds: number;
   enabled: boolean; signing_secret: string; created_by: string; created_at: Date; last_fired_at: Date | null; fire_count: number;
   suppressed: number; last_status: string | null; dashboard_url: string | null;
+  kind: TriggerKind | null; metric: TriggerMetric | null; condition: TriggerCondition | null; window_minutes: number | null;
+  state: 'ok' | 'firing' | null; state_since: Date | null; last_value: number | null; last_evaluated_at: Date | null;
+  baseline: { median: number; low: number; high: number; days: number; hour?: number; at?: string } | null;
 }
+export type { TriggerRow };
 
 const scopeOf = (r: { scope: FilterScope | null }): FilterScope => r.scope ?? 'events'; // NULL: created before scopes existed
+export const kindOf = (r: { kind?: TriggerKind | null }): TriggerKind => r.kind ?? 'match'; // NULL: created before kinds existed
+
+const statusOf = (r: TriggerRow): TriggerStatus | null => kindOf(r) === 'match' ? null : {
+  state: r.state, since: r.state_since?.toISOString() ?? null, lastValue: r.last_value, lastEvaluatedAt: r.last_evaluated_at?.toISOString() ?? null,
+  baseline: r.baseline ? { median: r.baseline.median, low: r.baseline.low, high: r.baseline.high, days: r.baseline.days } : null,
+};
 
 const toTrigger = (r: TriggerRow): Trigger => ({
   id: r.id, name: r.name, scope: scopeOf(r), filters: r.filters, destination: r.destination, cooldownSeconds: r.cooldown_seconds, enabled: r.enabled,
   signingSecret: r.signing_secret, createdBy: r.created_by, createdAt: r.created_at.toISOString(),
   lastFiredAt: r.last_fired_at?.toISOString() ?? null, fireCount: r.fire_count, lastStatus: r.last_status,
+  kind: kindOf(r), metric: r.metric, condition: r.condition, windowMinutes: r.window_minutes,
+  status: statusOf(r),
 });
 
 export async function listTriggers(pid: string): Promise<Trigger[]> {
@@ -119,11 +185,15 @@ async function getTrigger(pid: string, id: string): Promise<TriggerRow> {
 export async function createTrigger(pid: string, email: string, body: Partial<TriggerInput>, origin?: string): Promise<Trigger> {
   const id = randomUUID();
   const scope = validateScope(body.scope);
+  const kind = validateKind(body.kind);
+  const agg = validateAggregate(kind, scope, body);
   await query(
-    `INSERT INTO triggers (project_id, id, name, scope, filters, destination, cooldown_seconds, enabled, signing_secret, created_by, dashboard_url)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11)`,
-    [pid, id, triggerName(body.name), scope, JSON.stringify(validateFilters(body.filters, scope)), JSON.stringify(await validateDestination(pid, body.destination)),
-      cooldown(body.cooldownSeconds), body.enabled !== false, 'whsec_' + randomBytes(24).toString('base64url'), email, dashboardOrigin(origin)],
+    `INSERT INTO triggers (project_id, id, name, scope, filters, destination, cooldown_seconds, enabled, signing_secret, created_by, dashboard_url,
+                           kind, metric, condition, window_minutes)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)`,
+    [pid, id, triggerName(body.name), scope, JSON.stringify(validateFilters(body.filters, scope, kind)), JSON.stringify(await validateDestination(pid, body.destination)),
+      cooldown(body.cooldownSeconds), body.enabled !== false, 'whsec_' + randomBytes(24).toString('base64url'), email, dashboardOrigin(origin),
+      kind === 'match' ? null : kind, agg.metric && JSON.stringify(agg.metric), agg.condition && JSON.stringify(agg.condition), agg.windowMinutes],
   );
   cache.delete(pid);
   return toTrigger(await getTrigger(pid, id));
@@ -132,16 +202,25 @@ export async function createTrigger(pid: string, email: string, body: Partial<Tr
 export async function updateTrigger(pid: string, id: string, body: Partial<TriggerInput>, origin?: string): Promise<Trigger> {
   const cur = await getTrigger(pid, id);
   if (body.scope !== undefined && validateScope(body.scope) !== scopeOf(cur)) throw new HttpError(400, 'A trigger’s scope can’t be changed; create a new trigger instead');
+  const kind = kindOf(cur);
+  if (body.kind !== undefined && validateKind(body.kind) !== kind) throw new HttpError(400, 'A trigger’s kind can’t be changed; create a new trigger instead');
+  const agg = validateAggregate(kind, scopeOf(cur), {
+    metric: body.metric ?? cur.metric ?? undefined, condition: body.condition ?? cur.condition ?? undefined, windowMinutes: body.windowMinutes ?? cur.window_minutes ?? undefined,
+  });
+  // a changed definition starts over: state, last value and the anomaly baseline no longer apply
+  const changed = kind !== 'match' && (body.metric !== undefined || body.condition !== undefined || body.windowMinutes !== undefined || body.filters !== undefined);
   await query(
     `UPDATE triggers SET name = $3, filters = $4::jsonb, destination = $5::jsonb, cooldown_seconds = $6, enabled = $7,
-            dashboard_url = COALESCE($8, dashboard_url)
+            dashboard_url = COALESCE($8, dashboard_url), metric = $9::jsonb, condition = $10::jsonb, window_minutes = $11
+            ${changed ? ', state = NULL, state_since = NULL, last_value = NULL, baseline = NULL' : ''}
       WHERE project_id = $1 AND id = $2`,
     [pid, id,
       body.name !== undefined ? triggerName(body.name) : cur.name,
-      JSON.stringify(body.filters !== undefined ? validateFilters(body.filters, scopeOf(cur)) : cur.filters),
+      JSON.stringify(body.filters !== undefined ? validateFilters(body.filters, scopeOf(cur), kind) : cur.filters),
       JSON.stringify(body.destination !== undefined ? await validateDestination(pid, body.destination) : cur.destination),
       body.cooldownSeconds !== undefined ? cooldown(body.cooldownSeconds) : cur.cooldown_seconds,
-      body.enabled !== undefined ? body.enabled === true : cur.enabled, dashboardOrigin(origin)],
+      body.enabled !== undefined ? body.enabled === true : cur.enabled, dashboardOrigin(origin),
+      agg.metric && JSON.stringify(agg.metric), agg.condition && JSON.stringify(agg.condition), agg.windowMinutes],
   );
   cache.delete(pid);
   return toTrigger(await getTrigger(pid, id));
@@ -163,7 +242,8 @@ const CACHE_MS = 30_000;
 async function activeTriggers(pid: string) {
   const hit = cache.get(pid);
   if (hit && hit.exp > Date.now()) return hit.triggers;
-  const triggers = await query<ActiveTrigger>('SELECT id, scope, filters FROM triggers WHERE project_id = $1 AND enabled', [pid]);
+  // threshold/anomaly triggers are evaluated on a schedule (lib/monitor.ts), not per row
+  const triggers = await query<ActiveTrigger>(`SELECT id, scope, filters FROM triggers WHERE project_id = $1 AND enabled AND (kind IS NULL OR kind = 'match')`, [pid]);
   cache.set(pid, { triggers, exp: Date.now() + CACHE_MS });
   return triggers;
 }
@@ -262,8 +342,46 @@ const NOUN: Record<FilterScope, string> = { events: 'event', logs: 'log record',
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+const AGG_LABEL: Record<TriggerMetric['agg'], string> = {
+  count: 'Count', sessions: 'Sessions', session_rate: 'Share of sessions', avg: 'Average', p75: 'p75', p95: 'p95',
+};
+const fmtValue = (v: number | null | undefined, m?: TriggerMetric) => {
+  if (v == null) return 'no data';
+  if (m?.agg === 'session_rate') return `${(v * 100).toFixed(1)}%`;
+  if (m?.field && /duration|ms$|lcp|inp|fcp|ttfb/i.test(m.field)) return v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${Math.round(v)} ms`;
+  return Number.isInteger(v) ? v.toLocaleString('en-US') : v.toFixed(2);
+};
+const windowText = (min?: number) => (!min ? '' : min < 60 ? `${min} minutes` : min === 60 ? 'hour' : min < 1440 ? `${min / 60} hours` : '24 hours');
+
+/** "Count in the last 15 minutes is 34, above 20" / "… is 3, unusually low (usually 9–15)" / "… is back to normal: 12". */
+export function describeAggregate(p: Pick<TriggerWebhookPayload, 'kind' | 'state' | 'value' | 'metric' | 'condition' | 'windowMinutes' | 'baseline'>): string {
+  const m = p.metric;
+  const what = `${m ? AGG_LABEL[m.agg] : 'Value'}${m?.field ? ` of ${m.field}` : ''} in the last ${windowText(p.windowMinutes)}`;
+  const v = fmtValue(p.value, m);
+  if (p.state === 'resolved') return `${what} is back to normal: ${v}.`;
+  const c = p.condition;
+  if (c && 'op' in c) return `${what} is ${v}, ${c.op} ${fmtValue(c.value, m)}.`;
+  const b = p.baseline;
+  const usual = b ? ` (usually ${fmtValue(b.low, m)} to ${fmtValue(b.high, m)})` : '';
+  const dir = b && p.value != null && p.value < b.median ? 'low' : 'high';
+  return `${what} is ${v}, unusually ${dir}${usual}.`;
+}
+
 /** Slack Block Kit message for a notification (incoming webhooks accept blocks plus a text fallback). */
 export function slackMessage(p: TriggerWebhookPayload): object {
+  if (p.kind && p.kind !== 'match') {
+    const head = `${p.test ? '[test] ' : ''}${p.state === 'resolved' ? '✅ Resolved' : '🔔'} ${p.trigger.name}`;
+    const line = describeAggregate(p);
+    return {
+      text: `${head}: ${line}`,
+      blocks: [
+        { type: 'header', text: { type: 'plain_text', text: head.slice(0, 150), emoji: true } },
+        { type: 'section', text: { type: 'mrkdwn', text: `${esc(line)} Project *${esc(p.project.name)}*.` } },
+        ...(p.explanation && p.state !== 'resolved' ? [{ type: 'section', text: { type: 'mrkdwn', text: esc(p.explanation).slice(0, 2900) } }] : []),
+        ...(p.url.startsWith('http') ? [{ type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Open in WGO' }, url: p.url }] }] : []),
+      ],
+    };
+  }
   const head = `${p.test ? '[test] ' : ''}${p.trigger.name}`;
   const what = `${p.matches} matching ${NOUN[p.scope ?? 'events']}${p.matches === 1 ? '' : 's'}`;
   const summary = `${what} in *${esc(p.project.name)}*`;
@@ -355,6 +473,30 @@ export async function deliver(req: DeliveryRequest): Promise<'sent' | 'cooldown'
   return 'sent';
 }
 
+/**
+ * A threshold/anomaly trigger started firing or resolved (lib/monitor.ts). Firing honours the cooldown (at most one
+ * "firing" notification per period, against flapping); resolving always notifies when firing was notified.
+ */
+export async function notifyAggregate(t: TriggerRow, state: 'firing' | 'resolved', value: number | null, baseline: TriggerStatus['baseline'], explanation?: string): Promise<'sent' | 'cooldown'> {
+  if (state === 'firing') {
+    if (t.last_fired_at && Date.now() - t.last_fired_at.getTime() < t.cooldown_seconds * 1000) {
+      await query('UPDATE triggers SET suppressed = suppressed + 1 WHERE project_id = $1 AND id = $2', [t.project_id, t.id]);
+      return 'cooldown';
+    }
+    await query('UPDATE triggers SET last_fired_at = now(), fire_count = fire_count + 1, suppressed = 0 WHERE project_id = $1 AND id = $2', [t.project_id, t.id]);
+  }
+  const base = await payloadFor(t, { events: [] }, 0);
+  const minutes = t.window_minutes ?? 60;
+  const payload: TriggerWebhookPayload = {
+    ...base, kind: kindOf(t), state, value, metric: t.metric ?? undefined, condition: t.condition ?? undefined, windowMinutes: minutes,
+    baseline, ...(explanation ? { explanation } : {}),
+    url: base.url.replace('range=24h', `range=${minutes >= 1440 ? '7d' : minutes >= 360 ? '24h' : '6h'}`),
+  };
+  const status = await send(t, payload);
+  await query('UPDATE triggers SET last_status = $3 WHERE project_id = $1 AND id = $2', [t.project_id, t.id, status]);
+  return 'sent';
+}
+
 /** "Send test": a sample notification right now, bypassing the cooldown and leaving the counters alone. */
 export async function testTrigger(pid: string, id: string): Promise<TriggerTestResult> {
   const t = await getTrigger(pid, id);
@@ -370,7 +512,15 @@ export async function testTrigger(pid: string, id: string): Promise<TriggerTestR
     scope === 'logs' ? { events: [], logs: [{ id: randomUUID(), ts: now, severityNumber: 17, severityText: 'ERROR', body: 'Example log message', service: 'example-service', traceId: null, spanId: null, attributes: {}, resource: {} }] }
     : scope === 'spans' ? { events: [], spans: [{ traceId: '0'.repeat(32), spanId: '0'.repeat(16), parentSpanId: null, name: 'GET /example', kind: 2, service: 'example-service', start: now, end: now, durationMs: 1234, statusCode: 2, statusMessage: 'Example failure', attributes: {}, resource: {}, events: [] }] }
     : { events: [sample] };
-  const status = await send(t, await payloadFor(t, rows, 1, true));
+  let payload = await payloadFor(t, rows, 1, true);
+  if (kindOf(t) !== 'match') {
+    const c = t.condition;
+    const value = c && 'op' in c ? (c.op === 'above' ? c.value * 1.5 || 1 : 0) : 42;
+    payload = { ...payload, events: [], logs: undefined, spans: undefined, kind: kindOf(t), state: 'firing', value, metric: t.metric ?? undefined, condition: c ?? undefined,
+      windowMinutes: t.window_minutes ?? 60, baseline: c && 'op' in c ? null : { median: 12, low: 8, high: 17, days: 7 },
+      ...(scopeOf(t) === 'events' ? { explanation: 'Example: 80% of the increase is on /checkout, which was 10% of the total before. It started around 14:05 UTC, 2 minutes after release 1.4.2 was first seen.' } : {}) };
+  }
+  const status = await send(t, payload);
   await query('UPDATE triggers SET last_status = $3 WHERE project_id = $1 AND id = $2', [pid, id, `test: ${status}`]);
   return { ok: /^2\d\d$/.test(status), status };
 }

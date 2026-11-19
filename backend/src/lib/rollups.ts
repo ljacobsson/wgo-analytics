@@ -3,6 +3,7 @@ import { Hll } from './hll';
 import { getJobState, setJobState } from './jobState';
 import { rawQuery } from './store/duck';
 import { firstDay } from './store/maintain';
+import { suppressedSql } from './suppressions';
 
 /**
  * Hourly rollups of the events table (Parquet, read through DuckDB), stored in DSQL: a few hundred rows per
@@ -58,10 +59,13 @@ export async function rollupHour(pid: string, hourMs: number): Promise<void> {
   const hour = new Date(hourMs);
   const end = new Date(hourMs + HOUR);
   const w = { from: new Date(hourMs - SESSION_LOOKBACK_MS), to: end };
+  // suppressed errors (lib/suppressions.ts) stored before their rule existed don't count either
+  const typeParams: unknown[] = [pid, hour, end];
+  const S = await suppressedSql(pid, typeParams);
   const [types, pages, sessions, bots] = await Promise.all([
     rawQuery<{ key: string; n: string }>(pid, w,
-      `SELECT type AS key, count(*) AS n FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL GROUP BY 1`,
-      [pid, hour, end],
+      `SELECT type AS key, count(*) AS n FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL${S} GROUP BY 1`,
+      typeParams,
     ),
     rawQuery<{ key: string; n: string; s: string }>(pid, w,
       `SELECT path AS key, count(*) AS n, count(DISTINCT session_id) AS s
@@ -270,4 +274,44 @@ export function mergeKeyed<T extends { key: string; events: number; sessions: nu
     } else m.set(r.key, { key: r.key, events: r.events, sessions: r.sessions });
   }
   return [...m.values()].sort((x, y) => y[order] - x[order]).slice(0, limit);
+}
+
+// ---------------------------------------------------------------- re-rolls
+
+/** job_state names `reroll:<project id>`: that project's rollups must be recomputed (e.g. error suppression changed). */
+export const REROLL_PREFIX = 'reroll:';
+
+/**
+ * Recomputes the rolled hours of marked projects that contain errors, still in raw retention: a new or deleted
+ * error suppression rule changes what they count. `at` is the last hour done (epoch 0: not started), so a run that
+ * hits its deadline continues next time. Hours older than raw retention keep their counts.
+ */
+export async function runRerolls(deadline: number, rolledUntil: number, now = Date.now()): Promise<{ projects: number; hours: number }> {
+  const marks = await query<{ name: string; at: Date }>(`SELECT name, at FROM job_state WHERE name LIKE '${REROLL_PREFIX}%'`);
+  let hours = 0;
+  for (const m of marks) {
+    const pid = m.name.slice(REROLL_PREFIX.length);
+    const { projectRetention } = await import('./retention');
+    const from = Math.max(m.at.getTime() + HOUR, floorHour(now - (await projectRetention(pid)) * 24 * HOUR));
+    let last = m.at;
+    if (from < rolledUntil) {
+      const todo = await rawQuery<{ h: number }>(pid, { from: new Date(from), to: new Date(rolledUntil) },
+        `SELECT DISTINCT (floor(extract(epoch from ts) / 3600) * 3600000)::BIGINT AS h FROM events
+          WHERE project_id = $1 AND type = 'error' AND ts >= $2 AND ts < $3 ORDER BY 1`,
+        [pid, new Date(from), new Date(rolledUntil)],
+      );
+      for (const { h } of todo) {
+        if (Date.now() > deadline) {
+          await query('UPDATE job_state SET at = $2 WHERE name = $1 AND at = $3', [m.name, last, m.at]);
+          return { projects: marks.length, hours };
+        }
+        await rollupHour(pid, Number(h));
+        last = new Date(Number(h));
+        hours++;
+      }
+    }
+    // done, unless the project was marked again meanwhile (its `at` was reset)
+    await query('DELETE FROM job_state WHERE name = $1 AND at = $2', [m.name, m.at]);
+  }
+  return { projects: marks.length, hours };
 }

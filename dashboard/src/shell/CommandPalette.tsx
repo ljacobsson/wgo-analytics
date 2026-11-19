@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Clock, FolderKanban, Moon, LogOut, RefreshCw, Plus, Bookmark } from 'lucide-react';
+import { Search, Clock, FolderKanban, LayoutGrid, Moon, LogOut, RefreshCw, Plus, Bookmark } from 'lucide-react';
 import { useViews } from '../api/hooks';
 import { viewHref } from '../ui/FilterBar';
 import { PAGES, useProject } from '../lib/project';
@@ -10,6 +10,7 @@ import { Kbd } from '../ui/kit';
 import { PageIcon } from './icons';
 import { signOut } from '../auth/cognito';
 import { cn } from '../lib/format';
+import { projectsHref } from '../pages/Projects';
 
 interface Cmd { id: string; label: string; group: string; icon: ReactNode; hint?: string; run: () => void }
 
@@ -32,6 +33,7 @@ export function CommandPalette({ open, onClose, toggleTheme }: { open: boolean; 
     { id: 'p-mcp', label: 'AI assistants: connect Claude, VS Code or Cursor over MCP', group: 'Pages', icon: <PageIcon id="mcp" size={15} />, run: () => navigate(pageHref(project.id, 'mcp', route.params)) },
     ...(views.data ?? []).map((v) => ({ id: 'v-' + v.id, label: `Open view: ${v.name} · ${PAGES.find((p) => p.id === v.page)?.label ?? v.page}`, group: 'Saved views', icon: <Bookmark size={15} />, run: () => navigate(viewHref(project.id, v, route.params)) })),
     ...PRESETS.map((r) => ({ id: 'r-' + r, label: `Time range: last ${r}`, group: 'Time range', icon: <Clock size={15} />, run: () => setParams({ range: r === '24h' ? null : r, from: null, to: null }) })),
+    { id: 'all-projects', label: 'All projects', group: 'Projects', icon: <LayoutGrid size={15} />, run: () => navigate(projectsHref(route.params)) },
     ...projects.map((p) => ({ id: 'pr-' + p.id, label: `Switch to ${p.name}`, group: 'Projects', icon: <FolderKanban size={15} />, run: () => navigate(`/p/${p.id}/overview`) })),
     { id: 'new', label: 'New project…', group: 'Projects', icon: <Plus size={15} />, run: () => navigate('/new') },
     { id: 'refresh', label: 'Refresh data', group: 'Actions', icon: <RefreshCw size={15} />, run: refresh },

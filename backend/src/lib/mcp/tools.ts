@@ -1,11 +1,17 @@
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import * as A from '../analytics';
+import * as EX from '../explain';
+import * as REL from '../releases';
 import * as CA from '../clickAliases';
+import * as FR from '../frustration';
+import * as C from '../cohorts';
 import * as G from '../goals';
 import * as GF from '../funnel';
 import { HttpError } from '../http';
 import * as P from '../projects';
+import { BEHAVIOR_ACTIONS, findRecordings } from '../recordingSearch';
+import * as U from '../uptime';
 
 /**
  * WGO's MCP tools: read-only views over the same queries the dashboard uses, plus naming click targets (aliases),
@@ -26,6 +32,12 @@ Raw data is kept per project (default 14 days). Overview stats, top pages and br
 come from hourly aggregates (sessions/users are estimates, about ±2%); other tools only see the raw data.
 Start broad (get_overview, list_errors, list_failed_requests, list_services) and drill down
 (search_events with a fingerprint or sessionId, get_trace, search_logs with a traceId).
+When a number moved ("why are errors up?", "why did signups drop?"), call explain_change first: it says which
+segments account for the change, when it started and which release went out just before. list_releases compares
+each version with the one before it. A failed browser request links to the backend trace it started (sampleTraceId
+in list_failed_requests), and get_trace shows the page and visitor that sent it.
+Session recordings (when the project records them): find_recordings finds them by what visitors did or didn't
+do, e.g. hovered an element but never clicked it, or reached /pricing but never /signup, and links to each one.
 Clicks are captured automatically with a CSS selector. When a selector is hard to read, give it an alias with
 set_click_alias (the dashboard and top_clicks then show the alias); it changes labels only, never data.`;
 
@@ -73,8 +85,19 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: 
 /** Changes a label shared with the project's members; setting the same value twice changes nothing more. */
 const LABEL_WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
-/** A fresh server for one request, acting as `email`. */
-export function buildMcpServer(email: string): McpServer {
+const behavior = z.object({
+  action: z.enum(BEHAVIOR_ACTIONS as [string, ...string[]]).describe(
+    'hover: the mouse rested on a clickable element, image or field for 300 ms or more (recordings only; not on touch devices). click, rage_click (3+ quick clicks on the same element), pageview, event (custom event), error (JavaScript error or failed request).',
+  ),
+  target: z.string().max(200).optional().describe(
+    'Case-insensitive. hover/click/rage_click: part of the visible label, tracked name, click alias or CSS selector, e.g. "buy" or an exact selector from top_clicks. pageview: a path, "*" as wildcard ("/checkout*"), otherwise a substring. event: part of the event name. error: part of the message or failed request URL. Omit to match any.',
+  ),
+  minMs: z.number().int().min(0).optional().describe('hover only: lasted at least this long, e.g. 2000 for a long hesitation'),
+  notClicked: z.boolean().optional().describe('hover only, in `did`: the visitor never clicked the element they hovered during the recording'),
+});
+
+/** A fresh server for one request, acting as `email`. `origin`: the dashboard's, for links to its pages. */
+export function buildMcpServer(email: string, origin?: string): McpServer {
   const server = new McpServer({ name: 'wgo', title: 'WGO analytics', version: '1.0.0' }, { instructions: INSTRUCTIONS });
 
   /** Registers a tool (read-only unless `hints` say otherwise) whose handler runs after the project membership check. */
@@ -132,6 +155,14 @@ export function buildMcpServer(email: string): McpServer {
   );
 
   projectTool(
+    'list_frustration',
+    'Frustrating click targets',
+    'Click targets where visitors got stuck, most frustrating first: rage clicks (3+ quick clicks), dead clicks (nothing changed within 1 s) and error clicks (a JavaScript error or failed request within 2 s), each with the number of sessions, plus up to 3 recorded sessions to watch (sessionId and epoch ms).',
+    { ...windowShape, limit: limit(50, 200) },
+    (pid, a) => FR.frustration(pid, { ...windowParams(a), limit: str(a.limit) }),
+  );
+
+  projectTool(
     'list_click_aliases',
     'Click aliases',
     'The readable names the project gave its click selectors, with who set each one and when.',
@@ -168,9 +199,9 @@ export function buildMcpServer(email: string): McpServer {
   projectTool(
     'list_errors',
     'JavaScript errors',
-    'Browser JavaScript errors grouped by fingerprint: message, kind, source, count, affected sessions, first/last seen and a sparkline. Pass a fingerprint to search_events for individual occurrences with stack traces.',
+    'Browser JavaScript errors grouped by fingerprint: message, kind, source, sample stack (original source locations when source maps are uploaded; minifiedStack is the raw one), count, affected sessions, first/last seen and a sparkline. Pass a fingerprint to search_events for individual occurrences with stack traces.',
     { ...windowShape, limit: limit(50, 200) },
-    (pid, a) => A.errors(pid, { ...windowParams(a), limit: str(a.limit ?? 50) }),
+    async (pid, a) => (await A.errors(pid, { ...windowParams(a), limit: str(a.limit ?? 50) })).map(({ stackFrames: _frames, ...g }) => g), // sampleStack is symbolicated when source maps are uploaded
   );
 
   projectTool(
@@ -201,6 +232,20 @@ export function buildMcpServer(email: string): McpServer {
       const { dims: _d, ...f } = await GF.goalFunnel(pid, String(a.goalId), windowParams(a));
       return f;
     },
+  );
+
+  projectTool(
+    'get_retention',
+    'Retention cohorts',
+    'Retention: people grouped by the day, week or month they were first seen (or first reached a conversion goal) and the share of each group that came back in each later period, with a size-weighted average and optionally the top 5 values of a split (device, country, source). Built each night from per-visitor daily rows kept 400 days, so it reaches back much further than raw events (default window 12 weeks, max 400 days). `dataSince` tells how far back the data goes. Goal ids come from goal_conversions.',
+    {
+      ...windowShape,
+      period: z.enum(['day', 'week', 'month']).optional().describe('Cohort period (default week)'),
+      start: z.string().optional().describe('"first_seen" (default) or "goal:<goalId>": what puts a person in a cohort'),
+      return: z.string().optional().describe('"any" (default) or "goal:<goalId>": what counts as coming back'),
+      split: z.enum(['none', 'device', 'country', 'source']).optional().describe('Split the average by this dimension (default none)'),
+    },
+    (pid, a) => C.retention(pid, { ...windowParams(a), period: a.period, start: a.start, return: a.return, split: a.split }),
   );
 
   projectTool(
@@ -251,6 +296,37 @@ export function buildMcpServer(email: string): McpServer {
   );
 
   projectTool(
+    'find_recordings',
+    'Find session recordings',
+    'Session recordings, newest first, where the visitor did everything in `did` and nothing in `didNot` (all over the recording\'s time span). Translate a request into conditions, e.g. "hovered the buy button but never clicked it" = did [{action: "hover", target: "buy", notClicked: true}]; "saw pricing but never signed up" = did [{action: "pageview", target: "/pricing*"}], didNot [{action: "pageview", target: "/signup*"}]. With no conditions, lists recent recordings. Each result has the visitor, device, pages, counts, `moments` (when each `did` condition first happened, `offsetMs` into the recording) and a `link` that plays it from the first moment. `scanned` recordings were looked at; when `nextBefore` is set, pass it as `before` to look further back. A matching recording needs at least 3 seconds of data. Hovers exist only in recordings made with an SDK that records them; notClicked relies on click autocapture being on.',
+    {
+      ...windowShape,
+      did: z.array(behavior).max(5).optional().describe('Everything that must have happened'),
+      didNot: z.array(behavior).max(5).optional().describe('Nothing of this may have happened'),
+      device: z.enum(['desktop', 'mobile', 'tablet']).optional(),
+      minDurationSeconds: z.number().min(0).optional(),
+      identifiedOnly: z.boolean().optional().describe('Only visitors with a user id'),
+      before: z.string().optional().describe('Pagination cursor: nextBefore of the previous call'),
+      limit: limit(20, 100),
+    },
+    async (pid, a) => {
+      const w = a.range || a.from || a.to ? windowParams(a) : {};
+      const res = await findRecordings(pid, {
+        did: a.did as never, didNot: a.didNot as never, from: w.from, to: w.to, before: a.before, limit: a.limit,
+        filters: { device: a.device, minDuration: str(a.minDurationSeconds), identified: a.identifiedOnly ? '1' : undefined },
+      });
+      return {
+        ...res,
+        recordings: res.recordings.map((r) => {
+          const first = r.moments.map((m) => new Date(m.at).getTime()).sort((x, y) => x - y)[0];
+          const path = `/p/${pid}/recordings/${encodeURIComponent(r.sessionId)}${first ? `?t=${first}` : ''}`;
+          return { ...r, link: origin ? `${origin}/#${path}` : `#${path}` };
+        }),
+      };
+    },
+  );
+
+  projectTool(
     'list_services',
     'OpenTelemetry services',
     'Services that sent spans, with span and error counts and latency.',
@@ -279,9 +355,33 @@ export function buildMcpServer(email: string): McpServer {
   projectTool(
     'get_trace',
     'Get trace',
-    'All spans of one trace, sorted by start time, with attributes, events and status.',
+    'All spans of one trace, sorted by start time, with attributes, events and status. When a failed browser request started it (the WGO SDK sends a traceparent), `browser` has that request with its page, visitor and session id, and its root span has service "browser". Failed requests in list_failed_requests carry sampleTraceId; search_events http_error events carry props.trace.',
     { traceId: z.string().regex(/^[0-9a-fA-F]{32}$/, 'A trace id is 32 hex characters') },
     (pid, a) => A.trace(pid, a.traceId.toLowerCase()),
+  );
+
+  projectTool(
+    'explain_change',
+    'Explain a change',
+    'Why a number changed between a window and a baseline (default: the same-length window right before it). Compares event counts (metric "events", filtered by `where`, e.g. type = error), sessions with such an event ("sessions") or a goal\'s conversion rate ("goal" with goalId), and returns: the change and whether it is beyond noise, the segments (page, browser, OS, device, country, release, error message, failing request; for goals also entry page and source) that account for it beyond growing in line with the rest, when it started (if a clear change point exists in the window) and a release first seen around then, plus a one-paragraph summary. Start here when asked "why are errors up?" or "why did signups drop?".',
+    {
+      ...windowShape,
+      metric: z.enum(['events', 'sessions', 'goal']).describe('events: count of events matching `where`; sessions: sessions with such an event; goal: conversion rate of goalId'),
+      where: z.array(z.object({ field: z.string(), op: z.string(), value: z.union([z.string(), z.number()]).optional() })).max(10).optional()
+        .describe('Event filters for events/sessions, e.g. [{"field":"type","op":"eq","value":"error"}] or [{"field":"httpRoute","op":"eq","value":"/api/checkout"}]. Fields as in search_events; ops: eq, neq, contains, starts_with, gt, gte, lt, lte, set, not_set'),
+      goalId: z.string().optional().describe('For metric "goal": a goal id from list_goals'),
+      baseFrom: z.string().optional().describe('Baseline start, ISO-8601 (default: the window before)'),
+      baseTo: z.string().optional().describe('Baseline end, ISO-8601'),
+    },
+    (pid, a) => EX.explain(pid, { ...windowParams(a), metric: a.metric, where: a.where ? JSON.stringify(a.where) : undefined, goalId: a.goalId, baseFrom: a.baseFrom, baseTo: a.baseTo }),
+  );
+
+  projectTool(
+    'list_releases',
+    'Releases and their health',
+    'Versions running in the window: web releases (the SDK\'s `release` option) with sessions, share of sessions with JavaScript errors or failed requests, p75 LCP/INP/CLS, conversion rate per goal and error groups first seen in that release; and service versions (OpenTelemetry service.version) with error rate and p50/p95. Each is compared with the version before it: verdicts are "worse"/"better" only when the difference is clearly beyond noise. `markers` are versions first seen in the window (deploys). Default window: 7 days.',
+    windowShape,
+    (pid, a) => REL.releases(pid, windowParams(a)),
   );
 
   projectTool(
@@ -327,6 +427,17 @@ export function buildMcpServer(email: string): McpServer {
       groupBy: z.string().optional().describe('Attribute key to split by'),
     },
     (pid, a) => A.metricSeries(pid, { ...windowParams(a), name: a.name, agg: a.agg, groupBy: a.groupBy }),
+  );
+
+  projectTool(
+    'list_uptime_checks',
+    'Uptime checks',
+    'The project\'s uptime checks (URLs WGO fetches on a schedule) with current state (up, down or null before the first result), since when, uptime over the window (default last 24 hours) and the last error.',
+    windowShape,
+    (pid, a) => {
+      const q = windowParams(a);
+      return U.summary(pid, U.parseWindow({ from: q.from, to: q.to }));
+    },
   );
 
   return server;

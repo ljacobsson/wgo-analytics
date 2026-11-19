@@ -2,6 +2,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2, SQSBatchResponse,
 import { gunzipIfNeeded, handleError, header, HttpError, json, metaFields, rawBody } from '../lib/http';
 import { assignStableIds, decodeOtlp, evaluateOtlpTriggers, isProtobuf, isSignal, storeOtlpRows, writeKeyFrom, type OtlpRow, type Signal } from '../lib/otlp/ingest';
 import { projectIdForWriteKey } from '../lib/projects';
+import { collectionPaused } from '../lib/budgets';
 
 /**
  * Deployed, OTLP requests never reach a Lambda function: API Gateway writes each one to an SQS queue and
@@ -20,6 +21,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!isSignal(signal)) throw new HttpError(404, 'Unknown OTLP signal');
     const projectId = await projectIdForWriteKey(writeKeyFrom((n) => header(event, n), event.queryStringParameters?.key));
     if (!projectId) return json(401, { error: 'Missing or unknown write key (send header x-wgo-key)' });
+    if (await collectionPaused(projectId)) return json(200, {}); // a cost budget stopped collection
     const rows = decodeOtlp(signal, projectId, rawBody(event), protobuf);
     await storeOtlpRows(signal, rows);
     await evaluateOtlpTriggers(signal, rows);
@@ -62,6 +64,7 @@ export async function queueHandler(event: SQSEvent): Promise<SQSBatchResponse> {
     if (!isSignal(req.signal)) { drop('unknown signal'); continue; }
     const projectId = await projectIdForWriteKey(req.writeKey);
     if (!projectId) { drop('missing or unknown write key'); continue; }
+    if (await collectionPaused(projectId)) { drop('collection paused by a cost budget'); continue; }
     let rows: OtlpRow[];
     try {
       rows = decodeOtlp(req.signal, projectId, req.body(), req.protobuf);

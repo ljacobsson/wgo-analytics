@@ -2,13 +2,16 @@ import type { ClickData, Hooks, WireEvent } from '../types'
 import { on } from '../util'
 import { selector } from '../selector'
 
-const TARGET =
+/** what a click (or, in recordings, a hover) is reported on: the closest of these around the target, or the target */
+export const TARGET =
   'a,button,[role=button],[role=link],[role=menuitem],[role=tab],input[type=button],input[type=submit],input[type=checkbox],input[type=radio],select,summary,label,[data-track],[data-wgo]'
 const MASKED = '[contenteditable=""],[contenteditable="true"],[data-wgo-mask]'
 const FIELD = 'input,textarea,select'
 const SENSITIVE = /pass|pwd|secret|token|cvv|ssn/i
 const BLOCK = /^(ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|BR|DD|DIV|DL|DT|FIELDSET|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TBODY|TD|TFOOT|TH|THEAD|TR|UL|OPTION|SELECT)$/
 const MAX = 80
+// clicks that should visibly do something (new-tab, download, mailto and tel links legitimately change nothing on this page)
+const ACTIVE = 'a:not([target=_blank],[download],[href^=mailto],[href^=tel]),button,[role=button],input[type=submit],input[type=button],input[type=image]'
 
 const clean = (s: string | null | undefined) => (s || '').replace(/\s+/g, ' ').trim()
 const cut = (s: string) => (s.length > MAX ? s.slice(0, MAX - 1).trimEnd() + '…' : s)
@@ -69,8 +72,24 @@ export function labelOf(el: Element): string | undefined {
 
 export function startClicks(h: Hooks): () => void {
   let streak: { el: Element; times: number[]; ev: WireEvent | null } | null = null
+  let stop = () => {}
 
-  return on(document, 'click', (e: MouseEvent) => {
+  /** Dead click: nothing in the page changed within 1 s of clicking something that should have. */
+  const watch = (ev: WireEvent) => {
+    stop()
+    try {
+      const href = location.href
+      const mo = new MutationObserver(() => stop())
+      const t = setTimeout(() => {
+        stop()
+        if (location.href === href && h.queued(ev) && ev.d) ev.d.dead = 1
+      }, 1000)
+      stop = () => { mo.disconnect(); clearTimeout(t); stop = () => {} }
+      mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true })
+    } catch { /* never throw into the host page */ }
+  }
+
+  const off = on(document, 'click', (e: MouseEvent) => {
     const raw = e.target as Element | null
     if (!raw || raw.nodeType !== 1 || raw.closest('[data-wgo-ignore]')) return
     const el = raw.closest(TARGET) || raw
@@ -113,5 +132,7 @@ export function startClicks(h: Hooks): () => void {
     })
     const ev = h.emit('click', d, { priority })
     if (rage >= 3) streak.ev = ev
+    if (ev && el.matches(ACTIVE)) watch(ev)
   }, true)
+  return () => { stop(); off() }
 }

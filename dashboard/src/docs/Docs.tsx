@@ -14,8 +14,8 @@ const HOST = 'https://wgo.example.com';
 
 const GROUPS: Array<{ title: string; items: Array<[id: string, label: string]> }> = [
   { title: 'Getting started', items: [['install', 'Installation'], ['first-steps', 'First steps'], ['configuration', 'Configuration'], ['updating', 'Updating and removing']] },
-  { title: 'Sending data', items: [['web', 'Web apps'], ['otel', 'Backends (OpenTelemetry)']] },
-  { title: 'Features', items: [['mcp', 'AI assistants (MCP)'], ['triggers', 'Filters and triggers'], ['kiosks', 'Kiosk screens'], ['android', 'Android widget'], ['teams', 'Teams and access']] },
+  { title: 'Sending data', items: [['web', 'Web apps'], ['sourcemaps', 'Source maps'], ['otel', 'Backends (OpenTelemetry)'], ['trace-linking', 'Browser requests and traces']] },
+  { title: 'Features', items: [['retention', 'Retention and cohorts'], ['mcp', 'AI assistants (MCP)'], ['triggers', 'Filters and triggers'], ['suppress', 'Suppressing errors'], ['releases', 'Releases and deploys'], ['why', 'Why did this change?'], ['uptime', 'Uptime checks'], ['costs', 'What the install costs'], ['kiosks', 'Kiosk screens'], ['android', 'Android widget'], ['teams', 'Teams and access']] },
   { title: 'Operating WGO', items: [['privacy', 'Cookies and privacy'], ['cost', 'Cost awareness'], ['architecture', 'How it works'], ['local-dev', 'Local development'], ['limits', 'Known limits']] },
 ];
 const IDS = GROUPS.flatMap((g) => g.items.map(([id]) => id));
@@ -200,7 +200,21 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
               <><C>WGO.track('event', props)</C> sends custom events, and <C>WGO.identify(userId)</C> attaches a user id. Any event can become a conversion goal and a step in a funnel.</>,
               <><C>WGO.status()</C> in the browser console shows what the SDK is doing.</>,
             ]} />
-            <P>The SDK is about 10 KB gzipped. It batches events, gzips batches over 1 KB, sends errors and priority clicks within a second, and keeps events while the visitor is offline. See the <Ext href={repoFile('sdk/README.md')}>SDK README</Ext> for every option, npm usage, frameworks and tag managers.</P>
+            <P>The SDK is about 11 KB gzipped. It batches events, gzips batches over 1 KB, sends errors and priority clicks within a second, and keeps events while the visitor is offline. See the <Ext href={repoFile('sdk/README.md')}>SDK README</Ext> for every option, npm usage, frameworks and tag managers.</P>
+            <H3>Frustration signals and heatmaps</H3>
+            <P>The Clicks page has a Frustration tab and a Heatmap tab. <B>Rage clicks</B> are three or more clicks on one element within a second. A <B>dead click</B> is a click on a link, button, <C>role="button"</C> or submit control after which the page did nothing for a second: no DOM change and no URL change. Links that open a new tab, download or start an email or call are not counted. An <B>error click</B> is a click followed by a JavaScript error or failed request in the same session within two seconds. Each row links to recorded sessions where it happened, opened at the click.</P>
+            <P>The heatmap shows where visitors click on one page, for desktop or for mobile (phones and tablets), using clicks made at the most common window width. When session recording is on, it is drawn over a snapshot of the page from a recorded visit; without recordings it is drawn on a blank page.</P>
+          </Section>
+
+          <Section id="sourcemaps" title="Source maps">
+            <P>Minified production code makes error stacks hard to read. Upload your source maps and WGO shows the original file, line and function in the Errors page, with a few lines of code around each frame. A <B>Show minified</B> button brings back the raw stack.</P>
+            <List items={[
+              <>Build with hidden source maps: <C>build: {'{ sourcemap: \'hidden\' }'}</C> in Vite, <C>devtool: 'hidden-source-map'</C> in webpack. The bundles then have no <C>sourceMappingURL</C> comment.</>,
+              <>Set the same <C>release</C> in <C>wgo.init</C> and when uploading, so each deploy is matched with its own maps. Maps uploaded without a release are the fallback.</>,
+              <>Copy the upload key from <B>Settings → Source maps</B> (owners only). It is a secret for your CI, unlike the write key.</>,
+            ]} />
+            <Code lang="sh" title="after your build" code={`npx wgo-sourcemaps --endpoint ${HOST} --key uk_… --release 1.4.0 dist/`} />
+            <P>The command uploads every <C>*.js.map</C> under the folder. It also reads <C>WGO_ENDPOINT</C>, <C>WGO_UPLOAD_KEY</C> and <C>WGO_RELEASE</C>, and exits with an error if an upload fails. Don't deploy the <C>.map</C> files to your site: they contain your source code. Maps are kept for 400 days, and stacks are mapped when you read them, so a map uploaded later also fixes older errors.</P>
           </Section>
 
           <Section id="otel" title="Backends (OpenTelemetry)">
@@ -219,13 +233,34 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
             </a>
           </Section>
 
+          <Section id="trace-linking" title="Browser requests and backend traces">
+            <P>When a web app and its backend send data to the same project, a failed request in the browser links to the backend trace it started, and the trace links back to the visitor's session and recording.</P>
+            <List items={[
+              <>The SDK adds a W3C <C>traceparent</C> header to the page's own requests (fetch and XHR). Any OpenTelemetry-instrumented backend continues that trace, so its spans share the trace id.</>,
+              <>A failed request is reported with that trace id. On the trace page, the browser request is the root span, with the page, the visitor and links to the replay at that moment.</>,
+              <>Only same-origin requests get the header by default, because a custom header on a cross-origin request triggers a CORS preflight. For an API on another host, list it in <C>data-trace-origins="https://api.example.com/"</C> and allow <C>traceparent</C> in its <C>Access-Control-Allow-Headers</C>.</>,
+              <>The header marks the request as sampled, so a backend using OpenTelemetry's default parent-based sampler records every request the browser starts.</>,
+              <>A request that already carries a <C>traceparent</C> keeps it. Turn the header off with <C>data-trace-propagation="false"</C>.</>,
+            ]} />
+          </Section>
+
           {/* ───────────── Features ───────────── */}
+          <Section id="retention" title="Retention and cohorts">
+            <P>The Retention page groups visitors by the day, week or month they started (their first visit, or the first time they reached a goal) and shows the share of each group that came back in the periods after. Split by device, country or source to see which visitors stick.</P>
+            <List items={[
+              <>Retention is built each night from the previous day's visits into a small table with one row per visitor and day. It is kept for 400 days, much longer than raw events (<C>retention_days</C>), so cohorts can reach back a year.</>,
+              'The first numbers show up after the first full day. The page says how far back the data goes; people first seen before that count as new on the first day.',
+              'A visitor is the user id when the browser has identified, else the anonymous id. Bots are left out. Days, weeks (starting Monday) and months are UTC.',
+              <>The page uses the time range at the top when it is 8 weeks or longer (up to 400 days), otherwise the last 12 weeks. At most 30 days, 26 weeks or 13 months of cohorts are shown. The API is <C>GET /api/projects/&#123;id&#125;/retention</C> and the MCP tool is <C>get_retention</C>.</>,
+            ]} />
+          </Section>
+
           <Section id="mcp" title="AI assistants (MCP)">
             <P>WGO is a remote <Ext href="https://modelcontextprotocol.io">MCP</Ext> server. Connect Claude, VS Code, Cursor or any other MCP client and ask about traffic, errors, traces and metrics in plain language.</P>
             <Code lang="sh" title="Claude Code" code={`claude mcp add --transport http wgo ${HOST}/mcp`} />
             <P>There is no key to copy. The client registers itself, opens a browser, and you sign in with your WGO account. It then sees exactly the projects you're a member of, read-only. Use the dashboard's host (the <C>McpUrl</C> stack output): the raw API Gateway URL has no OAuth resource of its own.</P>
             <Table rows={[
-              ['Product analytics', <span className="font-mono text-[12.5px]">list_projects, get_overview, top_clicks, top_pages, goal_conversions, goal_funnel, list_errors, list_failed_requests, breakdown, web_vitals, visitor_locations, search_events</span>],
+              ['Product analytics', <span className="font-mono text-[12.5px]">list_projects, get_overview, top_clicks, top_pages, goal_conversions, goal_funnel, get_retention, list_frustration, list_errors, list_failed_requests, explain_change, list_releases, breakdown, web_vitals, visitor_locations, search_events, find_recordings, list_uptime_checks</span>],
               ['OpenTelemetry', <span className="font-mono text-[12.5px]">list_services, list_traces, get_trace, search_logs, list_metrics, get_metric_series</span>],
             ]} />
             <H3>How sign-in works</H3>
@@ -249,6 +284,63 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
               <><B>Webhooks:</B> an HTTPS POST of JSON with <C>trigger</C>, <C>project</C>, <C>matches</C>, <C>events</C> and <C>url</C>, signed with <C>X-WGO-Signature: sha256=…</C> (an HMAC-SHA256 of the body with the trigger's signing secret). Private and internal addresses are refused.</>,
               <><B>Cooldown:</B> at most one notification per period you choose. Matches in between are counted and reported with the next one. <B>Test</B> sends a sample notification immediately.</>,
             ]} />
+            <P>Besides firing on each match, a trigger can watch a number over a window of 5 minutes to 24 hours, checked every minute: a count, sessions, the share of sessions, or the average, p75 or p95 of a field.</P>
+            <List items={[
+              <><B>Crosses a value:</B> "fewer than 1 pageview in 30 minutes" (the site or the snippet is broken), "p95 of server spans above 1 second", "more than 5% of sessions hit an error".</>,
+              <><B>Is unusual:</B> compared with the same window on each of the last 7 days, so a quiet night doesn't look like an outage. It needs 3 days of history.</>,
+              <>You get one message when it starts firing and one when it's back to normal. For event counts, the firing message says what the change comes from, as on the Overview's <B>Why?</B>.</>,
+              <>The dialog shows the current value while you set it up, so you can see whether it would fire right now.</>,
+            ]} />
+          </Section>
+
+          <Section id="suppress" title="Suppressing errors">
+            <P>Noise like a missing product image or a browser extension's errors can be suppressed. Open an error and click <B>Suppress errors like this</B>, or manage the rules under <B>Suppressed errors</B> on the Errors page.</P>
+            <List items={[
+              <>A rule matches on the error's <B>kind</B> (error, rejection, resource, manual), its <B>failing URL</B> (the resource that didn't load or the script that threw), its <B>message</B> and the <B>page</B>. Every field you set must match.</>,
+              <>Patterns use <C>*</C> as a wildcard, match the whole value and ignore case: <C>https://cdn.example.com/img/*</C>, <C>TypeError: *</C>, <C>*ResizeObserver loop*</C>, <C>/admin/*</C>. A URL pattern that is just a path, like <C>/img/*</C>, matches any host.</>,
+              <>Matching errors are dropped when they arrive: they aren't stored, counted, shown live or sent to triggers. Each rule counts what it dropped.</>,
+              <>Errors stored before the rule are left out of the Overview and hidden on the Errors page (<B>Show</B> brings them back). Hourly totals for longer ranges are recounted within a few minutes. Deleting a rule brings the stored ones back.</>,
+            ]} />
+          </Section>
+
+          <Section id="releases" title="Releases and deploys">
+            <P>Tell WGO which version is running and every version is compared with the one before it: the share of sessions with an error or a failed request, Web Vitals, conversion per goal, and error groups that first appeared in that release. Backend versions get error rate and latency.</P>
+            <List items={[
+              <>Web: <C>data-release="1.4.2"</C> on the script tag, or <C>release</C> in <C>WGO.init</C>. Backends: <C>OTEL_RESOURCE_ATTRIBUTES=service.version=1.4.2</C>.</>,
+              <>A version is marked worse or better only when the difference is clearly beyond noise (95% intervals that don't overlap, or a 10% change in a p75 with enough samples).</>,
+              <>The time each version was first seen is kept for good, and shows as a marker on the Overview's chart and the Releases page.</>,
+            ]} />
+          </Section>
+
+          <Section id="why" title="Why did this change?">
+            <P>When a number on the Overview moves more than chance would explain, it gets a <B>Why?</B> link. WGO compares the selected range with the one before it and says:</P>
+            <List items={[
+              <><B>What accounts for it:</B> the page, browser, OS, device, country, release, error message or failing request that changed more than everything else did. A segment that only grew in line with the total isn't reported, however big it is.</>,
+              <><B>When it started,</B> if the change began at a clear point in the range.</>,
+              <><B>Which release</B> went out just before, if one did.</>,
+            ]} />
+            <P>Goal conversion works the same way, by entry page, source, device, browser, country and release. AI assistants get it as the <C>explain_change</C> tool, and threshold triggers include it in their notifications.</P>
+          </Section>
+
+          <Section id="uptime" title="Uptime checks">
+            <P>Add a URL on the <B>Uptime</B> page and WGO fetches it every 1, 5 or 15 minutes, from the AWS region where WGO is deployed. Each check shows its state, a bar per time slice and the response time. A project can have 20 checks.</P>
+            <List items={[
+              <><B>What counts as up:</B> a response with the status you expect (any 2xx by default, or any 3xx, or an exact code), within the timeout, and with the text you asked for in the first 1 MB of the body. Redirects are followed, up to 5, and every address must be public.</>,
+              <><B>Down after two failures in a row,</B> up again after one success, so a single dropped request never pages anyone.</>,
+              <><B>Get notified:</B> every change of state is recorded as a <C>wgo.uptime</C> event with <C>props.check</C>, <C>props.state</C> (<C>up</C> or <C>down</C>), <C>props.status</C> and <C>props.error</C>. <B>Notify me</B> in a check opens a trigger on <C>name = wgo.uptime</C>, <C>props.check</C> and <C>props.state = down</C>, to send to Slack or a webhook.</>,
+              <><B>Stored like other raw data,</B> and removed with the project's retention. Checks are made by the <C>UptimeFunction</C> Lambda, once a minute, and cost almost nothing when none are due.</>,
+            ]} />
+          </Section>
+
+          <Section id="costs" title="What the install costs">
+            <P>The <B>Costs</B> page shows what this WGO install costs in AWS this month, per day and per service, and about how much that is per million events. Project owners can open it. AWS has to be told once to track costs by stack:</P>
+            <List items={[
+              <>In the AWS Billing console, open <B>Cost allocation tags</B>, find <C>aws:cloudformation:stack-name</C> under <B>AWS-generated tags</B> and activate it. Costs show up about a day later.</>,
+              <>WGO reads them from Cost Explorer, which charges $0.01 per request. It asks at most twice a day and keeps the answer in between (one hour while setup is still missing).</>,
+              <>Usage comes from WGO's own hourly counts, the size of the data bucket and the database storage from CloudWatch.</>,
+            ]} />
+            <P><B>Budgets</B> set a monthly limit for the whole install or one project (a project's spend is estimated from its share of the month's events). They alert at the percentages you choose and when the month's forecast passes the limit, on the page and in Slack or a webhook. A budget can also <B>stop collecting data</B> at its limit: WGO then stops storing new data for that project, or every project, until next month, until the limit is raised or someone resumes it. Budgets are checked every 15 minutes.</P>
+            <P><B>You're responsible for your AWS bill.</B> Cost figures, budgets and caps are estimates provided as they are, without any warranty, and the authors of WGO accept no responsibility or liability for any AWS charges. Cost Explorer can be a day behind, so spend can pass a limit before WGO notices, and stopping collection can't stop every charge: requests still reach AWS and stored data still costs. For alerts on your whole AWS account, also set up AWS Budgets in the AWS console.</P>
           </Section>
 
           <Section id="kiosks" title="Kiosk screens">
@@ -277,6 +369,8 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
           <Section id="teams" title="Teams and access">
             <P>Accounts use Cognito with email sign-up. Projects have owners and members. An owner invites people by email on the project's Settings page, and they get access the next time they sign in with that address. New users create their account at <C>{HOST}/#/signup</C>.</P>
             <P>Limit sign-ups to your company's email domains with <C>ALLOWED_EMAIL_DOMAINS</C>, or turn off self sign-up completely with <C>ALLOW_SELF_SIGNUP=false</C>. See <Doc to="configuration">Configuration</Doc>.</P>
+            <P>With more than one project, <B>All projects</B> (the logo, or the top of the project menu) shows them side by side. Each card has the site's homepage, its main numbers and a chart. WGO takes the site from the most viewed public address in the last three days, and screenshots its homepage once a day with headless Chromium.</P>
+            <P>An owner can delete a project under <B>Settings → Delete project</B>. Members lose access and the write key stops working at once. Events, logs, traces, metrics and recordings are then deleted from the database and S3 over the next few minutes. This can't be undone.</P>
           </Section>
 
           {/* ───────────── Operating ───────────── */}

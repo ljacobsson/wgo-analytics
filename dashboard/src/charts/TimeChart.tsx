@@ -2,6 +2,8 @@ import { useId, useMemo, useState } from 'react';
 import { compact, fmtTick, fmtTipTime, niceMax, useSize } from './util';
 
 export interface ChartSeries { key: string; label: string; color: string; values: number[] }
+/** A moment to mark on the chart, e.g. a deploy (a release first seen). */
+export interface ChartMarker { t: number; label: string; color?: string }
 interface Props {
   times: number[];
   series: ChartSeries[];
@@ -9,11 +11,14 @@ interface Props {
   height?: number;
   format?: (n: number) => string;
   legend?: boolean;
+  markers?: ChartMarker[];
+  /** bucket length in ms (bars: where inside a bucket a marker falls) */
+  bucketMs?: number;
 }
 
 const M = { l: 42, r: 10, t: 10, b: 22 };
 
-export function TimeChart({ times, series, mode, height = 260, format = compact, legend = true }: Props) {
+export function TimeChart({ times, series, mode, height = 260, format = compact, legend = true, markers, bucketMs }: Props) {
   const [ref, w] = useSize<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const gid = useId();
@@ -72,6 +77,20 @@ export function TimeChart({ times, series, mode, height = 260, format = compact,
               {xTickIdx.map((i, k) => (
                 <text key={i} x={x(i)} y={ph + 16} textAnchor={k === 0 ? 'start' : k === xTickIdx.length - 1 ? 'end' : 'middle'} className="fill-faint tnum" fontSize="10.5">{fmtTick(times[i], span)}</text>
               ))}
+              {markers?.map((m, k) => {
+                const step = bucketMs ?? (n > 1 ? (times[n - 1] - times[0]) / (n - 1) : 1);
+                const f = stacked ? (m.t - times[0]) / step / n : n > 1 ? (m.t - times[0]) / span : 0.5;
+                if (!(f >= 0 && f <= 1)) return null;
+                const mx = f * pw, color = m.color ?? 'var(--muted)';
+                return (
+                  <g key={k} className="pointer-events-auto">
+                    <title>{m.label}</title>
+                    <line x1={mx} x2={mx} y1={0} y2={ph} stroke={color} strokeDasharray="3 3" strokeWidth={1.25} opacity={0.8} />
+                    <rect x={mx - 6} y={0} width={12} height={ph} fill="transparent" />
+                    <path d={`M${mx - 4} 0 L${mx + 4} 0 L${mx} 6 Z`} fill={color} />
+                  </g>
+                );
+              })}
               {hover != null && stacked && <rect x={(hover / n) * pw} y={0} width={pw / n} height={ph} fill="var(--hl)" />}
               {stacked && times.map((_, i) => {
                 let acc = 0;

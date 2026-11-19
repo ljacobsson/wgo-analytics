@@ -1,8 +1,8 @@
 import type {
-  AnalyticsEvent, BreakdownRow, ClickRow, ErrorGroup, EventType, HttpErrorGroup, LogRecord, MetricInfo, MetricSeriesResponse,
+  AnalyticsEvent, BreakdownRow, ClickRow, ErrorGroup, FrustrationRow, EventType, HttpErrorGroup, LogRecord, MetricInfo, MetricSeriesResponse,
   PageRow, ServiceRow, Span, StatsResponse, Totals, TraceSummary, VitalsResponse, GeoResponse,
 } from '../api/contract';
-import type { ConversionsResponse, Filter, Goal } from '../api/contract';
+import type { BrowserRequest, ConversionsResponse, Filter, Goal, TraceResponse } from '../api/contract';
 import { matches } from './filters';
 import { hash, hex, pick, rate, rnd, uuidOf, weighted } from './rng';
 import { BROWSERS, CLICKS, CUSTOM, DEVICES, ERRORS, HTTP_ERRORS, OSES, PAGES, PLACES, REFERRERS, SERVICES } from './universe';
@@ -52,6 +52,20 @@ export function clicks(from: number, to: number, limit: number): ClickRow[] {
     return { selector: c.selector, elementText: c.text, trackName: c.track, elementTag: c.tag, alias: null, count, sessions: Math.round(count * 0.7), rageClicks: Math.round(count * c.rage), lastSeen: iso(to - Math.floor(rnd(i, 9) * Math.min(to - from, 3600_000))) };
   }).filter((r) => r.count > 0).sort((a, b) => b.count - a.count).slice(0, limit);
 }
+/** Click targets where visitors got stuck; `samples` are filled in by the mock API from the mock recordings. */
+export function frustration(from: number, to: number, limit: number): FrustrationRow[] {
+  return clicks(from, to, 500).map((c, i): FrustrationRow => {
+    const dead = Math.round(c.count * [0.02, 0.07, 0.01, 0.015, 0.03, 0.2, 0.005, 0.05, 0.01, 0.04][i % 10] * (0.8 + rnd(i, 31) * 0.4));
+    const err = Math.round(c.count * (c.selector === '#checkout-btn' ? 0.09 : c.selector.includes('coupon') ? 0.14 : rnd(i, 32) * 0.012));
+    const s = (n: number, f: number) => (n ? Math.max(1, Math.round(n * f)) : 0);
+    return {
+      selector: c.selector, elementText: c.elementText, trackName: c.trackName, elementTag: c.elementTag, alias: null,
+      clicks: c.count, rageClicks: c.rageClicks, rageSessions: s(c.rageClicks, 0.7), deadClicks: dead, deadSessions: s(dead, 0.8),
+      errorClicks: err, errorSessions: s(err, 0.85), samples: [],
+    };
+  }).filter((r) => r.rageClicks + r.deadClicks + r.errorClicks > 0)
+    .sort((a, b) => (b.rageClicks + b.deadClicks + b.errorClicks) - (a.rageClicks + a.deadClicks + a.errorClicks)).slice(0, limit);
+}
 export function pages(from: number, to: number, limit: number): PageRow[] {
   const total = totalsFor(from, to).pageviews, tw = PAGES.reduce((a, c) => a + c.w, 0);
   return PAGES.map((p, i) => { const views = Math.round(total * p.w / tw * (0.9 + rnd(i, 5) * 0.2)); return { path: p.path, views, sessions: Math.round(views * 0.8) }; }).sort((a, b) => b.views - a.views).slice(0, limit);
@@ -61,12 +75,18 @@ export function errors(from: number, to: number, limit: number): ErrorGroup[] {
   return ERRORS.map((e, i) => {
     const count = Math.max(1, Math.round(total * e.w / tw));
     const series = Array.from({ length: 24 }, (_, k) => Math.round((count / 24) * (0.3 + rnd(i, k, Math.floor(from / 6e5)) * 1.5) * (i === 0 && k > 18 ? 3 : 1)));
-    return { fingerprint: e.fp, message: e.msg, kind: e.kind, count, sessions: Math.max(1, Math.round(count * 0.6)), firstSeen: iso(from + len * (0.02 + rnd(i, 1) * 0.3)), lastSeen: iso(to - Math.floor(rnd(i, 2) * Math.min(len, 1800_000))), sampleStack: e.stack, sampleUrl: 'https://shop.acme.dev' + e.url, source: e.source, series };
+    return { fingerprint: e.fp, message: e.msg, kind: e.kind, count, sessions: Math.max(1, Math.round(count * 0.6)), firstSeen: iso(from + len * (0.02 + rnd(i, 1) * 0.3)), lastSeen: iso(to - Math.floor(rnd(i, 2) * Math.min(len, 1800_000))), sampleStack: e.mapped?.stack ?? e.stack, minifiedStack: e.mapped ? e.stack : null, ...(e.mapped ? { stackFrames: e.mapped.frames } : {}), sampleUrl: 'https://shop.acme.dev' + e.url, source: e.source, series };
   }).sort((a, b) => b.count - a.count).slice(0, limit);
 }
 export function httpErrors(from: number, to: number, limit: number): HttpErrorGroup[] {
   const total = totalsFor(from, to).httpErrors, tw = HTTP_ERRORS.reduce((a, c) => a + c.w, 0);
-  return HTTP_ERRORS.map((h, i) => { const count = Math.max(1, Math.round(total * h.w / tw)); return { method: h.method, route: h.route, status: h.status, count, sessions: Math.max(1, Math.round(count * 0.7)), avgDurationMs: h.ms * (0.8 + rnd(i, 3) * 0.4), lastSeen: iso(to - Math.floor(rnd(i, 4) * Math.min(to - from, 1200_000))), sampleUrl: h.url }; }).sort((a, b) => b.count - a.count).slice(0, limit);
+  return HTTP_ERRORS.map((h, i) => { const count = Math.max(1, Math.round(total * h.w / tw)); return { method: h.method, route: h.route, status: h.status, count, sessions: Math.max(1, Math.round(count * 0.7)), avgDurationMs: h.ms * (0.8 + rnd(i, 3) * 0.4), lastSeen: iso(to - Math.floor(rnd(i, 4) * Math.min(to - from, 1200_000))), sampleUrl: h.url, sampleTraceId: h.route.startsWith('/') ? recentTrace(h.route, to) : null }; }).sort((a, b) => b.count - a.count).slice(0, limit);
+}
+/** The trace id of the latest mock failure of a route, from the event stream. */
+function recentTrace(route: string, to: number): string | null {
+  const r = events({ from: to - 6 * 3600_000, to, type: 'http_error', limit: 300 });
+  const e = r.events.find((x) => x.httpRoute === route && typeof x.props.trace === 'string');
+  return e ? String(e.props.trace) : null;
 }
 export function geo(from: number, to: number): GeoResponse {
   const total = totalsFor(from, to).sessions, tw = PLACES.reduce((a, p) => a + p.w, 0);
@@ -110,7 +130,7 @@ export function eventAt(s: number, k = 0): AnalyticsEvent | null {
   e.referrer = rnd(block, sk, 20) > 0.5 ? 'https://' + weighted(REFERRERS, block, sk, 21).k : null;
   if (type === 'click') { const c = weighted(CLICKS, s, k, 22); e.selector = c.selector; e.elementText = c.text; e.elementTag = c.tag; e.trackName = c.track; e.path = c.path; e.url = 'https://shop.acme.dev' + c.path; e.props = { x: Math.round(rnd(s, 1) * 1400), y: Math.round(rnd(s, 2) * 800), rage: rnd(s, k, 23) < c.rage }; }
   else if (type === 'error') { const x = weighted(ERRORS, s, k, 24); e.errorMessage = x.msg; e.errorStack = x.stack; e.errorSource = x.source; e.fingerprint = x.fp; e.props = { kind: x.kind }; }
-  else if (type === 'http_error') { const h = weighted(HTTP_ERRORS, s, k, 25); e.httpMethod = h.method; e.httpUrl = h.url; e.httpRoute = h.route; e.httpStatus = h.status; e.durationMs = Math.round(h.ms * (0.7 + rnd(s, 3) * 0.6)); e.props = { status: h.status }; }
+  else if (type === 'http_error') { const h = weighted(HTTP_ERRORS, s, k, 25); e.httpMethod = h.method; e.httpUrl = h.url; e.httpRoute = h.route; e.httpStatus = h.status; e.durationMs = Math.round(h.ms * (0.7 + rnd(s, 3) * 0.6)); e.props = { status: h.status, ...(h.route.startsWith('/') ? { trace: browserTraceId(s, k), span: hex(16, s, 98) } : {}) }; }
   else if (type === 'custom') { e.name = pick(CUSTOM, s, k, 26); e.props = { plan: pick(['free', 'pro', 'team'], s, 1), value: Math.round(rnd(s, 2) * 90) }; }
   else if (type === 'vitals') { e.name = pick(['LCP', 'FCP', 'CLS', 'INP', 'TTFB'], s, 5); e.props = { name: e.name, value: Math.round(rnd(s, 6) * 3000) / (e.name === 'CLS' ? 10000 : 1) }; }
   return e;
@@ -179,12 +199,12 @@ const ROOTS = [
 const traceExists = (k: number) => rnd(k, 31) < 0.85;
 export const traceIdFor = (k: number) => k.toString(16).padStart(8, '0') + hex(24, k, 32);
 export const slotOf = (id: string) => parseInt(id.slice(0, 8), 16);
-export function genTrace(k: number): Span[] {
+export function genTrace(k: number, force?: { method: string; route: string; status: number }): Span[] {
   const traceId = traceIdFor(k), t0 = k * TSLOT * SEC + Math.floor(rnd(k, 33) * TSLOT * SEC * 0.8);
-  const root = weighted(ROOTS, k, 34);
+  const root = force ? { ...(ROOTS.find((r) => force.route.startsWith(r.route)) ?? ROOTS[0]), name: `${force.method} ${force.route}` } : weighted(ROOTS, k, 34);
   const spans: Span[] = [];
   let n = 0;
-  const bad = root.route === '/api/checkout' && rnd(k, 35) < 0.12;
+  const bad = force ? force.status >= 500 : root.route === '/api/checkout' && rnd(k, 35) < 0.12;
   const slow = rnd(k, 36) > 0.92 ? 3.5 : 1;
   const add = (service: string, name: string, parent: string | null, start: number, dur: number, kind: number, attrs: Record<string, unknown>, err = false): string => {
     const spanId = hex(16, k, 40 + n++);
@@ -217,6 +237,37 @@ export function genTrace(k: number): Span[] {
   }
   return spans.sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
 }
+/**
+ * Trace ids of failed browser requests: 'b7' + the event's second and slot, so the mock trace endpoint can rebuild
+ * the request (browserTrace) and give the trace its browser root span, like the backend does.
+ */
+export const browserTraceId = (s: number, k: number) => 'b7' + s.toString(16).padStart(12, '0') + k.toString(16) + hex(17, s, 99);
+
+export function browserTrace(id: string): TraceResponse | null {
+  if (!/^b7[0-9a-f]{30}$/.test(id)) return null;
+  const s = parseInt(id.slice(2, 14), 16), k = parseInt(id[14], 16);
+  const e = eventAt(s, k);
+  if (!e || e.type !== 'http_error' || e.props.trace !== id) return null;
+  const end = Date.parse(e.ts), dur = e.durationMs ?? 0, spanId = String(e.props.span);
+  const backend = genTrace(Math.floor(s / TSLOT), { method: e.httpMethod!, route: e.httpRoute!, status: e.httpStatus! });
+  // the backend answered within the browser's request: start a few ms after it, end before it
+  const scale = Math.min(1, Math.max(0.05, (dur - 30) / Math.max(1, backend[0].durationMs)));
+  const t0 = Date.parse(backend[0].start), start = end - dur + 15;
+  const at = (t: string) => iso(start + (Date.parse(t) - t0) * scale);
+  const spans: Span[] = backend.map((x) => ({ ...x, traceId: id, start: at(x.start), end: at(x.end), durationMs: Math.round(x.durationMs * scale * 10) / 10, parentSpanId: x.parentSpanId ?? spanId }));
+  const browser: BrowserRequest = {
+    eventId: e.id, ts: e.ts, spanId, method: e.httpMethod!, url: e.httpUrl, route: e.httpRoute, status: e.httpStatus ?? 0, durationMs: dur,
+    sessionId: e.sessionId, anonId: e.anonId, userId: e.userId, path: e.path, browser: e.browser, os: e.os, country: e.country, city: e.city,
+  };
+  const root: Span = {
+    traceId: id, spanId, parentSpanId: null, name: `${browser.method} ${browser.route}`, kind: 3, service: 'browser', start: iso(end - dur), end: e.ts, durationMs: dur,
+    statusCode: 2, statusMessage: browser.status ? `HTTP ${browser.status}` : 'Network error',
+    attributes: { 'http.request.method': browser.method, 'url.full': browser.url, 'http.response.status_code': browser.status, 'url.path': browser.path },
+    resource: { 'service.name': 'browser', 'browser.name': browser.browser, 'os.name': browser.os }, events: [],
+  };
+  return { spans: [root, ...spans], browser: [browser] };
+}
+
 export function summarize(spans: Span[]): TraceSummary {
   const root = spans.find((s) => !s.parentSpanId) ?? spans[0];
   return { traceId: root.traceId, rootName: root.name, service: root.service, start: root.start, durationMs: root.durationMs, spanCount: spans.length, errorCount: spans.filter((s) => s.statusCode === 2).length, services: [...new Set(spans.map((s) => s.service))] };

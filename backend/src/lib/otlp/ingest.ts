@@ -1,6 +1,7 @@
 import { stableUuid } from '../events';
 import type { LogRecord, Span } from '../../contract';
 import { HttpError } from '../http';
+import { recordReleases, seenInSpans } from '../releases';
 import { writeRows } from '../store/write';
 import { evaluateTriggers } from '../triggers';
 import { decodeProtobuf, ExportLogsServiceRequest, ExportMetricsServiceRequest, ExportTraceServiceRequest } from './proto';
@@ -62,6 +63,7 @@ export function assignStableIds(rows: OtlpRow[], sourceId: string): void {
 /** Store rows as Parquet: one file per project and day for the whole batch. */
 export async function storeOtlpRows(signal: Signal, rows: OtlpRow[]): Promise<void> {
   await writeRows(SIGNALS[signal].table, rows);
+  if (signal === 'traces') await recordReleases(seenInSpans(rows as SpanRow[])); // service.version; never throws
 }
 
 const toLogRecord = (r: LogRow): LogRecord => ({

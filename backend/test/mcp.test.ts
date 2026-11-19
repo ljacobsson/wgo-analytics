@@ -114,6 +114,9 @@ describe('MCP bearer auth', () => {
     const names = msg.result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain('list_projects');
     expect(names).toContain('get_trace');
+    const find = msg.result.tools.find((t: { name: string }) => t.name === 'find_recordings');
+    expect(find.inputSchema.properties.did.items.properties.action.enum).toEqual(['hover', 'click', 'rage_click', 'pageview', 'event', 'error']);
+    expect(find.inputSchema.properties.did.items.properties).toHaveProperty('notClicked');
     // the only tool that writes is naming a click target, and it's marked as such
     const writes = msg.result.tools.filter((t: { annotations?: { readOnlyHint?: boolean } }) => !t.annotations?.readOnlyHint);
     expect(writes.map((t: { name: string }) => t.name)).toEqual(['set_click_alias']);

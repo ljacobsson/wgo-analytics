@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { S3Client } from '@aws-sdk/client-s3';
 
@@ -15,6 +15,10 @@ export interface Location {
   /** what DuckDB reads: s3://bucket/key or an absolute path */
   url(key: string): string;
   put(key: string, body: Uint8Array): Promise<void>;
+  /** the object's bytes, or null when it doesn't exist */
+  get(key: string): Promise<Uint8Array | null>;
+  /** presigned URL for a client PUT of `key`; null when there is no S3 (local directory) */
+  presignPut(key: string, expiresInSeconds: number): Promise<string | null>;
   /** keys under `prefix` in lexicographic order, after `startAfter`, until `until` returns true for a key */
   list(prefix: string, opts?: { startAfter?: string; until?: (key: string) => boolean }): Promise<StoredFile[]>;
   remove(keys: string[]): Promise<void>;
@@ -58,6 +62,16 @@ function localLocation(root: string): Location {
       await writeFile(p + '.tmp', body);
       await rename(p + '.tmp', p);
     },
+    async get(key) {
+      try {
+        return await readFile(path(key));
+      } catch {
+        return null;
+      }
+    },
+    async presignPut() {
+      return null;
+    },
     async list(prefix, opts = {}) {
       const base = prefix.endsWith('/') ? prefix : prefix.slice(0, prefix.lastIndexOf('/') + 1);
       const out: StoredFile[] = [];
@@ -92,6 +106,22 @@ function s3Location(bucket: string, root: string): Location {
     async put(key, body) {
       const { PutObjectCommand } = await import('@aws-sdk/client-s3');
       await (await s3()).send(new PutObjectCommand({ Bucket: bucket, Key: root + key, Body: body, ContentType: 'application/vnd.apache.parquet' }));
+    },
+    async get(key) {
+      const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+      try {
+        const res = await (await s3()).send(new GetObjectCommand({ Bucket: bucket, Key: root + key }));
+        return (await res.Body?.transformToByteArray()) ?? null;
+      } catch (err) {
+        const name = (err as { name?: string }).name;
+        // a missing object reads as AccessDenied when the role can't list the bucket
+        if (name === 'NoSuchKey' || name === 'NotFound' || name === 'AccessDenied') return null;
+        throw err;
+      }
+    },
+    async presignPut(key, expiresInSeconds) {
+      const [{ PutObjectCommand }, { getSignedUrl }] = await Promise.all([import('@aws-sdk/client-s3'), import('@aws-sdk/s3-request-presigner')]);
+      return getSignedUrl(await s3(), new PutObjectCommand({ Bucket: bucket, Key: root + key }), { expiresIn: expiresInSeconds });
     },
     async list(prefix, opts = {}) {
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');

@@ -1,12 +1,21 @@
 import type { RecordingSettings } from '../api/contract';
-import type { ClickAlias, ClickAliasInput, Device, Goal, GoalInput, Kiosk, KioskConfig, KioskState, Member, Project, SavedView, SavedViewInput, SlackIntegration, Trigger, TriggerInput } from '../api/contract';
+import type { ClickAlias, ClickAliasInput, Device, Goal, GoalInput, Kiosk, KioskConfig, KioskState, Member, Project, SavedView, SavedViewInput, SlackIntegration, Trigger, TriggerInput, UptimeCheckInput } from '../api/contract';
 import * as D from './data';
 import { funnel } from './funnel';
 import { hex } from './rng';
 import * as F from './filters';
 import * as REC from './recordings';
+import * as REL from './releases';
+import { covers } from '../pages/ErrorSuppressions';
+import type { Budget, BudgetInput, ErrorSuppression, ErrorSuppressionInput } from '../api/contract';
+import * as EX from './explain';
+import { retention as mockRetention } from './retention';
 
-interface Db { projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; recordingSettings?: Record<string, RecordingSettings> }
+interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; recordingSettings?: Record<string, RecordingSettings>; uploadKeys?: Record<string, string> }
+import * as UP from './uptime';
+import { mockSite, mockSiteImage } from './site';
+
+interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; uptime?: Record<string, UP.MockCheck[]>; recordingSettings?: Record<string, RecordingSettings> }
 const KEY = 'wgo.mock.db';
 const newKey = () => 'ak_' + hex(28, Date.now(), Math.floor(Math.random() * 1e9));
 
@@ -44,6 +53,39 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     if (method === 'DELETE') { db.devices = list.filter((d) => d.id !== parts[1]); save(db); return { ok: true }; }
     return list;
   }
+  if (parts[0] === 'costs' && parts[1] === 'budgets') {
+    const list = (db.budgets ??= []);
+    const [, , id, action] = parts;
+    const b = list.find((x) => x.id === id);
+    const month = new Date().toISOString().slice(0, 7);
+    if (!id && method === 'POST') {
+      const i = body as BudgetInput;
+      if (!i.acknowledged) throw new MockHttpError(400, 'Confirm that cost figures are estimates and that the AWS bill is yours');
+      // the same figures the mock Costs page shows: a project gets its share of the events
+      const c = UP.mockCosts(i.projectId ?? '', Date.now(), false);
+      const share = i.scope === 'install' || !c.usage.eventsThisMonth ? 1 : (c.usage.projectEventsThisMonth ?? 0) / c.usage.eventsThisMonth;
+      const spent = Math.round(c.monthToDate * share * 100) / 100;
+      const pct = (spent / i.monthlyLimit) * 100;
+      const paused = i.pauseAtLimit && pct >= 100;
+      const nb: Budget = {
+        id: 'bud_' + hex(10, Date.now()), scope: i.scope, projectId: i.projectId ?? null, projectName: db.projects.find((p) => p.id === i.projectId)?.name ?? null,
+        monthlyLimit: i.monthlyLimit, alertAt: i.alertAt, alertOnForecast: i.alertOnForecast, pauseAtLimit: i.pauseAtLimit, destination: i.destination,
+        signingSecret: 'whsec_' + hex(24, Date.now(), 3), createdBy: email, createdAt: new Date().toISOString(),
+        status: { month, spent, forecast: c.forecast != null ? Math.round(c.forecast * share * 100) / 100 : null, estimated: i.scope === 'project', alerted: i.alertAt.filter((p) => pct >= p), forecastAlerted: i.alertOnForecast && (c.forecast ?? 0) * share > i.monthlyLimit && pct < 100,
+          paused, pausedAt: paused ? new Date().toISOString() : null, resumed: false, checkedAt: new Date().toISOString(), lastStatus: 'shown in WGO' },
+      };
+      list.push(nb); save(db); return nb;
+    }
+    if (b && action === 'resume') { b.status = { ...b.status, paused: false, pausedAt: null, resumed: true }; save(db); return b; }
+    if (b && method === 'PATCH') { Object.assign(b, body as object); if (b.status.paused && (b.status.spent ?? 0) < b.monthlyLimit) b.status = { ...b.status, paused: false, pausedAt: null }; save(db); return b; }
+    if (b && method === 'DELETE') { db.budgets = list.filter((x) => x.id !== id); save(db); return { ok: true }; }
+    return list;
+  }
+  if (parts[0] === 'costs') {
+    const own = db.projects.some((p) => p.role === 'owner');
+    if (!own) throw new MockHttpError(403, 'Only project owners can see what the install costs');
+    return UP.mockCosts(qp('pid') ?? '', now, new URLSearchParams(location.search).has('mock_costs_setup'));
+  }
   if (parts[0] !== 'projects') throw new MockHttpError(404, 'Not found');
   if (parts.length === 1 && method === 'POST') {
     const p: Project = { id: 'prj_' + hex(8, Date.now()), name: String((body as { name: string }).name), writeKey: newKey(), role: 'owner', createdAt: new Date().toISOString(), retention: { ...RETENTION } };
@@ -54,6 +96,13 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
   if (!project) throw new MockHttpError(404, 'Project not found');
   const sub = parts[2];
   if (!sub) {
+    if (method === 'DELETE') {
+      if (project.role !== 'owner') throw new MockHttpError(403, 'Only project owners can do that');
+      db.projects = db.projects.filter((p) => p.id !== pid);
+      for (const m of [db.members, db.triggers, db.integrations, db.slackApps, db.kiosks, db.views, db.goals, db.clickAliases, db.recordingSettings]) if (m) delete m[pid];
+      save(db);
+      return { ok: true };
+    }
     if (method === 'PATCH') {
       const b = body as { name?: string; retentionDays?: number };
       if (b.name !== undefined) project.name = String(b.name);
@@ -67,6 +116,11 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
   }
   switch (sub) {
     case 'rotate-key': project.writeKey = newKey(); save(db); return project;
+    case 'upload-key': case 'rotate-upload-key': {
+      if (project.role !== 'owner') throw new MockHttpError(403, 'Only project owners can do that');
+      if (sub === 'rotate-upload-key' || !db.uploadKeys?.[pid]) { (db.uploadKeys ??= {})[pid] = 'uk_' + hex(40, Date.now(), Math.floor(Math.random() * 1e9)); save(db); }
+      return { uploadKey: db.uploadKeys![pid] };
+    }
     case 'kiosks': {
       const list = ((db.kiosks ??= {})[pid] ??= []);
       const [, , , id, action] = parts;
@@ -137,7 +191,24 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       if (g && method === 'DELETE') { db.goals![pid] = list.filter((x) => x.id !== id); save(db); return { ok: true }; }
       return list;
     }
+    case 'site': return parts[3] === 'image' ? mockSiteImage() : mockSite(pid);
+    case 'collection': {
+      const scoped = (db.budgets ?? []).filter((b) => b.scope === 'install' || b.projectId === pid);
+      return { paused: scoped.some((b) => b.status.paused) };
+    }
+    case 'error-suppressions': {
+      const list = ((db.suppressions ??= {})[pid] ??= []);
+      const id = parts[3];
+      if (!id && method === 'POST') {
+        const b = (body ?? {}) as ErrorSuppressionInput;
+        const r: ErrorSuppression = { id: 'sup_' + hex(10, Date.now()), kind: b.kind ?? null, message: b.message ?? null, source: b.source ?? null, page: b.page ?? null, createdBy: email, createdAt: new Date().toISOString(), hits: 0, lastHitAt: null };
+        list.push(r); save(db); return r;
+      }
+      if (id && method === 'DELETE') { db.suppressions![pid] = list.filter((x) => x.id !== id); save(db); return { ok: true }; }
+      return list;
+    }
     case 'conversions': return D.conversions(from, to, db.goals?.[pid] ?? [], F.parse(qp('filters')), qp('series') !== '0');
+    case 'retention': return mockRetention(url.searchParams, now, db.goals?.[pid] ?? []);
     case 'triggers': {
       const list = ((db.triggers ??= {})[pid] ??= []);
       const [, , , id, action] = parts;
@@ -147,8 +218,16 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
           id: 'trg_' + hex(10, Date.now()), name: input.name ?? 'Trigger', scope: input.scope ?? 'events', filters: input.filters ?? [], destination: input.destination!,
           cooldownSeconds: input.cooldownSeconds ?? 300, enabled: input.enabled ?? true, signingSecret: 'whsec_' + hex(24, Date.now(), 7),
           createdBy: email, createdAt: new Date().toISOString(), lastFiredAt: null, fireCount: 0, lastStatus: null,
+          kind: input.kind ?? 'match', metric: input.metric ?? null, condition: input.condition ?? null, windowMinutes: input.windowMinutes ?? null,
+          status: input.kind && input.kind !== 'match' ? { state: 'ok', since: new Date().toISOString(), lastValue: 3, lastEvaluatedAt: new Date().toISOString(), baseline: input.kind === 'anomaly' ? { median: 4, low: 0, high: 10, days: 7 } : null } : null,
         };
         list.push(t); save(db); return t;
+      }
+      if (id === 'preview' && method === 'POST') {
+        const c = input.condition;
+        const v = input.metric?.agg === 'session_rate' ? 0.031 : input.metric?.agg === 'count' ? 7 : 840;
+        return { value: v, fires: !!c && ('op' in c ? (c.op === 'above' ? v > c.value : v < c.value) : false), baseline: c && 'direction' in c ? { median: 6, low: 1, high: 13, days: 7 } : null,
+          window: { from: new Date(now - (input.windowMinutes ?? 15) * 60_000).toISOString(), to: new Date(now).toISOString() } };
       }
       const t = list.find((x) => x.id === id);
       if (id && !t) throw new Error('Trigger not found');
@@ -156,6 +235,31 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       if (t && method === 'PATCH') { Object.assign(t, input); save(db); return t; }
       if (t && method === 'DELETE') { db.triggers![pid] = list.filter((x) => x.id !== id); save(db); return { ok: true }; }
       return list;
+    }
+    case 'uptime': {
+      if (!db.uptime) db.uptime = {};
+      const list = (db.uptime[pid] ??= pid === 'prj_demo' ? UP.seedChecks(now) : []);
+      const [, , , id, action] = parts;
+      const input = (body ?? {}) as Partial<UptimeCheckInput>;
+      const find = () => { const c = list.find((x) => x.id === id); if (!c) throw new MockHttpError(404, 'Check not found'); return c; };
+      if (input.url !== undefined && !/^https?:\/\/[^/]+\.[^/]+/i.test(input.url)) throw new MockHttpError(400, 'URL must be a public http or https address');
+      if (input.name !== undefined && (!input.name.trim() || input.name.trim().length > 120)) throw new MockHttpError(400, 'Name must be 1-120 characters');
+      if (!id && method === 'POST') {
+        if (list.length >= 20) throw new MockHttpError(400, 'A project can have at most 20 checks');
+        const c: UP.MockCheck = {
+          method: 'GET', expect: '2xx', keyword: null, intervalSeconds: 300, timeoutMs: 10000, enabled: true, ...input, name: String(input.name).trim(), url: String(input.url),
+          id: 'chk_' + hex(10, Date.now()), state: 'up', stateSince: new Date(now).toISOString(), lastCheckedAt: null, failStreak: 0, lastStatus: 200, lastError: null,
+          lastDurationMs: 140, createdBy: email, createdAt: new Date(now).toISOString(), strip: [],
+        };
+        list.push(c); save(db); return UP.present(c, from, to, now);
+      }
+      if (!id) return list.map((c) => UP.present(c, from, to, now));
+      const c = find();
+      if (action === 'run') { c.lastCheckedAt = new Date(now).toISOString(); save(db); return { ok: true, status: 200, error: null, durationMs: c.lastDurationMs ?? 150 }; }
+      if (action === 'results') return UP.resultsFor(c, from, to, now);
+      if (method === 'PATCH') { Object.assign(c, input); save(db); return UP.present(c, from, to, now); }
+      if (method === 'DELETE') { db.uptime[pid] = list.filter((x) => x.id !== id); save(db); return { ok: true }; }
+      return UP.present(c, from, to, now);
     }
     case 'integrations': {
       const list = ((db.integrations ??= {})[pid] ??= []);
@@ -209,6 +313,15 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       }
       return [...rows.values()].sort((a, b) => b.count - a.count).slice(0, limit);
     }
+    case 'frustration': {
+      const names = new Map((db.clickAliases?.[pid] ?? []).map((a) => [a.selector, a.alias]));
+      const recs = REC.listRecordings(from, to, undefined, 12).recordings;
+      return D.frustration(from, to, limit).map((r, i) => ({
+        ...r, alias: names.get(r.selector) ?? null,
+        samples: recs.slice((i * 2) % Math.max(1, recs.length)).slice(0, i % 4 === 3 ? 0 : 1 + (i % 3)).map((x) => ({ sessionId: x.sessionId, at: Date.parse(x.startedAt) + 4000 })),
+      }));
+    }
+    case 'heatmap': return REC.heatmap(qp('path') ?? '/', from, to, qp('device') === 'mobile' ? 'mobile' : 'desktop');
     case 'click-aliases': {
       const list = ((db.clickAliases ??= {})[pid] ??= []);
       if (method === 'POST') {
@@ -223,10 +336,12 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       return list;
     }
     case 'pages': return D.pages(from, to, limit);
-    case 'errors': return D.errors(from, to, limit);
+    case 'errors': { const rules = db.suppressions?.[pid] ?? []; return D.errors(from, to, limit).map((g) => ({ ...g, suppressedBy: rules.find((r) => covers(r, g))?.id ?? null })); }
     case 'http-errors': return D.httpErrors(from, to, limit);
     case 'breakdown': return D.breakdown(from, to, qp('dim') ?? 'browser');
     case 'vitals': return D.vitals(from);
+    case 'explain': return EX.explain({ metric: (qp('metric') ?? 'events') as never, where: F.parse(qp('where')), goalId: qp('goalId'), label: qp('label'), from, to, goals: db.goals?.[pid] ?? [] });
+    case 'releases': return REL.releases(from, to, db.goals?.[pid] ?? [], qp('markers') === '1');
     case 'geo': return D.geo(from, to);
     case 'fields': {
       const scope = (qp('scope') ?? 'events') as 'events' | 'logs' | 'spans';
@@ -259,7 +374,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     case 'events': return D.events({ from, to, before: qp('before') ? Date.parse(qp('before')!) : undefined, type: qp('type'), q: qp('q'), sessionId: qp('sessionId'), fingerprint: qp('fingerprint'), filters: F.parse(qp('filters')), located: qp('located') === '1', lat: qp('lat') ? Number(qp('lat')) : undefined, lon: qp('lon') ? Number(qp('lon')) : undefined, limit });
     case 'services': return D.services(from, to);
     case 'traces':
-      if (parts[3]) return { spans: D.genTrace(D.slotOf(parts[3])) };
+      if (parts[3]) return D.browserTrace(parts[3]) ?? { spans: D.genTrace(D.slotOf(parts[3])) };
       return D.traces({ from, to, service: qp('service'), minDurationMs: qp('minDurationMs') ? Number(qp('minDurationMs')) : undefined, errorsOnly: qp('errorsOnly') === '1', q: qp('q'), limit });
     case 'logs': return D.logs({ from, to, before: qp('before') ? Date.parse(qp('before')!) : undefined, severity: qp('severity') ? Number(qp('severity')) : undefined, service: qp('service'), traceId: qp('traceId'), q: qp('q'), filters: F.parse(qp('filters')), limit });
     case 'metrics':
@@ -285,7 +400,7 @@ export function handleKiosk(url: URL, token: string): unknown {
       const project = db.projects.find((p) => p.id === pid)!;
       return { kiosk: { id: k.id, name: k.name }, project: { id: pid, name: project.name }, config: k.config, reloadAt: k.reloadAt, version: `${k.updatedAt}.${k.reloadAt}` } satisfies KioskState;
     }
-    if (/^(kiosks|members|triggers|goals|integrations|slack|rotate-key|click-aliases)(\/|$)/.test(rest)) throw new MockHttpError(404, 'Not found');
+    if (/^(kiosks|members|triggers|goals|integrations|slack|rotate-key|upload-key|rotate-upload-key|click-aliases)(\/|$)/.test(rest)) throw new MockHttpError(404, 'Not found');
     return handleApi('GET', new URL(`/api/projects/${pid}/${rest}${url.search}`, url.origin), undefined, 'demo@wgo.dev');
   }
   throw new MockHttpError(401, 'This kiosk link was removed or replaced. Get the current one from the dashboard.');

@@ -116,10 +116,10 @@ export async function deleteExpired(projects: string[], cutoff: (pid: string, ta
 // ---------------------------------------------------------------- one-time move out of DSQL
 
 /** Rows deleted per statement: DSQL caps a transaction at 3,000 modified rows, secondary indexes included. */
-// replays never lived in DSQL: its SELECT finds no table and moves on
-const DELETE_BATCH: Record<RawTable, number> = { events: 500, logs: 1000, spans: 1000, metric_points: 1000, replays: 1000 };
-const KEY_TYPE: Record<RawTable, string> = { events: 'uuid', logs: 'uuid', spans: 'text', metric_points: 'uuid', replays: 'uuid' };
-const KEY_COL: Record<RawTable, string> = { events: 'id', logs: 'id', spans: 'span_id', metric_points: 'id', replays: 'id' };
+// replays, checks and visitor_days never lived in DSQL: their SELECT finds no table and moves on
+const DELETE_BATCH: Record<RawTable, number> = { events: 500, logs: 1000, spans: 1000, metric_points: 1000, replays: 1000, checks: 1000, visitor_days: 1000 };
+const KEY_TYPE: Record<RawTable, string> = { events: 'uuid', logs: 'uuid', spans: 'text', metric_points: 'uuid', replays: 'uuid', checks: 'uuid', visitor_days: 'text' };
+const KEY_COL: Record<RawTable, string> = { events: 'id', logs: 'id', spans: 'span_id', metric_points: 'id', replays: 'id', checks: 'id', visitor_days: 'person' };
 const MOVE_ROWS = 10_000;
 const LEGACY = 'legacy-raw-moved';
 

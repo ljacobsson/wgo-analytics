@@ -299,4 +299,120 @@ export const SCHEMA_STATEMENTS: string[] = [
      PRIMARY KEY (project_id, session_id)
    )`,
   `CREATE INDEX ASYNC IF NOT EXISTS recordings_started_idx ON recordings (project_id, started_at)`,
+
+  // projects deleted by their owner (lib/projects.ts deleteProject): the project row is gone at once, and the
+  // maintenance job removes the rest of its data (lib/purge.ts), then this row
+  `CREATE TABLE IF NOT EXISTS deleted_projects (
+     id uuid PRIMARY KEY,
+     deleted_at timestamptz NOT NULL DEFAULT now()
+   )`,
+
+  // versions seen in the wild (lib/releases.ts): the SDK's `release` (kind 'web', service '') and OpenTelemetry's
+  // service.version per service (kind 'service'). First-seen times are deploy markers and outlive raw data.
+  `CREATE TABLE IF NOT EXISTS releases (
+     project_id uuid NOT NULL,
+     kind text NOT NULL,
+     service text NOT NULL,
+     version text NOT NULL,
+     first_seen timestamptz NOT NULL,
+     last_seen timestamptz NOT NULL,
+     PRIMARY KEY (project_id, kind, service, version)
+   )`,
+
+  // aggregate triggers (lib/monitor.ts): kind NULL/'match' = per matching row (ingest); 'threshold' | 'anomaly' are
+  // evaluated every minute over a window. metric = TriggerMetric, condition = TriggerCondition (JSON).
+  `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS kind text`,
+  `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS metric jsonb`,
+  `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS condition jsonb`,
+  `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS window_minutes int`,
+  // 'ok' | 'firing' (NULL until first evaluated), the last value and when it was computed
+  `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS state text`,
+  `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS state_since timestamptz`,
+  `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS last_value double precision`,
+  `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS last_evaluated_at timestamptz`,
+  // anomaly baseline, recomputed at most hourly: { at, hour, values, median, mad }
+  `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS baseline jsonb`,
+  // source maps: CI secret for POST /sourcemaps/upload-url (lib/projects.ts); error stacks remember the release
+  // they came from so they can be symbolicated (lib/sourcemaps.ts)
+  `ALTER TABLE projects ADD COLUMN IF NOT EXISTS upload_key text`,
+  `ALTER TABLE error_stacks ADD COLUMN IF NOT EXISTS release text`,
+
+  // uptime checks (lib/uptime.ts); every result is a row of the `checks` raw table
+  `CREATE TABLE IF NOT EXISTS uptime_checks (
+     project_id uuid NOT NULL,
+     id uuid NOT NULL,
+     name text NOT NULL,
+     url text NOT NULL,
+     method text NOT NULL,
+     expect text NOT NULL,
+     keyword text,
+     interval_seconds integer NOT NULL,
+     timeout_ms integer NOT NULL,
+     enabled boolean NOT NULL DEFAULT true,
+     state text,
+     state_since timestamptz,
+     last_checked_at timestamptz,
+     fail_streak integer NOT NULL DEFAULT 0,
+     last_status integer,
+     last_error text,
+     last_duration_ms double precision,
+     created_by text NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now(),
+     PRIMARY KEY (project_id, id)
+   )`,
+
+  // the install's cost report (lib/costs.ts), cached because each Cost Explorer request costs $0.01
+  `CREATE TABLE IF NOT EXISTS cost_cache (
+     id text PRIMARY KEY,
+     data jsonb NOT NULL,
+     fetched_at timestamptz NOT NULL
+   )`,
+
+  // errors to drop at ingest (lib/suppressions.ts): wildcard patterns on the kind, message, failing URL and page path
+  `CREATE TABLE IF NOT EXISTS error_suppressions (
+     project_id uuid NOT NULL,
+     id uuid NOT NULL,
+     kind text,
+     message text,
+     source text,
+     page text,
+     created_by text NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now(),
+     hits bigint NOT NULL DEFAULT 0,
+     last_hit_at timestamptz,
+     PRIMARY KEY (project_id, id)
+   )`,
+
+  // monthly cost budgets (lib/budgets.ts): the whole install (project_id NULL) or one project. `state` holds this
+  // month's alerts sent and whether collection is paused.
+  `CREATE TABLE IF NOT EXISTS budgets (
+     id uuid PRIMARY KEY,
+     scope text NOT NULL,
+     project_id uuid,
+     monthly_limit double precision NOT NULL,
+     alert_at jsonb NOT NULL,
+     alert_on_forecast boolean NOT NULL,
+     pause_at_limit boolean NOT NULL,
+     destination jsonb,
+     signing_secret text NOT NULL,
+     state jsonb,
+     created_by text NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX ASYNC IF NOT EXISTS budgets_project_idx ON budgets (project_id)`,
+
+  // the public website behind a project and its daily homepage screenshot (lib/sites.ts). Days are YYYY-MM-DD (UTC).
+  `CREATE TABLE IF NOT EXISTS project_sites (
+     project_id uuid PRIMARY KEY,
+     origin text,
+     origin_checked_at timestamptz,
+     shot_day text,
+     shot_origin text,
+     shot_error text,
+     image_key text,
+     image_day text,
+     image_at timestamptz
+   )`,
+  // the site's icon (favicon) as a data URL, refreshed with the screenshot
+  `ALTER TABLE project_sites ADD COLUMN IF NOT EXISTS icon text`,
 ];

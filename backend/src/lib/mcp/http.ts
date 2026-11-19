@@ -47,7 +47,8 @@ const handler = createMcpHandler(
   (ctx) => {
     const email = ctx.authInfo?.extra?.email;
     if (typeof email !== 'string' || !email) throw new Error('MCP request without a resolved user');
-    return buildMcpServer(email);
+    const origin = ctx.authInfo?.extra?.origin;
+    return buildMcpServer(email, typeof origin === 'string' ? origin : undefined);
   },
   { responseMode: 'json', keepAliveMs: 0, maxRequestBodySize: 256 * 1024, onerror: (err) => console.warn('mcp:', err.message) },
 );
@@ -127,7 +128,8 @@ export async function mcpFetch(request: Request, opts: McpFetchOptions): Promise
     const email = await auth.resolveEmail(authInfo);
     if (!email) return bearerAuthChallengeResponse(new OAuthError(OAuthErrorCode.InvalidToken, 'Unknown or disabled user'), bearer);
     if (!emailAllowed(email)) return jsonResponse(403, { error: allowlistMessage() });
-    authInfo = { ...authInfo, extra: { ...authInfo.extra, email } };
+    // through CloudFront, the public origin is the dashboard's: tools link to its pages
+    authInfo = { ...authInfo, extra: { ...authInfo.extra, email, origin: publicOrigin } };
   }
 
   return handler.fetch(request, { authInfo });

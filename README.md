@@ -3,9 +3,10 @@
 **See what's going on in your web app and the services behind it.** WGO is open-source, self-hosted product
 analytics and observability that you deploy into your own AWS account with one command.
 
-Add one script tag to a web app and WGO records every click, pageview, JavaScript error, failed API call and
-Web Vital, with no extra code. Point your backends' OpenTelemetry exporters at it and their traces, logs and
-metrics land in the same project. Everything shows up in one dashboard that updates as it happens.
+Add one script tag to a web app and WGO monitors its real users: every click, pageview, JavaScript error, failed
+API call and Web Vital, with no extra code. Point your backends' OpenTelemetry exporters at it and their traces,
+logs and metrics land in the same project, linked to the browser requests that started them. Everything shows up
+in one dashboard that updates as it happens.
 
 ![The WGO overview page: pageviews, sessions, users, clicks and errors with sparklines, events over time, Web Vitals and a visitor map](docs/screenshots/overview.jpg)
 
@@ -21,19 +22,30 @@ metrics land in the same project. Everything shows up in one dashboard that upda
 
 ### Live web analytics
 
-Add one script tag and WGO records clicks, pageviews, JavaScript errors, failed API calls and Web Vitals.
-Events show up within seconds.
+Add one script tag and WGO records clicks, pageviews, JavaScript errors, failed API calls and Web Vitals from
+real users (real user monitoring, RUM). Events show up within seconds.
 
 - **Live watches:** watch a button, page or error and see each hit arrive over a WebSocket, with an optional
   toast or browser notification.
 - **Visitor map:** a zoomable map shows where visitors are, to the nearest city. Locations come from CloudFront
   at the edge, and IP addresses are never stored.
-- **Small SDK:** about 10 KB gzipped. It batches and compresses events, and holds on to them while the visitor
+- **Small SDK:** about 11 KB gzipped. It batches and compresses events, and holds on to them while the visitor
   is offline.
 - **Session recordings:** watch what a visitor did, with their pointer, clicks, scrolling and page changes replayed
   over snapshots of the page. There is no video, so a session costs kilobytes. Record a share of sessions, or the ones that hit an error
   or reach a page you choose, with hourly and daily limits. Off until a project owner turns it on. Typed text is
-  never recorded.
+  never recorded. Your AI assistant can find recordings by what the visitor did, or didn't do: "hovered the buy
+  button but never clicked it".
+- **Frustration signals:** the Clicks page ranks the elements where visitors got stuck: rage clicks (three or more
+  within a second), dead clicks (the page did nothing for a second) and clicks followed by an error or a failed
+  request, each with the recordings behind it.
+- **Heatmaps:** where visitors click on a page, for desktop or mobile, drawn over a snapshot of the page when
+  recordings are on.
+- **Retention:** cohorts of visitors by their first visit or first conversion, per day, week or month, and the share
+  that came back after. Kept for 400 days, longer than raw events.
+- **Readable errors:** upload source maps from CI with `npx wgo-sourcemaps` and stacks show the original file, line
+  and function ([details](sdk/README.md#source-maps)). Suppression rules with `*` wildcards drop noise, such as a
+  browser extension's errors or a missing image, before it's stored.
 
 ![The Live page: click counters for the signup button, add to cart and checkout, and a world map with recent events at each location](docs/screenshots/live.jpg)
 
@@ -136,10 +148,32 @@ trigger** in the filter bar), from any event (**Create trigger from this event**
 - **Cooldown:** at most one notification per period you choose. Matches in between are counted and
   reported with the next one. **Test** sends a sample notification immediately.
 
+### Releases, explanations and alerts
+
+- **Browser requests linked to backend traces:** the SDK sends a W3C `traceparent` with the page's own requests. A
+  failed request opens the backend trace it started, with the browser request as the root span, and the trace links
+  back to the visitor's session and recording.
+- **Releases:** set `data-release` on the script tag and `service.version` on your services. Every version is compared
+  with the one before it (errors, failed requests, Web Vitals, conversion, new error groups), and deploys show as
+  markers on the charts.
+- **Why did this change?** A number on the Overview that moved more than chance would explain gets a **Why?**: the
+  segment that accounts for it (page, browser, release, error…), when it started and which release went out just
+  before.
+- **Threshold and anomaly triggers:** besides each matching event, a trigger can fire when a number crosses a value
+  ("no pageviews in 30 minutes", "p95 above 1 s") or is unusual for the time of day, checked every minute. It
+  notifies when it starts firing and when it resolves, with the explanation included.
+- **Uptime checks:** WGO fetches a URL every 1, 5 or 15 minutes from the region it runs in, and checks the status
+  code, the timeout and, optionally, text in the body. A check goes down after two failures in a row. Each change
+  is a `wgo.uptime` event, so a trigger can send it to Slack or a webhook.
+
 ### Teams and access control
 
 Accounts use Cognito with email sign-up. Projects have owners and members, and you can invite people by email.
 You can limit sign-ups to your company's email domains, or turn off self sign-up completely.
+
+With more than one project, **All projects** shows them side by side: each card has the site's homepage (a
+screenshot taken once a day), its main numbers and a chart. An owner can delete a project from its Settings page,
+which removes its data, settings and members for good.
 
 ## Deploy it yourself
 
@@ -275,6 +309,15 @@ To ship only dashboard or SDK changes to an existing stack (no SAM, about 30 s):
 ```
 
 ### Cost awareness
+
+> **You're responsible for your AWS bill.** WGO runs in your own AWS account. Its cost figures, budgets and caps are
+> estimates provided as they are, without any warranty, and the authors of WGO accept no responsibility or liability
+> for any AWS charges. Set up [AWS Budgets](https://console.aws.amazon.com/billing/home#/budgets) for alerts on your
+> whole account.
+
+The dashboard's **Costs** page shows what the install costs (from Cost Explorer, once the
+`aws:cloudformation:stack-name` cost allocation tag is activated). **Budgets** there alert at a monthly limit for the
+whole install or a single project, and can stop WGO collecting data when the limit is reached.
 
 Everything is billed per request and per GB, so an idle install costs close to nothing and the bill follows
 your traffic. Raw telemetry is stored as compressed Parquet files in S3 and queried by DuckDB inside the API
@@ -446,7 +489,7 @@ claude mcp add --transport http wgo https://wgo.example.com/mcp
 
 There is no key to copy. The client registers itself, opens a browser, and you sign in with your WGO account.
 It then sees exactly the projects you're a member of. The tools are:
-- **Product analytics:** `list_projects`, `get_overview`, `top_clicks`, `top_pages`, `goal_conversions`, `goal_funnel`, `list_errors`, `list_failed_requests`, `breakdown`, `web_vitals`, `visitor_locations`, `search_events`
+- **Product analytics:** `list_projects`, `get_overview`, `top_clicks`, `top_pages`, `goal_conversions`, `goal_funnel`, `get_retention`, `list_frustration`, `list_errors`, `list_failed_requests`, `explain_change`, `list_releases`, `breakdown`, `web_vitals`, `visitor_locations`, `search_events`, `find_recordings`, `list_uptime_checks`
 - **Click aliases:** `list_click_aliases`, and `set_click_alias`, which gives an autocaptured selector a readable name. It's the only tool that changes anything, and it only changes labels that any project member can also edit in the dashboard.
 - **OpenTelemetry:** `list_services`, `list_traces`, `get_trace`, `search_logs`, `list_metrics`, `get_metric_series`
 

@@ -1,11 +1,13 @@
 import type {
-  BreakdownRow, ClickRow, ErrorGroup, EventsResponse, EventType, FieldInfo, FieldsResponse, FieldValuesResponse, FilterScope, GeoResponse,
+  BreakdownRow, BrowserRequest, ClickRow, ErrorGroup, EventsResponse, EventType, FieldInfo, FieldsResponse, FieldValuesResponse, FilterScope, GeoResponse,
   HttpErrorGroup, LogRecord, LogsResponse, MetricInfo,
   MetricSeriesResponse, PageRow, ServiceRow, Span, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse,
 } from '../contract';
 import { rawQuery, inList, type Window as Win } from './store/duck';
 import { aliasMap } from './clickAliases';
 import { stacksFor } from './errorStacks';
+import { markSuppressed, suppressedSql } from './suppressions';
+import { symbolicateEvents, symbolicateGroups } from './sourcemaps';
 import { toApiEvent, type EventRow } from './events';
 import { COLUMNS, fieldExpression, filtersFrom, includeBots, jsonPath, parseFilters } from './filters';
 import { Hll } from './hll';
@@ -76,7 +78,7 @@ async function rollupPlan(pid: string, r: Range, p: Params): Promise<Plan | null
 
 async function rawTotals(pid: string, r: Range, p: Params): Promise<Totals> {
   const params: unknown[] = [pid, r.from, r.to];
-  const F = filtersFrom(p, 'events', params);
+  const F = filtersFrom(p, 'events', params) + await suppressedSql(pid, params);
   const [row] = await rawQuery<Totals>(pid, r,
     `SELECT count(*)::int AS events,
             sum(CASE WHEN type = 'pageview' THEN 1 ELSE 0 END)::int AS pageviews,
@@ -179,7 +181,7 @@ export async function stats(pid: string, p: Params): Promise<StatsResponse> {
   }
 
   const seriesParams: unknown[] = [pid, r.from, r.to, bucket];
-  const F = filtersFrom(p, 'events', seriesParams);
+  const F = filtersFrom(p, 'events', seriesParams) + await suppressedSql(pid, seriesParams);
   const [current, previous, rows] = await Promise.all([
     rawTotals(pid, r, p),
     compare ? totals(pid, prevRange, p) : Promise.resolve(null),
@@ -294,33 +296,37 @@ export async function errors(pid: string, p: Params): Promise<ErrorGroup[]> {
     sparkParams,
   );
   const stacks = await sampleStacks(pid, r, groups.map((g) => g.fingerprint));
+  const mapped = await symbolicateGroups(pid, stacks);
   const series = new Map(groups.map((g) => [g.fingerprint, new Array<number>(SPARK_BUCKETS).fill(0)]));
   for (const s of spark) {
     const arr = series.get(s.fingerprint);
     if (arr && s.b >= 0 && s.b < SPARK_BUCKETS) arr[s.b] += s.n;
   }
-  return groups.map((g) => ({
+  return markSuppressed(pid, groups.map((g) => ({
     fingerprint: g.fingerprint, message: g.message, kind: g.kind, count: g.count, sessions: g.sessions,
-    firstSeen: iso(g.first_seen)!, lastSeen: iso(g.last_seen)!, sampleStack: stacks.get(g.fingerprint) ?? null, sampleUrl: g.sample_url,
+    firstSeen: iso(g.first_seen)!, lastSeen: iso(g.last_seen)!, sampleStack: mapped.get(g.fingerprint)?.stack ?? null, sampleUrl: g.sample_url,
+    minifiedStack: mapped.get(g.fingerprint)?.minified ?? null, ...(mapped.get(g.fingerprint)?.frames ? { stackFrames: mapped.get(g.fingerprint)!.frames } : {}),
     source: g.source, series: series.get(g.fingerprint)!,
-  }));
+  })));
 }
 
 export async function httpErrors(pid: string, p: Params): Promise<HttpErrorGroup[]> {
   const r = parseRange(p);
   const params: unknown[] = [pid, r.from, r.to, limitParam(p.limit, 100, 500)];
   const F = filtersFrom(p, 'events', params);
-  const rows = await rawQuery<{ method: string; route: string; status: number; count: number; sessions: number; avg: number | null; last_seen: Date; sample_url: string | null }>(pid, r,
+  const rows = await rawQuery<{ method: string; route: string; status: number; count: number; sessions: number; avg: number | null; last_seen: Date; sample_url: string | null; trace: string | null }>(pid, r,
     `SELECT http_method AS method, http_route AS route, http_status AS status, count(*)::int AS count,
             count(DISTINCT session_id)::int AS sessions, avg(duration_ms)::float8 AS avg,
-            max(ts) AS last_seen, max(http_url) AS sample_url
+            max(ts) AS last_seen, max(http_url) AS sample_url,
+            -- the latest failure that carried a trace id (arg_max skips rows whose ordering value is NULL)
+            arg_max(json_extract_string(props, '$.trace'), CASE WHEN json_extract_string(props, '$.trace') IS NOT NULL THEN ts END) AS trace
        FROM events WHERE project_id = $1 AND type = 'http_error' AND ts >= $2 AND ts < $3${F}
       GROUP BY 1, 2, 3 ORDER BY count DESC LIMIT $4`,
     params,
   );
   return rows.map((x) => ({
     method: x.method ?? 'GET', route: x.route ?? '(unknown)', status: x.status ?? 0, count: x.count, sessions: x.sessions,
-    avgDurationMs: Math.round(x.avg ?? 0), lastSeen: iso(x.last_seen)!, sampleUrl: x.sample_url,
+    avgDurationMs: Math.round(x.avg ?? 0), lastSeen: iso(x.last_seen)!, sampleUrl: x.sample_url, sampleTraceId: x.trace ?? null,
   }));
 }
 
@@ -469,6 +475,7 @@ export async function events(pid: string, p: Params): Promise<EventsResponse> {
     const stacks = await stacksFor(pid, needStack.map((e) => e.fingerprint!));
     for (const e of needStack) e.errorStack = stacks.get(e.fingerprint!) ?? null;
   }
+  await symbolicateEvents(evts, pid);
   return { events: evts, nextBefore: rows.length === limit ? evts[evts.length - 1].ts : null };
 }
 
@@ -554,12 +561,49 @@ export async function trace(pid: string, traceId: string, p: Params = {}): Promi
     if (rows.length) break;
   }
   if (!rows.length) throw new HttpError(404, 'Trace not found');
+  const spans: Span[] = rows.map((s) => ({
+    traceId: s.trace_id, spanId: s.span_id, parentSpanId: s.parent_span_id, name: s.name, kind: s.kind, service: s.service,
+    start: iso(s.start_time)!, end: iso(s.end_time)!, durationMs: s.duration_ms, statusCode: s.status_code,
+    statusMessage: s.status_message, attributes: s.attributes ?? {}, resource: s.resource ?? {}, events: s.events ?? [],
+  }));
+  const browser = await browserRequests(pid, traceId.toLowerCase(), rows);
+  return { spans: [...browser.map((b) => browserSpan(b, traceId.toLowerCase())), ...spans], ...(browser.length ? { browser } : {}) };
+}
+
+/**
+ * Failed browser requests that started a trace: the SDK sends a traceparent with the page's own requests and
+ * reports a failed one with that trace id (props.trace). Only http_error events around the trace are read.
+ */
+async function browserRequests(pid: string, traceId: string, spans: SpanDbRow[]): Promise<BrowserRequest[]> {
+  const start = Math.min(...spans.map((s) => s.start_time.getTime()));
+  const end = Math.max(...spans.map((s) => s.end_time.getTime()));
+  const w: Win = { from: new Date(start - 5 * 60_000), to: new Date(end + 5 * 60_000) };
+  const rows = await rawQuery<EventRow>(pid, w,
+    `SELECT * FROM events WHERE project_id = $1 AND type = 'http_error' AND ts >= $2 AND ts < $3
+        AND json_extract_string(props, '$.trace') = $4 ORDER BY ts LIMIT 10`,
+    [pid, w.from, w.to, traceId],
+  );
+  return rows.map((r) => {
+    const e = toApiEvent(r);
+    return {
+      eventId: e.id, ts: e.ts, spanId: String(e.props.span ?? ''), method: e.httpMethod ?? 'GET', url: e.httpUrl, route: e.httpRoute,
+      status: e.httpStatus ?? 0, durationMs: e.durationMs, sessionId: e.sessionId, anonId: e.anonId, userId: e.userId, path: e.path,
+      browser: e.browser, os: e.os, country: e.country, city: e.city,
+    };
+  });
+}
+
+/** The browser side of a request as a root span, so the waterfall nests the backend's server span under it. */
+export function browserSpan(b: BrowserRequest, traceId: string): Span {
+  const end = Date.parse(b.ts);
+  const dur = b.durationMs ?? 0;
   return {
-    spans: rows.map((s) => ({
-      traceId: s.trace_id, spanId: s.span_id, parentSpanId: s.parent_span_id, name: s.name, kind: s.kind, service: s.service,
-      start: iso(s.start_time)!, end: iso(s.end_time)!, durationMs: s.duration_ms, statusCode: s.status_code,
-      statusMessage: s.status_message, attributes: s.attributes ?? {}, resource: s.resource ?? {}, events: s.events ?? [],
-    })),
+    traceId, spanId: b.spanId, parentSpanId: null, name: `${b.method} ${b.route ?? b.url ?? ''}`.trim(), kind: 3, service: 'browser',
+    start: new Date(end - dur).toISOString(), end: b.ts, durationMs: dur, statusCode: 2,
+    statusMessage: b.status ? `HTTP ${b.status}` : 'Network error',
+    attributes: { 'http.request.method': b.method, 'url.full': b.url, 'http.response.status_code': b.status, 'url.path': b.path },
+    resource: { 'service.name': 'browser', 'browser.name': b.browser, 'os.name': b.os },
+    events: [],
   };
 }
 

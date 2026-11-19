@@ -1,8 +1,8 @@
 import { InfoTip } from '../ui/InfoTip';
 import { useMemo, useState } from 'react';
-import { ArrowLeft, ChevronDown, ChevronRight, ScrollText, Search, Waypoints } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronRight, ListTree, MonitorPlay, MonitorSmartphone, ScrollText, Search, Waypoints } from 'lucide-react';
 import { useServices, useTrace, useTraces } from '../api/hooks';
-import type { Span, TraceSummary } from '../api/contract';
+import type { BrowserRequest, Span, TraceSummary } from '../api/contract';
 import { useProject } from '../lib/project';
 import { useTime } from '../lib/time';
 import { navigate, pageHref, useRoute, useSetParams } from '../lib/router';
@@ -159,6 +159,27 @@ function Waterfall({ spans }: { spans: Span[] }) {
   );
 }
 
+/** The failed browser request that started this trace: who, where, and links to the session's replay and events. */
+function BrowserOrigin({ b }: { b: BrowserRequest }) {
+  const { project } = useProject(); const route = useRoute();
+  const at = Date.parse(b.ts);
+  const who = b.userId ?? (b.anonId ? `Visitor ${b.anonId.slice(0, 8)}` : 'A visitor');
+  const where = [b.browser, b.os, [b.city, b.country].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+  return (
+    <Card className="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3">
+      <MonitorSmartphone size={18} className="shrink-0 text-muted" />
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] font-medium">Started in the browser: {b.method} {b.route ?? b.url} failed with {b.status ? `HTTP ${b.status}` : 'a network error'}{b.durationMs != null && <span className="font-normal text-muted"> after {fmtMs(b.durationMs)}</span>}</div>
+        <div className="mt-0.5 truncate text-[12px] text-muted">{who} on <Mono>{b.path ?? '?'}</Mono> · {fmtTime(b.ts)}{where && ` · ${where}`}</div>
+      </div>
+      {b.sessionId && <div className="flex shrink-0 items-center gap-2">
+        <a className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] hover:bg-[var(--hl)]" href={'#' + pageHref(project.id, `recordings/${encodeURIComponent(b.sessionId)}`, route.params, { t: String(at) })}><MonitorPlay size={14} />Replay at this moment</a>
+        <a className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] hover:bg-[var(--hl)]" href={'#' + pageHref(project.id, 'events', route.params, { sessionId: b.sessionId })}><ListTree size={14} />Session events</a>
+      </div>}
+    </Card>
+  );
+}
+
 function TraceDetail({ traceId }: { traceId: string }) {
   const { project } = useProject(); const route = useRoute();
   const t = useTrace(project.id, traceId, route.params.get('at'));
@@ -169,6 +190,7 @@ function TraceDetail({ traceId }: { traceId: string }) {
         <Button onClick={() => navigate(pageHref(project.id, 'traces', route.params))}><ArrowLeft size={14} />Traces</Button>
         <div className="min-w-0 flex-1"><div className="truncate text-[15px] font-semibold">{root?.name ?? 'Trace'}</div><div className="flex min-w-0 items-center gap-2"><Mono className="min-w-0 truncate text-faint">{traceId}</Mono><CopyButton text={traceId} className="shrink-0" /></div></div>
       </div>
+      {t.data?.browser?.map((b) => <BrowserOrigin key={b.eventId} b={b} />)}
       {t.isPending ? <Skeleton className="h-[420px]" /> : t.isError ? <ErrorState error={t.error} retry={() => t.refetch()} /> : t.data.spans.length === 0 ? <EmptyState title="Trace not found" /> : <Waterfall spans={t.data.spans} />}
     </div>
   );

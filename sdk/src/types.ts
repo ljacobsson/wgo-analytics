@@ -35,7 +35,7 @@ export interface Batch {
   e: WireEvent[]
 }
 
-export interface ClickData { sel: string; tag: string; text?: string; name?: string; href?: string; x: number; y: number; vw: number; vh: number; rage?: number }
+export interface ClickData { sel: string; tag: string; text?: string; name?: string; href?: string; x: number; y: number; vw: number; vh: number; rage?: number; dead?: number }
 export interface ErrorData { msg: string; stack?: string; src?: string; line?: number; col?: number; kind: 'error' | 'rejection' | 'resource' | 'manual'; count?: number; extra?: object }
 /** `trace`/`span`: the W3C trace context the SDK sent with the request (see tracePropagation), linking it to the backend trace */
 export interface HttpErrorData { method: string; url: string; status: number; statusText?: string; dur: number; kind: 'fetch' | 'xhr'; trace?: string; span?: string }

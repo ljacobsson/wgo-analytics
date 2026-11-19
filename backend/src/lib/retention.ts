@@ -43,9 +43,9 @@ async function deleteSimple(sql: string, params: unknown[], batch: number, deadl
 
 /**
  * Daily cleanup. Raw events are only deleted once rolled up (`rolledUntil`), so a stalled rollup job
- * never loses data. Returns false when it ran out of time (the next run continues).
+ * never loses data (and likewise for `visitorsUntil`, the visitor_days watermark). Returns false when it ran out of time (the next run continues).
  */
-export async function runRetention(deadline: number, rolledUntil: number, now = Date.now()): Promise<{ done: boolean; deleted: Record<string, number> }> {
+export async function runRetention(deadline: number, rolledUntil: number, now = Date.now(), visitorsUntil = Infinity): Promise<{ done: boolean; deleted: Record<string, number> }> {
   const last = await getJobState('retention');
   const deleted: Record<string, number> = {};
   if (last && now - last.getTime() < 20 * 3600_000) return { done: true, deleted };
@@ -55,7 +55,9 @@ export async function runRetention(deadline: number, rolledUntil: number, now = 
   const raw = await deleteExpired(projects.map((p) => p.id), (pid, table) => {
     const cutoff = now - days.get(pid)! * DAY;
     if (table === 'replays') return Math.max(cutoff, now - RECORDING_RETENTION_DAYS * DAY);
-    return table === 'events' ? Math.min(cutoff, rolledUntil) : cutoff;
+    // visitor_days (lib/visitors.ts) outlive raw events, like rollups; events wait until their day became visitor_days
+    if (table === 'visitor_days') return now - ROLLUP_RETENTION_DAYS * DAY;
+    return table === 'events' ? Math.min(cutoff, rolledUntil, visitorsUntil) : cutoff;
   }, deadline);
   Object.assign(deleted, raw.deleted);
   if (!raw.done) return { done: false, deleted };

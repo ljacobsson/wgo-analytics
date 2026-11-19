@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { BellRing, Check, Copy, Hash, Pencil, Plus, Send, Slack, Trash2, Webhook } from 'lucide-react';
-import type { Filter, FilterScope, Trigger, TriggerDestination, TriggerInput } from '../api/contract';
-import { startSlackInstall, useDeleteIntegration, useDeleteTrigger, useIntegrations, useSaveTrigger, useSlackSetup, useTestTrigger, useTriggers } from '../api/hooks';
+import type { Filter, FilterScope, Trigger, TriggerAgg, TriggerCondition, TriggerDestination, TriggerInput, TriggerKind, TriggerMetric } from '../api/contract';
+import { startSlackInstall, useDeleteIntegration, useDeleteTrigger, useIntegrations, useSaveTrigger, useSlackSetup, useTestTrigger, useTriggerPreview, useTriggers } from '../api/hooks';
 import { SlackConnect } from './SlackConnect';
 import { cn, relTime } from '../lib/format';
 import { describeFilter, FILTER_PARAM, SCOPE_LABEL } from '../lib/filters';
@@ -41,6 +41,39 @@ const SCOPE_HINT: Record<FilterScope, string> = {
 };
 const SCOPE_ROWS: Record<FilterScope, string> = { events: 'event', logs: 'log record', spans: 'span' };
 
+const WINDOWS = [{ m: 5, label: '5 minutes' }, { m: 15, label: '15 minutes' }, { m: 30, label: '30 minutes' }, { m: 60, label: '1 hour' }, { m: 360, label: '6 hours' }, { m: 1440, label: '24 hours' }];
+const windowLabel = (m: number | null) => WINDOWS.find((w) => w.m === m)?.label ?? `${m} minutes`;
+/** Numeric fields that can be averaged or taken a percentile of, per scope. */
+const NUMERIC: Record<FilterScope, Array<{ field: string; label: string }>> = {
+  events: [{ field: 'durationMs', label: 'Request duration (failed requests)' }, { field: 'props.lcp', label: 'LCP (Web Vitals)' }, { field: 'props.inp', label: 'INP (Web Vitals)' }, { field: 'props.cls', label: 'CLS (Web Vitals)' }, { field: 'props.ttfb', label: 'TTFB (Web Vitals)' }],
+  logs: [{ field: 'severityNumber', label: 'Severity number' }],
+  spans: [{ field: 'durationMs', label: 'Duration (ms)' }],
+};
+const AGG_LABEL: Record<TriggerAgg, (rows: string) => string> = {
+  count: (r) => `Number of matching ${r}s`, sessions: () => 'Sessions with a match', session_rate: () => 'Share of sessions with a match',
+  avg: () => 'Average of a field', p75: () => 'p75 of a field', p95: () => 'p95 of a field',
+};
+const SENSITIVITY = [{ v: 'low', label: 'Only big surprises' }, { v: 'medium', label: 'Clear changes' }, { v: 'high', label: 'Smaller changes too' }] as const;
+
+/** Ready-made aggregate triggers. */
+const PRESETS: Array<{ label: string; scope: FilterScope; kind: TriggerKind; filters: Filter[]; metric: TriggerMetric; windowMinutes: number; condition: TriggerCondition; name: string }> = [
+  { label: 'Nothing received', name: 'No pageviews for 30 minutes', scope: 'events', kind: 'threshold', filters: [{ field: 'type', op: 'eq', value: 'pageview' }], metric: { agg: 'count' }, windowMinutes: 30, condition: { op: 'below', value: 1 } },
+  { label: 'Error spike', name: 'Unusually many errors', scope: 'events', kind: 'anomaly', filters: [{ field: 'type', op: 'eq', value: 'error' }], metric: { agg: 'count' }, windowMinutes: 15, condition: { direction: 'up', sensitivity: 'medium' } },
+  { label: 'Slow endpoint', name: 'p95 above 1 second', scope: 'spans', kind: 'threshold', filters: [{ field: 'kind', op: 'eq', value: '2' }], metric: { agg: 'p95', field: 'durationMs' }, windowMinutes: 15, condition: { op: 'above', value: 1000 } },
+  { label: 'Failing sessions', name: 'More than 5% of sessions hit an error', scope: 'events', kind: 'threshold', filters: [{ field: 'type', op: 'eq', value: 'error' }], metric: { agg: 'session_rate' }, windowMinutes: 60, condition: { op: 'above', value: 0.05 } },
+];
+
+/** One line describing an aggregate trigger: "p95 of durationMs over 15 minutes is above 1000". */
+export function describeAggregate(t: Pick<Trigger, 'metric' | 'condition' | 'windowMinutes' | 'scope'>): string {
+  if (!t.metric || !t.condition) return '';
+  const m = t.metric;
+  const what = m.agg === 'count' ? `matching ${SCOPE_ROWS[t.scope]}s` : m.agg === 'sessions' ? 'sessions with a match' : m.agg === 'session_rate' ? 'share of sessions with a match' : `${m.agg} of ${m.field}`;
+  const c = t.condition;
+  const v = (n: number) => (m.agg === 'session_rate' ? `${+(n * 100).toFixed(2)}%` : String(n));
+  const cond = 'op' in c ? `${c.op} ${v(c.value)}` : `unusually ${c.direction === 'up' ? 'high' : c.direction === 'down' ? 'low' : 'high or low'}`;
+  return `Fires when the ${what} over ${windowLabel(t.windowMinutes)} is ${cond}`;
+}
+
 function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; initial: Trigger | null; prefill: Prefill; onClose: () => void }) {
   const { project } = useProject();
   const integrations = useIntegrations(project.id);
@@ -51,11 +84,19 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
   const [nameTouched, setNameTouched] = useState(false);
   const [scope, setScope] = useState<FilterScope>('events');
   const [filters, setFilters] = useState<Filter[]>([]);
-  const [kind, setKind] = useState<'slack' | 'webhook'>('slack');
+  const [destKind, setDestKind] = useState<'slack' | 'webhook'>('slack');
   const [integrationId, setIntegrationId] = useState('');
   const [url, setUrl] = useState('');
   const [cooldown, setCooldown] = useState(300);
   const [error, setError] = useState('');
+  const [kind, setKind] = useState<TriggerKind>('match');
+  const [agg, setAgg] = useState<TriggerAgg>('count');
+  const [field, setField] = useState('');
+  const [windowMinutes, setWindow] = useState(15);
+  const [op, setOp] = useState<'above' | 'below'>('above');
+  const [value, setValue] = useState('10');
+  const [direction, setDirection] = useState<'up' | 'down' | 'either'>('up');
+  const [sensitivity, setSensitivity] = useState<'low' | 'medium' | 'high'>('medium');
 
   useEffect(() => {
     if (!open) return;
@@ -65,23 +106,50 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
     setScope(initial?.scope ?? prefill.scope);
     setFilters(initial?.filters ?? prefill.filters);
     const d = initial?.destination;
-    setKind(d?.type ?? 'slack');
+    setDestKind(d?.type ?? 'slack');
     setIntegrationId(d?.type === 'slack' ? d.integrationId : integrations.data?.[0]?.id ?? '');
     setUrl(d?.type === 'webhook' ? d.url : '');
     setCooldown(initial?.cooldownSeconds ?? 300);
+    setKind(initial?.kind ?? 'match');
+    setAgg(initial?.metric?.agg ?? 'count');
+    setField(initial?.metric?.field ?? '');
+    setWindow(initial?.windowMinutes ?? 15);
+    const c = initial?.condition;
+    if (c && 'op' in c) { setOp(c.op); setValue(String(initial?.metric?.agg === 'session_rate' ? +(c.value * 100).toFixed(4) : c.value)); } else { setOp('above'); setValue('10'); }
+    if (c && 'direction' in c) { setDirection(c.direction); setSensitivity(c.sensitivity); } else { setDirection('up'); setSensitivity('medium'); }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!integrationId && integrations.data?.[0]) setIntegrationId(integrations.data[0].id); }, [integrations.data, integrationId]);
   // the name follows the conditions until you type one yourself
   useEffect(() => { if (open && !nameTouched) setName(filters.length ? suggestName(scope, filters) : ''); }, [filters, scope]); // eslint-disable-line react-hooks/exhaustive-deps
-  const changeScope = (s: FilterScope) => { if (s !== scope) { setScope(s); setFilters([]); } };
+  const changeScope = (s: FilterScope) => {
+    if (s === scope) return;
+    setScope(s); setFilters([]);
+    if (s !== 'events' && (agg === 'sessions' || agg === 'session_rate')) setAgg('count');
+    if (field && !NUMERIC[s].some((f) => f.field === field)) setField('');
+  };
+  const applyPreset = (p: (typeof PRESETS)[number]) => {
+    setScope(p.scope); setFilters(p.filters); setKind(p.kind); setAgg(p.metric.agg); setField(p.metric.field ?? ''); setWindow(p.windowMinutes);
+    const c = p.condition;
+    if ('op' in c) { setOp(c.op); setValue(String(p.metric.agg === 'session_rate' ? c.value * 100 : c.value)); } else { setDirection(c.direction); setSensitivity(c.sensitivity); }
+    setName(p.name); setNameTouched(true);
+  };
+  const needsField = agg === 'avg' || agg === 'p75' || agg === 'p95';
+  const numValue = Number(value);
+  const aggregate: Pick<TriggerInput, 'metric' | 'condition' | 'windowMinutes'> | null = kind === 'match' ? null : {
+    metric: { agg, ...(needsField && field ? { field } : {}) },
+    windowMinutes,
+    condition: kind === 'threshold' ? { op, value: agg === 'session_rate' ? numValue / 100 : numValue } : { direction, sensitivity },
+  };
+  const aggregateValid = kind === 'match' || ((!needsField || !!field) && (kind === 'anomaly' || (value.trim() !== '' && Number.isFinite(numValue))));
+  const preview = useTriggerPreview(project.id, open && kind !== 'match' && aggregateValid ? { kind, scope, filters, ...aggregate! } : null);
 
   const destination: TriggerDestination | null =
-    kind === 'slack' ? (integrationId ? { type: 'slack', integrationId } : null) : url.trim() ? { type: 'webhook', url: url.trim() } : null;
-  const valid = name.trim() && filters.length && destination;
+    destKind === 'slack' ? (integrationId ? { type: 'slack', integrationId } : null) : url.trim() ? { type: 'webhook', url: url.trim() } : null;
+  const valid = name.trim() && (filters.length || kind !== 'match') && destination && aggregateValid;
   const submit = async () => {
     if (!valid) return;
     setError('');
-    const input: TriggerInput = { name: name.trim(), ...(initial ? {} : { scope }), filters, destination: destination!, cooldownSeconds: cooldown, enabled: initial?.enabled ?? true };
+    const input: TriggerInput = { name: name.trim(), ...(initial ? {} : { scope, kind }), filters, destination: destination!, cooldownSeconds: cooldown, enabled: initial?.enabled ?? true, ...(aggregate ?? {}) };
     try {
       await save.mutateAsync({ id: initial?.id, input });
       toast({ title: initial ? 'Trigger updated' : 'Trigger created', body: name.trim(), tone: 'good' });
@@ -107,21 +175,76 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
           </div>
         </div>
         <div>
-          <div className="mb-1.5 text-[12px] font-medium text-muted">When a new {SCOPE_ROWS[scope]} matches all of</div>
+          <div className="mb-1.5 text-[12px] font-medium text-muted">Fire</div>
+          <div className="inline-flex rounded-lg border border-line bg-[var(--hl)] p-0.5" title={initial ? 'A trigger’s kind can’t be changed' : undefined}>
+            {([['match', 'On each match'], ['threshold', 'When a number crosses a value'], ['anomaly', 'When a number is unusual']] as const).map(([k, label]) => (
+              <button key={k} disabled={!!initial && k !== kind} onClick={() => setKind(k)}
+                className={cn('rounded-md px-3 py-1 text-[12.5px] font-medium', kind === k ? 'bg-[var(--raised)] text-fg shadow-sm' : 'text-muted enabled:hover:text-fg enabled:cursor-pointer disabled:opacity-40')}>{label}</button>))}
+          </div>
+          {!initial && kind !== 'match' && (
+            <p className="mt-2 text-[12px] text-muted">Start from: {PRESETS.map((p, i) => (
+              <span key={p.label}>{i > 0 && ', '}<button className="cursor-pointer text-accent hover:underline" onClick={() => applyPreset(p)}>{p.label.toLowerCase()}</button></span>))}</p>
+          )}
+        </div>
+        <div>
+          <div className="mb-1.5 text-[12px] font-medium text-muted">{kind === 'match' ? `When a new ${SCOPE_ROWS[scope]} matches all of` : `Look at ${SCOPE_ROWS[scope]}s matching (leave empty for all)`}</div>
           <div className="rounded-lg border border-line p-2.5">
             <FilterChips key={scope} scope={scope} value={filters} onChange={setFilters} />
-            {!filters.length && <p className="mt-1.5 text-[11.5px] text-faint">Add at least one condition, {SCOPE_HINT[scope]}</p>}
+            {!filters.length && kind === 'match' && <p className="mt-1.5 text-[11.5px] text-faint">Add at least one condition, {SCOPE_HINT[scope]}</p>}
           </div>
         </div>
+        {kind !== 'match' && (
+          <div className="space-y-3 rounded-lg border border-line p-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Measure">
+                <select className="field" value={agg} onChange={(e) => setAgg(e.target.value as TriggerAgg)}>
+                  {(Object.keys(AGG_LABEL) as TriggerAgg[]).filter((a) => scope === 'events' || (a !== 'sessions' && a !== 'session_rate')).map((a) => <option key={a} value={a}>{AGG_LABEL[a](SCOPE_ROWS[scope])}</option>)}
+                </select>
+              </Field>
+              <Field label="Over the last">
+                <select className="field" value={windowMinutes} onChange={(e) => setWindow(Number(e.target.value))}>
+                  {WINDOWS.map((w) => <option key={w.m} value={w.m}>{w.label}</option>)}
+                </select>
+              </Field>
+            </div>
+            {needsField && (
+              <Field label="Field">
+                <select className="field" value={field} onChange={(e) => setField(e.target.value)}>
+                  <option value="">Choose a field…</option>
+                  {NUMERIC[scope].map((f) => <option key={f.field} value={f.field}>{f.label}</option>)}
+                </select>
+              </Field>
+            )}
+            {kind === 'threshold' ? (
+              <div className="flex items-end gap-2">
+                <Field label="Is"><select className="field" value={op} onChange={(e) => setOp(e.target.value as 'above' | 'below')}><option value="above">above</option><option value="below">below</option></select></Field>
+                <Field label={agg === 'session_rate' ? 'Percent' : 'Value'}><input className="field w-32 tnum" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} /></Field>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="Unusually"><select className="field" value={direction} onChange={(e) => setDirection(e.target.value as 'up')}><option value="up">high</option><option value="down">low</option><option value="either">high or low</option></select></Field>
+                <Field label="Sensitivity"><select className="field" value={sensitivity} onChange={(e) => setSensitivity(e.target.value as 'medium')}>{SENSITIVITY.map((x) => <option key={x.v} value={x.v}>{x.label}</option>)}</select></Field>
+              </div>
+            )}
+            <p className="text-[12px] text-muted">
+              {preview.isFetching && !preview.data ? 'Checking the current value…'
+                : preview.data ? <>Right now: <span className="font-medium text-fg tnum">{preview.data.value == null ? 'no data' : agg === 'session_rate' ? `${(preview.data.value * 100).toFixed(1)}%` : +preview.data.value.toFixed(2)}</span>
+                  {preview.data.baseline && <>, usually {+preview.data.baseline.low.toFixed(1)} to {+preview.data.baseline.high.toFixed(1)}</>}
+                  {' · '}{preview.data.fires ? <span className="text-bad">it would fire</span> : 'it wouldn’t fire'}{preview.data.note && <span className="mt-1 block text-faint">{preview.data.note}</span>}</>
+                : preview.isError ? <span className="text-bad">{(preview.error as Error).message}</span> : null}
+            </p>
+            <p className="text-[11.5px] text-faint">Checked every minute{windowMinutes > 60 ? ' (every 15 minutes for windows over an hour)' : ''}. You're notified when it starts firing and when it's back to normal.{kind === 'anomaly' && ' “Usual” is the same time window on each of the last 7 days.'}</p>
+          </div>
+        )}
         <div>
           <div className="mb-1.5 text-[12px] font-medium text-muted">Notify</div>
           <div className="mb-2.5 inline-flex rounded-lg border border-line bg-[var(--hl)] p-0.5">
             {(['slack', 'webhook'] as const).map((k) => (
-              <button key={k} onClick={() => setKind(k)} className={cn('inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-[12.5px] font-medium cursor-pointer', kind === k ? 'bg-[var(--raised)] text-fg shadow-sm' : 'text-muted hover:text-fg')}>
+              <button key={k} onClick={() => setDestKind(k)} className={cn('inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-[12.5px] font-medium cursor-pointer', destKind === k ? 'bg-[var(--raised)] text-fg shadow-sm' : 'text-muted hover:text-fg')}>
                 {k === 'slack' ? <><Slack size={13} />Slack</> : <><Webhook size={13} />Webhook</>}
               </button>))}
           </div>
-          {kind === 'slack' ? (
+          {destKind === 'slack' ? (
             integrations.data?.length ? (
               <div className="flex items-center gap-2">
                 <select className="field" value={integrationId} onChange={(e) => setIntegrationId(e.target.value)}>
@@ -143,7 +266,7 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
             </Field>
           )}
         </div>
-        <Field label="At most once per" hint="Matches in between are counted and reported with the next notification">
+        <Field label="At most once per" hint={kind === 'match' ? 'Matches in between are counted and reported with the next notification' : 'If it keeps flapping, it notifies about firing at most this often'}>
           <select className="field" value={cooldown} onChange={(e) => setCooldown(Number(e.target.value))}>
             {COOLDOWNS.map((c) => <option key={c.s} value={c.s}>{c.label}</option>)}
           </select>
@@ -179,7 +302,17 @@ function TriggerRow({ t, onEdit }: { t: Trigger; onEdit: () => void }) {
           <span className="text-[12px] text-muted">{dest}</span>
           <span className="text-[11.5px] text-faint">at most every {cooldownLabel(t.cooldownSeconds).toLowerCase().replace('every match', 'match')}</span>
         </div>
-        <div className="flex flex-wrap gap-1">{t.filters.map((f, i) => <Badge key={i}><span className="max-w-[340px] truncate">{describeFilter(f)}</span></Badge>)}</div>
+        {t.kind !== 'match' && <div className="text-[12.5px] text-muted">{describeAggregate(t)}</div>}
+        {t.filters.length > 0 && <div className="text-[12px] text-muted">{t.kind !== 'match' && 'Counting rows where '}{t.filters.map(describeFilter).join(' and ')}</div>}
+        {t.status && t.enabled && (
+          <div className="flex items-center gap-2 text-[12px]">
+            <i className={cn('h-2 w-2 rounded-full', t.status.state === 'firing' ? 'bg-bad' : t.status.state === 'ok' ? 'bg-good' : 'bg-faint')} />
+            <span className={t.status.state === 'firing' ? 'font-medium text-bad' : 'text-muted'}>
+              {t.status.state === 'firing' ? `Firing since ${relTime(t.status.since!)}` : t.status.state === 'ok' ? 'OK' : 'Not checked yet'}
+            </span>
+            {t.status.lastValue != null && <span className="tnum text-faint">last value {+t.status.lastValue.toFixed(3)}{t.status.baseline && `, usually ${+t.status.baseline.low.toFixed(1)} to ${+t.status.baseline.high.toFixed(1)}`}</span>}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-faint">
           <span>{t.fireCount ? `fired ${t.fireCount}× · last ${relTime(t.lastFiredAt!)}` : 'not fired yet'}</span>
           <StatusPill status={t.lastStatus} />
@@ -263,7 +396,7 @@ export function TriggersPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-        <p className="text-[13px] text-muted">Get a Slack message or webhook call when new events, logs or spans match your filters: errors on checkout, a click on your pricing CTA, an ERROR log from the payment service.</p>
+        <p className="text-[13px] text-muted">Get a Slack message or webhook call when new events, logs or spans match your filters, when a number crosses a value (no pageviews in 30 minutes, p95 over a second) or when a number is unusual for the time of day.</p>
         <Button variant="primary" className="shrink-0" onClick={() => setDialog({ open: true, t: null, prefill: NO_PREFILL })}><Plus size={15} />New trigger</Button>
       </div>
       <Card className="overflow-hidden">

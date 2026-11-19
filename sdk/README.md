@@ -27,6 +27,8 @@ The script auto-initialises from its own tag and exposes `window.WGO`. Supported
 | `data-sample-rate` | `0`..`1`, share of sessions recorded |
 | `data-session-timeout` | Inactivity in ms after which a new session starts |
 | `data-http-ignore` | Comma-separated URL substrings never reported as failed requests |
+| `data-trace-origins` | Comma-separated API URLs (besides your own origin) that get a `traceparent` header (see [Linking requests to backend traces](#linking-requests-to-backend-traces)) |
+| `data-trace-propagation="false"` | Don't send `traceparent` headers |
 | `data-priority-clicks` | A CSS selector list; matching clicks are sent within a second (for realtime watches) |
 | `data-persist="false"` / `data-compress="false"` | Turn off `persist` / `compress` |
 | `data-record="false"` | Never record sessions on this site, whatever the project's settings (see [Session recording](#session-recording)) |
@@ -186,12 +188,17 @@ session and its recording.
 Project owners turn recording on in the dashboard (Recordings, then Settings). It's off by default, and the snippet stays the same.
 On each page load the SDK asks `GET <endpoint>/replay/config?k=<writeKey>` (cached for a minute) whether and what to record:
 a share of sessions, and triggers (a page, a click on a CSS selector, a custom event or an error) that record a session the sample
-didn't pick. Only then, and only for a session that may be recorded, it loads the recorder, `wgo-replay.js` (about 8 KB gzipped),
+didn't pick. Only then, and only for a session that may be recorded, it loads the recorder, `wgo-replay.js` (about 9 KB gzipped),
 from next to `wgo.js`.
 
 There is no video. The recorder sends snapshots of the page as HTML (gzipped, taken on load, on navigation and when the page
 changes after an interaction, without scripts or form values), and between them the pointer position, clicks, scrolling, viewport
 size and form field lengths. A typical session is a few kilobytes per page.
+
+The recorder also notes hovers: when the mouse rests on a clickable element, image or field for 300 ms or more, it records the
+element's selector, how long, and the same label and `data-track` name a click there would report (no label when the project
+masks all text; `data-wgo-ignore` elements are skipped). They let you find recordings by behaviour, such as "hovered the buy
+button but never clicked it" (the `find_recordings` MCP tool). Touch devices have no hovers.
 
 * Before sending anything, the recorder asks `POST <endpoint>/replay/start` for a slot. The server grants it within the project's
   per-hour and per-day limits, and drops recordings of sessions without one.
@@ -199,6 +206,20 @@ size and form field lengths. A typical session is a few kilobytes per page.
 * Automated browsers (`navigator.webdriver`) are never recorded.
 * Opt out on a site with `data-record="false"` (`record: false`). `respectDoNotTrack` turns recording off along with everything else.
 * In cookieless mode, the "this session is recorded" flag is kept in memory. Otherwise it's in `sessionStorage` (`wgo:rec:<session id>`).
+
+## Source maps
+
+Minified stacks are hard to read. Upload your source maps and the dashboard (and the MCP server) show original file names, lines and function names, with the surrounding code.
+
+1. Build with hidden source maps, so the bundles don't point to them: Vite `build: { sourcemap: 'hidden' }`, webpack `devtool: 'hidden-source-map'`.
+2. Set `release` in `init()` (or `data-release`) to something unique per deploy, such as the git sha.
+3. After the build, upload the maps with the CLI that ships in this package. The upload key is in the dashboard under Settings, Source maps (owners only) and is a CI secret, not the write key:
+
+```sh
+npx wgo-sourcemaps --endpoint https://wgo.example.com --key uk_... --release 1.4.0 dist/
+```
+
+It uploads every `*.js.map` under the folders you give it, and exits non-zero if any upload fails. `WGO_ENDPOINT`, `WGO_UPLOAD_KEY` and `WGO_RELEASE` work as environment variables. Maps are matched by the script's file name (`index-abc123.js`) and the release; maps uploaded without a release are the fallback. Don't deploy the `.map` files to your site.
 
 ## Privacy: data attributes
 
@@ -208,6 +229,14 @@ size and form field lengths. A typical session is a few kilobytes per page.
 | `data-wgo-ignore` | Clicks on the element or any descendant are never captured |
 | `data-wgo-mask` | Click text is omitted for the element and its descendants. In recordings, their text shows as `*` |
 | `data-wgo-block` | Recordings show the element as an empty box of the same size (images, maps, anything private) |
+
+### Dead clicks
+
+A click on a link, button, `[role=button]` or `input[type=submit|button|image]` gets `dead: 1` when nothing happens
+within one second: no DOM mutation anywhere in the document (children, attributes or text) and no change of the page URL.
+Links with `target="_blank"` or `download`, and `mailto:` and `tel:` links, are never flagged, and neither are clicks on
+other elements. The flag is only set while the click is still queued (not yet sent), and one watch runs at a time: a new
+click replaces the pending one. Rage clicks (three or more within a second) are reported as before.
 
 Input values are never captured: recordings show one `•` per typed character. Click text is also omitted for `input`, `textarea`, `select`, `contenteditable` and password-like elements.
 

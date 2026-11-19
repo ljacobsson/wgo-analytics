@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { ArrowLeft, ListTree, MonitorPlay } from 'lucide-react';
+import { ArrowLeft, ListTree, MonitorPlay, Waypoints } from 'lucide-react';
 import type { AnalyticsEvent } from '../api/contract';
 import { useEvents, useRecording } from '../api/hooks';
 import { cn, fmtDateTime } from '../lib/format';
@@ -73,7 +73,14 @@ export function RecordingPlayerPage({ sessionId }: { sessionId: string }) {
     return () => window.removeEventListener('keydown', h);
   }, [pb]);
   // start playing once loaded
-  useEffect(() => { pb?.play(); }, [pb]);
+  // start playing once loaded; `?t=<epoch ms>` (from a failed request, a trace or a frustrated click) starts a
+  // little before that moment
+  const startAt = Number(route.params.get('t'));
+  useEffect(() => {
+    if (!pb) return;
+    if (startAt && tl) pb.seek(Math.min(Math.max(tl.start, startAt - 3000), tl.end));
+    pb.play();
+  }, [pb]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const back = '#' + pageHref(project.id, 'recordings', route.params);
   const r = rec.data?.recording;
@@ -119,13 +126,16 @@ export function RecordingPlayerPage({ sessionId }: { sessionId: string }) {
                 <p className="px-4 py-6 text-center text-[12.5px] text-faint">No events from this session.</p>
               ) : events.map((e, i) => {
                 const at = Date.parse(e.ts);
+                const trace = e.type === 'http_error' && typeof e.props.trace === 'string' ? e.props.trace : null;
                 return (
-                  <button key={e.id} data-i={i} onClick={() => pb.seek(at - 1500)}
+                  <div key={e.id} data-i={i} role="button" tabIndex={0} onClick={() => pb.seek(at - 1500)} onKeyDown={(k) => { if (k.key === 'Enter') pb.seek(at - 1500); }}
                     className={cn('flex w-full items-start gap-3 px-4 py-2 text-left text-[12.5px] transition-colors hover:bg-[var(--hl)] cursor-pointer', i === current && 'bg-accent/10', at > t + 50 && 'opacity-55')}>
                     <span className="w-10 shrink-0 pt-px text-right font-mono text-[11px] tnum text-faint">{fmtClock(Math.max(0, at - tl.start))}</span>
                     <i className="mt-[5px] h-2 w-2 shrink-0 rounded-full" style={{ background: DOT[e.type] }} />
-                    <span className={cn('min-w-0 break-words', (e.type === 'error' || e.type === 'http_error') && 'text-bad')}>{eventText(e)}</span>
-                  </button>
+                    <span className={cn('min-w-0 flex-1 break-words', (e.type === 'error' || e.type === 'http_error') && 'text-bad')}>{eventText(e)}</span>
+                    {trace && <a href={'#' + pageHref(project.id, `traces/${trace}`, route.params, { at: e.ts })} onClick={(x) => x.stopPropagation()}
+                      className="inline-flex shrink-0 items-center gap-1 text-[11.5px] text-muted hover:text-fg" title="Open the backend trace of this request"><Waypoints size={12} />Trace</a>}
+                  </div>
                 );
               })}
             </div>

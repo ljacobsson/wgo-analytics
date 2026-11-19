@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../src/cart.ts", "../src/app.ts"],
+  "sourcesContent": ["export function checkout(cart) {\n  const total = cart.items.reduce((s, i) => s + i.price, 0);\n  if (total > 100) {\n    throw new Error(\"too expensive\");\n  }\n  return total;\n}\n", "import { checkout } from \"./cart\";\nexport function onPay(cart) {\n  return checkout(cart);\n}\nonPay({ items: [{ price: 500 }] });\n"],
+  "mappings": "MAAO,SAASA,EAASC,EAAM,CAC7B,IAAMC,EAAQD,EAAK,MAAM,OAAO,CAACE,EAAGC,IAAMD,EAAIC,EAAE,MAAO,CAAC,EACxD,GAAIF,EAAQ,IACV,MAAM,IAAI,MAAM,eAAe,EAEjC,OAAOA,CACT,CCLO,SAASG,EAAMC,EAAM,CAC1B,OAAOC,EAASD,CAAI,CACtB,CACAD,EAAM,CAAE,MAAO,CAAC,CAAE,MAAO,GAAI,CAAC,CAAE,CAAC",
+  "names": ["checkout", "cart", "total", "s", "i", "onPay", "cart", "checkout"]
+}

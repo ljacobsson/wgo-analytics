@@ -2,6 +2,9 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2, SQSBatchResponse,
 import { fillMissingIds, normalizeBatch, toApiEvent, type WireBatch } from '../lib/events';
 import { gunzipIfNeeded, handleError, header, json, jsonBody, metaFields } from '../lib/http';
 import { storeErrorStacks } from '../lib/errorStacks';
+import { recordReleases, seenInEvents } from '../lib/releases';
+import { dropSuppressed } from '../lib/suppressions';
+import { collectionPaused } from '../lib/budgets';
 import { geoFromHeaders, type Geo } from '../lib/geo';
 import { fanOut } from '../lib/live';
 import { projectIdForWriteKey } from '../lib/projects';
@@ -17,10 +20,13 @@ import { evaluateTriggers } from '../lib/triggers';
 
 /** Normalizes one SDK batch, pushes it live, queues it for the Parquet writer and evaluates triggers. */
 async function ingestBatch(projectId: string, batch: WireBatch, receivedAt: number, userAgent: string | undefined, geo: Geo): Promise<number> {
+  // a cost budget stopped collection for this project (lib/budgets.ts): drop everything, recordings included
+  if (await collectionPaused(projectId)) return 0;
   // session recording chunks (their own table; only for sessions holding a recording slot, see lib/recordings.ts)
   const replays = await replayRows(projectId, batch, receivedAt);
   await storeReplays(replays);
-  const rows = normalizeBatch(projectId, batch, receivedAt, userAgent, geo);
+  // errors matching the project's suppression rules are dropped here: never stored, counted, sent live or alerted on
+  const rows = await dropSuppressed(projectId, normalizeBatch(projectId, batch, receivedAt, userAgent, geo));
   if (!rows.length) return replays.length;
 
   // Live fan-out runs alongside the write: the dashboard should see a click as soon as we do.
@@ -30,6 +36,7 @@ async function ingestBatch(projectId: string, batch: WireBatch, receivedAt: numb
   const live = fanOut(projectId, apiEvents).catch((err) => console.warn('fan-out failed', err));
   // stacks are stored once per error group (before the events, so a visible error always has one)
   await storeErrorStacks(rows);
+  await recordReleases(seenInEvents(rows)); // never throws
   // queued for the Parquet writer (written directly when there is no queue: dev server, tests)
   await storeEvents(rows.map((r) => ({ ...r, error_stack: null })));
   // triggers only after the events are safely queued, so a retried batch can't notify twice for events we dropped

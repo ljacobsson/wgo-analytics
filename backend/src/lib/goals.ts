@@ -95,7 +95,7 @@ export async function deleteGoal(pid: string, id: string): Promise<void> {
  * range for all goals: the OR of all goals narrows the events first, then a VALUES list fans them out per goal.
  * `F` is the page filter SQL, bound into the same params.
  */
-function matchedEvents(goals: Goal[], params: unknown[], F: string): string {
+export function matchedEvents(goals: Goal[], params: unknown[], F: string): string {
   const cond = (g: Goal) => filterSql(g.filters, 'events', params).slice(' AND '.length);
   const any = goals.map((g) => `(${cond(g)})`).join(' OR ');
   const which = goals.map((g, i) => `WHEN ${i} THEN (${cond(g)})`).join(' ');

@@ -34,6 +34,8 @@ const api = (await import('../src/handlers/api')).handler;
 const widget = (await import('../src/handlers/widget')).handler;
 const kiosk = (await import('../src/handlers/kiosk')).handler;
 const replay = (await import('../src/handlers/replay')).handler;
+const sourcemaps = (await import('../src/handlers/sourcemaps')).handler;
+const { location } = await import('../src/lib/store/files');
 const { mcpFetch } = await import('../src/lib/mcp/http');
 
 for (const sql of SCHEMA_STATEMENTS) await query(sql.replace(' ASYNC ', ' '));
@@ -43,7 +45,7 @@ const [project] = await listProjects(DEV_EMAIL);
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-headers': 'authorization, content-type, content-encoding, x-wgo-key, x-wgo-device, mcp-protocol-version, mcp-method, mcp-name, mcp-session-id, last-event-id',
-  'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+  'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
   'access-control-max-age': '86400',
   'access-control-expose-headers': 'www-authenticate, mcp-session-id',
 };
@@ -93,6 +95,14 @@ createServer(async (req, res) => {
     if (url.pathname === '/ingest' && req.method === 'POST') return send(res, (await ingest(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
     // session recording: the SDK's config and slot requests (write-key auth, as deployed)
     if (url.pathname.startsWith('/replay/')) return send(res, (await replay(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
+    // source maps: presigned-URL request (upload-key auth, as deployed) and, in place of S3, the PUT it points at
+    if (url.pathname === '/sourcemaps/upload-url') return send(res, (await sourcemaps(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
+    if (url.pathname.startsWith('/sourcemaps/put/sourcemaps/') && req.method === 'PUT') {
+      const key = decodeURIComponent(url.pathname.slice('/sourcemaps/put/'.length));
+      if (!/^sourcemaps\/project_id=[0-9a-f-]{36}\/release=[\w.~@+=-]+\/[\w.~@+=-]+\.map$/.test(key)) return send(res, { statusCode: 400, body: '{}' });
+      await location().put(key, raw);
+      return send(res, { statusCode: 200, body: '' });
+    }
     if (url.pathname.startsWith('/v1/') && req.method === 'POST') return send(res, (await otlp(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
     if (url.pathname.startsWith('/api/')) return send(res, (await api(toEvent(req, url, raw) as never)) as APIGatewayProxyStructuredResultV2);
     // Android widget API: device-token auth, so it works locally exactly as deployed

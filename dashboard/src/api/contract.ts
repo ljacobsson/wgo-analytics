@@ -48,6 +48,24 @@ export interface Project {
   retention: { days: number; defaultDays: number; maxDays: number };
 }
 
+// GET /api/projects/{pid}/upload-key and POST /api/projects/{pid}/rotate-upload-key (owners only; 403 otherwise)
+//   CI secret for `wgo-sourcemaps` / POST /sourcemaps/upload-url (header x-wgo-upload-key). Created on first read.
+export interface UploadKey {
+  uploadKey: string; // uk_…
+}
+
+// GET /api/projects/{pid}/site                    -> ProjectSite   (any member)
+// GET /api/projects/{pid}/site/image?day=YYYY-MM-DD -> { image: string }  a data:image/jpeg URL; 404 once replaced
+// The public website behind a project: the origin with the most pageviews in the last 3 days (re-checked daily,
+// localhost and private addresses left out), and a screenshot of its homepage taken at most once a day. `image`
+// is null until the first screenshot works; the dashboard caches the image per `day`. `icon` is the site's favicon
+// (best of SVG, apple-touch-icon, largest <link rel=icon>, /favicon.ico) fetched in the same daily visit.
+export interface ProjectSite {
+  origin: string | null; // e.g. https://www.example.com
+  icon: string | null; // data:image/… URL, at most 64 KB
+  image: { day: string; takenAt: string } | null; // day = YYYY-MM-DD (UTC) the screenshot was taken
+}
+
 export interface Member {
   email: string;
   role: Role;
@@ -58,6 +76,7 @@ export interface Member {
 // POST   /api/projects            {name}          -> Project       (caller becomes owner)
 // GET    /api/projects/{pid}                      -> Project
 // PATCH  /api/projects/{pid}      {name?, retentionDays?} -> Project (owner)
+// DELETE /api/projects/{pid}                      -> {ok: true}    (owner; gone at once, its data is removed in the background)
 // POST   /api/projects/{pid}/rotate-key           -> Project       (owner)
 // GET    /api/projects/{pid}/members              -> Member[]
 // POST   /api/projects/{pid}/members  {email}     -> Member        (owner; invited user gains access on next login with that email)
@@ -178,16 +197,60 @@ export type TriggerDestination =
   | { type: 'webhook'; url: string } // https only; private/internal addresses are rejected
   | { type: 'slack'; integrationId: string }; // a channel connected with "Add to Slack"
 
+// Kinds of trigger:
+//   match:     every new row matching `filters` (checked as data arrives)
+//   threshold: a number over the last `windowMinutes` crosses a value (checked every minute)
+//   anomaly:   a number over the last `windowMinutes` is unusual for that time of day, compared with the same window
+//              on each of the previous 7 days (checked every minute)
+// threshold and anomaly notify when they start firing and when they resolve; the cooldown is the least time between
+// two "firing" notifications.
+export type TriggerKind = 'match' | 'threshold' | 'anomaly';
+export type TriggerAgg = 'count' | 'sessions' | 'session_rate' | 'avg' | 'p75' | 'p95';
+export interface TriggerMetric {
+  agg: TriggerAgg; // count of matching rows; sessions with a match; share of all sessions with a match (events, 0..1);
+                   // avg/p75/p95 of `field` over matching rows
+  field?: string; // numeric field for avg/p75/p95, e.g. durationMs or props.lcp
+}
+export type TriggerCondition =
+  | { op: 'above' | 'below'; value: number } // threshold ("below 1" over 30 minutes: nothing arrived)
+  | { direction: 'up' | 'down' | 'either'; sensitivity: 'low' | 'medium' | 'high' }; // anomaly
+export const TRIGGER_WINDOWS = [5, 15, 30, 60, 360, 1440] as const;
+
 export interface TriggerInput {
   name: string;
   scope?: FilterScope; // what it watches; default 'events'. Can't be changed after creation.
-  filters: Filter[]; // at least one
+  filters: Filter[]; // at least one for match triggers; may be empty for threshold/anomaly (all rows of the scope)
   destination: TriggerDestination;
   cooldownSeconds?: number; // default 300, min 0, max 86400
   enabled?: boolean; // default true
+  kind?: TriggerKind; // default 'match'. Can't be changed after creation.
+  metric?: TriggerMetric; // threshold/anomaly
+  condition?: TriggerCondition; // threshold/anomaly
+  windowMinutes?: number; // threshold/anomaly: one of TRIGGER_WINDOWS
 }
 
-export interface Trigger extends Required<TriggerInput> {
+/** Current state of a threshold/anomaly trigger. */
+export interface TriggerStatus {
+  state: 'ok' | 'firing' | null; // null: not evaluated yet
+  since: string | null;
+  lastValue: number | null;
+  lastEvaluatedAt: string | null;
+  baseline: { median: number; low: number; high: number; days: number } | null; // anomaly: the usual range
+}
+
+// POST /api/projects/{pid}/triggers/preview  TriggerInput -> TriggerPreview: the number right now, without saving
+export interface TriggerPreview {
+  value: number | null; // null: no data (avg/percentiles of nothing)
+  fires: boolean;
+  baseline: TriggerStatus['baseline'];
+  window: { from: string; to: string };
+  note?: string; // e.g. "Not enough history yet: anomaly triggers need 3 days of data"
+}
+
+export interface Trigger extends Required<Omit<TriggerInput, 'metric' | 'condition' | 'windowMinutes'>> {
+  metric: TriggerMetric | null; // null for match triggers
+  condition: TriggerCondition | null;
+  windowMinutes: number | null;
   id: string;
   signingSecret: string; // for verifying webhook signatures
   createdBy: string;
@@ -195,6 +258,7 @@ export interface Trigger extends Required<TriggerInput> {
   lastFiredAt: string | null;
   fireCount: number;
   lastStatus: string | null; // e.g. "200", "slack: channel_not_found", "timeout"
+  status: TriggerStatus | null; // threshold/anomaly only
 }
 
 export interface TriggerTestResult {
@@ -213,6 +277,15 @@ export interface TriggerWebhookPayload {
   spans?: Span[]; // spans scope: up to 10 most recent matching spans
   url: string; // dashboard link to the matching rows
   test?: boolean;
+  // threshold/anomaly triggers (events/logs/spans are then empty)
+  kind?: TriggerKind;
+  state?: 'firing' | 'resolved';
+  value?: number | null;
+  metric?: TriggerMetric;
+  condition?: TriggerCondition;
+  windowMinutes?: number;
+  baseline?: TriggerStatus['baseline'];
+  explanation?: string; // events count metrics: what the change comes from (see GET /explain)
 }
 
 // Slack channels connected to a project ("Add to Slack": pick workspace + channel on Slack, one click).
@@ -378,6 +451,47 @@ export interface ClickRow {
   lastSeen: string;
 }
 
+// GET /api/projects/{pid}/frustration?from&to&limit=50&filters  → FrustrationRow[]
+// Click targets where visitors got stuck, most frustrating first. Grouped like ClickRow (selector, with the alias
+// merging different texts). Rage: 3+ quick clicks (props.rage). Dead: the SDK saw nothing change within 1 s of
+// the click (props.dead). Error: a JavaScript error or failed request in the same session within 2 s after the click.
+export interface FrustrationSample {
+  sessionId: string; // a recorded session where it happened
+  at: number; // epoch ms of the click, for the player's ?t= seek
+}
+export interface FrustrationRow {
+  selector: string;
+  elementText: string | null;
+  trackName: string | null;
+  elementTag: string | null;
+  alias: string | null;
+  clicks: number; // all clicks on the target
+  rageClicks: number;
+  rageSessions: number;
+  deadClicks: number;
+  deadSessions: number;
+  errorClicks: number;
+  errorSessions: number;
+  samples: FrustrationSample[]; // up to 3, newest first, only sessions that have a recording
+}
+
+// GET /api/projects/{pid}/heatmap?path&from&to&device=desktop|mobile (mobile = phones and tablets; default desktop)
+// Click density on one page. Points are page coordinates (not viewport) in 8 px buckets, for clicks made in browser
+// windows of the most common width (`vw`, grouped in 100 px steps); `total` counts those clicks.
+// `snapshot` is the most recent recorded session of that device type that viewed the page, `at` the epoch ms of
+// its pageview: render that page's DOM from the recording behind the points.
+export interface HeatmapPoint {
+  x: number;
+  y: number;
+  n: number;
+}
+export interface HeatmapResponse {
+  vw: number;
+  points: HeatmapPoint[];
+  total: number;
+  snapshot: { sessionId: string; at: number } | null;
+}
+
 // Click aliases: a readable name for an autocaptured click target, keyed by its selector.
 // GET    /api/projects/{pid}/click-aliases                → ClickAlias[]
 // POST   /api/projects/{pid}/click-aliases  ClickAliasInput → ClickAlias (creates or renames)
@@ -407,10 +521,22 @@ export interface ErrorGroup {
   sessions: number;
   firstSeen: string;
   lastSeen: string;
-  sampleStack: string | null;
+  sampleStack: string | null; // symbolicated when an uploaded source map matches (see minifiedStack)
+  minifiedStack: string | null; // the stack as the browser reported it; set only when mapping changed something
+  stackFrames?: StackFrame[]; // parsed frames of sampleStack, with code context for mapped ones
   sampleUrl: string | null;
   source: string | null;
   series: number[]; // 24 equal buckets across [from,to] for a sparkline
+  suppressedBy?: string | null; // id of an error suppression rule covering this group (new ones are dropped at ingest)
+}
+
+export interface StackFrame {
+  fn: string | null;
+  file: string; // original source path when mapped, else the script URL
+  line: number;
+  col: number;
+  mapped: boolean;
+  context?: { start: number; lines: string[] }; // source lines, `start` = 1-based number of lines[0]
 }
 
 // GET /api/projects/{pid}/http-errors?from&to&limit=100
@@ -423,6 +549,7 @@ export interface HttpErrorGroup {
   avgDurationMs: number;
   lastSeen: string;
   sampleUrl: string | null;
+  sampleTraceId: string | null; // a recent failure's trace id (the SDK's traceparent), when it sent one
 }
 
 // GET /api/projects/{pid}/breakdown?from&to&dim=browser|os|device|referrer|country|city
@@ -502,7 +629,28 @@ export interface TraceSummary {
 //   `at`: optional ISO time within the trace (its start, a log record's time). Spans are stored per day: with it,
 //   the lookup reads that day first; without, the last two days, then everything still stored.
 export interface TraceResponse {
-  spans: Span[];
+  spans: Span[]; // includes a synthetic root span (service "browser") for each failed browser request that started it
+  browser?: BrowserRequest[]; // the failed browser requests (http_error events) that sent this trace's traceparent
+}
+
+/** A failed request from the browser SDK that started a backend trace (it sent the trace's traceparent). */
+export interface BrowserRequest {
+  eventId: string;
+  ts: string; // when the request ended
+  spanId: string; // the parent span id the SDK sent
+  method: string;
+  url: string | null;
+  route: string | null;
+  status: number; // 0 = network failure
+  durationMs: number | null;
+  sessionId: string | null;
+  anonId: string | null;
+  userId: string | null;
+  path: string | null; // the page it was made from
+  browser: string | null;
+  os: string | null;
+  country: string | null;
+  city: string | null;
 }
 
 // GET /api/projects/{pid}/services?from&to
@@ -809,4 +957,279 @@ export interface RecordingResponse {
   chunks: RecordingChunk[];
   /** more chunks follow: pass as `after` */
   nextAfter: string | null;
+}
+
+// ---------- Releases ----------
+// GET /api/projects/{pid}/releases?from&to&filters[&markers=1]   markers=1: only `markers` (web and services empty)
+// Versions come from the SDK's `release` option (web) and OpenTelemetry's service.version (services). Each version
+// active in the range is compared with the one deployed before it (by first seen), when that one is active too.
+export type Verdict = 'better' | 'worse' | null; // null: no clear difference, or not enough data
+
+export interface ReleaseHealth {
+  version: string;
+  firstSeen: string; // first time any event carried it (kept beyond raw retention)
+  lastSeen: string;
+  sessions: number;
+  errorSessions: number; // sessions with at least one JavaScript error
+  failedRequestSessions: number; // sessions with a 5xx or network failure
+  errors: number;
+  vitals: { samples: number; lcp: number | null; inp: number | null; cls: number | null }; // p75
+  goals: Array<{ id: string; name: string; converted: number; rate: number }>; // sessions converting / sessions
+  newErrors: Array<{ fingerprint: string; message: string; count: number }>; // error groups first seen under this release
+  previous: string | null; // the version it's compared with
+  verdicts: Record<string, Verdict>; // keys: errorSessions, failedRequestSessions, lcp, inp, cls, goal:<id>
+}
+
+export interface ServiceVersionHealth {
+  service: string;
+  version: string;
+  firstSeen: string;
+  lastSeen: string;
+  spans: number;
+  errors: number; // spans with status error
+  p50Ms: number | null; // server spans (kind 2) when there are any, else all spans
+  p95Ms: number | null;
+  previous: string | null;
+  verdicts: Record<string, Verdict>; // keys: errorRate, p95
+}
+
+export interface ReleaseMarker {
+  kind: 'web' | 'service';
+  service: string; // '' for web releases
+  version: string;
+  firstSeen: string;
+}
+
+export interface ReleasesResponse {
+  web: ReleaseHealth[]; // newest first
+  services: ServiceVersionHealth[]; // per service, newest first
+  markers: ReleaseMarker[]; // versions first seen inside the range (deploys), oldest first
+}
+
+// ---------- Explanations ("why did this change?") ----------
+// GET /api/projects/{pid}/explain?metric=events|sessions|goal&where=<filters JSON>&goalId&from&to[&baseFrom&baseTo][&filters]
+//   events: events matching `where` (e.g. type = error); sessions: sessions with such an event; goal: a goal's
+//   conversion rate. The baseline defaults to the window of the same length right before `from`.
+export type ExplainMetric = 'events' | 'sessions' | 'goal';
+export type ExplainDim = 'path' | 'browser' | 'os' | 'device' | 'country' | 'release' | 'source' | 'entry' | 'error' | 'request';
+
+export interface ExplainDriver {
+  dim: ExplainDim;
+  key: string;
+  current: number; // count in the current window (goal: sessions)
+  previous: number; // count in the baseline
+  share: number; // share of the overall change this segment accounts for (0..1, can exceed 1 when others moved the other way)
+  before: number; // its share of the baseline total (0..1): a segment that grew in line with the rest isn't a driver
+  rate?: { current: number; previous: number }; // goal: the segment's conversion rate in each window
+}
+
+export interface Explanation {
+  metric: ExplainMetric;
+  label: string; // "Errors", "Sessions", "Signup conversion"
+  current: number; // count, or rate (goal)
+  previous: number;
+  ratio: number | null; // current / previous
+  significant: boolean; // beyond the noise expected from counts this size
+  startedAt: string | null; // when the change began (single change point), if it's clear and inside the current window
+  release: ReleaseMarker | null; // a version first seen around startedAt (or, without one, during the current window)
+  drivers: ExplainDriver[]; // biggest first, at most 8
+  bucketSeconds: number;
+  series: Array<{ t: string; value: number }>; // baseline and current window, for a chart
+  baseFrom: string;
+  from: string;
+  summary: string; // one plain sentence or three, times in UTC
+}
+
+// ---------- uptime checks ----------
+// WGO fetches a URL on a schedule from the region where it is deployed and records every result (the `checks`
+// raw table). A check is `down` after 2 failures in a row and `up` again after 1 success. Each state change is
+// recorded as a custom event named `wgo.uptime` (props: check, checkId, url, state, status, error, durationMs),
+// so a trigger like "name = wgo.uptime AND props.state = down" notifies Slack or a webhook. A new check's first
+// success (null to up) is not recorded.
+//
+// GET    /api/projects/{pid}/uptime?from&to           -> UptimeCheck[]   (strip covers from..to, default 24h)
+// POST   /api/projects/{pid}/uptime      UptimeCheckInput -> UptimeCheck   (max 20 per project)
+// PATCH  /api/projects/{pid}/uptime/{id} Partial<UptimeCheckInput> -> UptimeCheck
+// DELETE /api/projects/{pid}/uptime/{id}               -> { ok: true }
+// POST   /api/projects/{pid}/uptime/{id}/run           -> UptimeRunResult   (checks now, records the result)
+// GET    /api/projects/{pid}/uptime/{id}/results?from&to -> UptimeResults
+export type UptimeState = 'up' | 'down';
+
+export interface UptimeCheckInput {
+  name: string;
+  url: string; // http or https, public hosts only
+  method?: 'GET' | 'HEAD'; // default GET
+  expect?: string; // '2xx' (default), '3xx' or an exact status code such as '200'
+  keyword?: string | null; // the body must contain it (GET only; the first 1 MB is read)
+  intervalSeconds?: 60 | 300 | 900; // default 300
+  timeoutMs?: number; // 1000-30000, default 10000
+  enabled?: boolean; // default true
+}
+
+export interface UptimeCheck extends Required<UptimeCheckInput> {
+  id: string;
+  state: UptimeState | null; // null until the first result
+  stateSince: string | null;
+  lastCheckedAt: string | null;
+  failStreak: number;
+  lastStatus: number | null;
+  lastError: string | null;
+  lastDurationMs: number | null;
+  createdBy: string;
+  createdAt: string;
+  /** 90 buckets over the requested range, oldest first: share of successful checks 0-1, null = no checks */
+  strip: Array<number | null>;
+}
+
+export interface UptimeRunResult {
+  ok: boolean;
+  status: number | null;
+  error: string | null;
+  durationMs: number;
+}
+
+export interface UptimeBucket {
+  t: string;
+  checks: number;
+  failures: number;
+  uptime: number | null; // 0-1, null when nothing was checked
+  p50: number | null; // response time ms
+  p95: number | null;
+}
+
+export interface UptimeIncident {
+  from: string;
+  to: string | null; // null: still down
+  error: string | null;
+}
+
+export interface UptimeResults {
+  buckets: UptimeBucket[];
+  incidents: UptimeIncident[];
+  uptime: number | null; // 0-1 over the range
+  p50: number | null;
+  p95: number | null;
+}
+
+// ---------- what the install costs ----------
+// GET /api/costs?pid={pid}  -> CostsResponse
+// Signed-in users who own at least one project (others get 403). Amounts come from AWS Cost Explorer for the
+// resources of this stack (tag aws:cloudformation:stack-name, which must be activated as a cost allocation tag),
+// cached for 12 hours: Cost Explorer charges $0.01 per request. `setup: true` means no numbers are available yet.
+export interface CostsResponse {
+  setup: boolean;
+  reason?: string; // set with `setup`: why there are no numbers
+  currency: string;
+  monthToDate: number;
+  lastMonth: number;
+  forecast?: number; // month-to-date projected linearly to the end of the month
+  daily: Array<{ day: string; amount: number }>; // last 30 days
+  services: Array<{ service: string; amount: number }>; // month to date, largest first
+  usage: {
+    eventsThisMonth: number;
+    projectEventsThisMonth?: number; // with `pid`
+    dataBucketBytes: number | null;
+    dsqlStorageBytes: number | null;
+  };
+  fetchedAt: string;
+}
+
+// GET /api/projects/{pid}/retention?from&to&period=day|week|month&start=first_seen|goal:<goalId>&return=any|goal:<goalId>
+//   &split=none|device|country|source
+//   Retention cohorts from visitor_days, a per-visitor-per-day table built each night and kept 400 days (the range may be
+//   that long; defaults to 12 weeks). Periods are UTC days, ISO weeks (Monday) or calendar months.
+//   - start: a person's cohort is the period they were first seen (first_seen, looking back over everything stored, so
+//     returning visitors are not counted as new) or first reached the goal.
+//   - return: period k counts a person when they had any visit (any) or reached the goal in period k after their cohort.
+//   - cohorts: newest period last, at most 30 days, 26 weeks or 13 months. values/counts have one entry per period
+//     0..n, only for periods that are over; values = counts / size.
+//   - average: size-weighted over the cohorts old enough for each period.
+//   - splits: top 5 values of the split dimension by cohort size (the visitor's first day in the cohort), each with its
+//     own average. Absent with split=none.
+//   - dataSince: the first day (YYYY-MM-DD) visitor_days has data for, null before the first nightly run.
+export type RetentionPeriod = 'day' | 'week' | 'month';
+export interface RetentionCohort {
+  start: string; // ISO timestamp of the period start
+  size: number;
+  values: number[];
+  counts: number[];
+}
+export interface RetentionSplit {
+  key: string;
+  size: number;
+  average: number[];
+}
+export interface RetentionResponse {
+  period: RetentionPeriod;
+  cohorts: RetentionCohort[];
+  average: number[];
+  splits?: RetentionSplit[];
+  dataSince: string | null;
+}
+
+// ---------- Error suppression ----------
+// GET    /api/projects/{pid}/error-suppressions                     -> ErrorSuppression[]
+// POST   /api/projects/{pid}/error-suppressions  ErrorSuppressionInput -> ErrorSuppression   (max 100 per project)
+// DELETE /api/projects/{pid}/error-suppressions/{id}                -> { ok: true }
+// JavaScript errors matching a rule are dropped when they arrive: not stored, not counted, no triggers. Patterns are
+// case-insensitive and match the whole value; `*` matches anything. `source` matches the failing resource or script
+// URL, or just its path ("/materials/image/*"). Every set field must match. Errors stored before a rule existed stay;
+// the Errors list marks the groups a rule covers (ErrorGroup.suppressedBy).
+export type ErrorKind = 'error' | 'rejection' | 'resource' | 'manual';
+export interface ErrorSuppressionInput {
+  kind?: ErrorKind | null; // null/absent: any kind
+  message?: string | null; // e.g. "*ResizeObserver loop*", "TypeError: *"
+  source?: string | null; // e.g. "https://cdn.example.com/img/*" or "/img/*"
+  page?: string | null; // page path, e.g. "/admin/*"
+}
+export interface ErrorSuppression extends ErrorSuppressionInput {
+  id: string;
+  createdBy: string;
+  createdAt: string;
+  hits: number; // errors dropped since it was created (approximate)
+  lastHitAt: string | null;
+}
+
+// ---------- Cost budgets ----------
+// GET    /api/projects/{pid}/collection     -> { paused: boolean }   any member: is a budget stopping collection?
+// GET    /api/costs/budgets                 -> Budget[]   install budgets, and project budgets of projects you own
+// POST   /api/costs/budgets  BudgetInput    -> Budget     install: you own at least one project; project: you own it
+// PATCH  /api/costs/budgets/{id} Partial<BudgetInput> -> Budget
+// DELETE /api/costs/budgets/{id}            -> { ok: true }
+// POST   /api/costs/budgets/{id}/resume     -> Budget     collect data again for the rest of the month
+// Spend comes from AWS Cost Explorer (it can lag a day behind); a project's spend is estimated from its share of the
+// month's events. Checked every 15 minutes and whenever a budget is saved.
+export type BudgetDestination =
+  | { type: 'webhook'; url: string } // JSON POST, signed with X-WGO-Signature like triggers
+  | { type: 'slack'; projectId: string; integrationId: string }; // a channel connected to one of your projects
+export interface BudgetInput {
+  scope: 'install' | 'project';
+  projectId?: string | null; // project budgets
+  monthlyLimit: number; // in the Cost Explorer currency (USD)
+  alertAt: number[]; // percents of the limit, e.g. [50, 80, 100]; each alerts once a month
+  alertOnForecast: boolean; // alert once when the month's forecast passes the limit
+  pauseAtLimit: boolean; // stop storing new data once spend reaches the limit, until next month (or resume / a higher limit)
+  destination: BudgetDestination | null; // null: only shown in WGO
+  acknowledged?: boolean; // required to create: the user accepts that figures are estimates and the AWS bill is theirs
+}
+export interface BudgetStatus {
+  month: string; // YYYY-MM (UTC)
+  spent: number | null; // null: Cost Explorer isn't set up
+  forecast: number | null;
+  estimated: boolean; // project budgets: spent is a share of the install's cost
+  alerted: number[]; // thresholds already alerted this month
+  forecastAlerted: boolean;
+  paused: boolean; // collection is stopped
+  pausedAt: string | null;
+  resumed: boolean; // resumed by hand this month: no pause until next month
+  checkedAt: string | null;
+  lastStatus: string | null; // the last notification's delivery result
+}
+export interface Budget extends Omit<BudgetInput, 'acknowledged'> {
+  id: string;
+  projectName: string | null;
+  signingSecret: string;
+  createdBy: string;
+  createdAt: string;
+  status: BudgetStatus;
 }

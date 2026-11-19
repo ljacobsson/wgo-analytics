@@ -4,7 +4,8 @@ import { api } from '../api/client';
 import { MapCallout } from '../charts/MapCallout';
 import { cellKey, type CalloutGroup, type CalloutMode } from '../charts/geoTypes';
 import { MousePointerClick, Bug, Globe, Eye, Users, Layers, Download, MapPin, Target } from 'lucide-react';
-import { useBreakdown, useClicks, useConversions, useGeo, usePages, usePreviousConversions, usePreviousTotals, useStats, useVitals } from '../api/hooks';
+import { useBreakdown, useClicks, useConversions, useGeo, usePages, usePreviousConversions, usePreviousTotals, useReleaseMarkers, useStats, useVitals } from '../api/hooks';
+import { markerLabel } from './Releases';
 import { conversionRate, fmtRate, goalEventsHref, previousRate } from './Goals';
 import { countryName, flag } from '../lib/geo';
 import { clickLabel } from '../lib/events';
@@ -25,12 +26,21 @@ import type { TimeRange } from '../lib/time';
 
 import { FilterBar } from '../ui/FilterBar';
 import { InfoTip } from '../ui/InfoTip';
-function Kpi({ label, icon, cur, prev, spark, color, invert, note }: { label: string; icon: React.ReactNode; cur?: number; prev?: number; spark?: number[]; color: string; invert?: boolean; note?: string }) {
+import { ExplainDrawer, worthExplaining, type ExplainSpec } from '../ui/ExplainDrawer';
+/** "Why?": opens the explanation of a change; only offered when the change is beyond noise. */
+function WhyButton({ onClick }: { onClick: () => void }) {
+  return <button type="button" onClick={(e) => { e.stopPropagation(); onClick(); }} className="cursor-pointer text-[11.5px] font-medium text-muted underline decoration-dotted underline-offset-2 hover:text-fg" title="See what this change comes from">Why?</button>;
+}
+
+function Kpi({ label, icon, cur, prev, spark, color, invert, note, onWhy }: { label: string; icon: React.ReactNode; cur?: number; prev?: number; spark?: number[]; color: string; invert?: boolean; note?: string; onWhy?: () => void }) {
   return (
     <Card className="relative overflow-hidden p-4" hover>
       <div className="flex items-center justify-between text-muted"><span className="flex items-center gap-2 text-[12px] font-medium">{icon}{label}</span>
         {cur != null && prev != null && <Delta cur={cur} prev={prev} invert={invert} />}</div>
-      <div className="kpi mt-2 text-[28px] font-semibold leading-none tracking-tight">{cur == null ? <Skeleton className="h-7 w-24" /> : <CountUp value={cur} format={fmtNum} />}</div>
+      <div className="mt-2 flex items-baseline justify-between gap-2">
+        <div className="kpi text-[28px] font-semibold leading-none tracking-tight">{cur == null ? <Skeleton className="h-7 w-24" /> : <CountUp value={cur} format={fmtNum} />}</div>
+        {onWhy && worthExplaining(cur, prev) && <WhyButton onClick={onWhy} />}
+      </div>
       <div className="mt-3 h-8">{spark ? <Sparkline data={spark} color={color} height={32} /> : <div className="pt-2 text-[11.5px] text-faint">{note}</div>}</div>
     </Card>
   );
@@ -101,7 +111,7 @@ function VitalsCard() {
 const GOAL_TILES = 6;
 
 /** Conversion rate per goal, as tiles under the KPIs. Hidden until the project has goals. */
-function GoalTiles() {
+function GoalTiles({ onWhy }: { onWhy: (s: ExplainSpec) => void }) {
   const { project } = useProject(); const { range } = useTime(); const route = useRoute();
   const conv = useConversions(project.id, range);
   const prev = usePreviousConversions(project.id, range);
@@ -120,7 +130,8 @@ function GoalTiles() {
             <Card key={g.id} className="cursor-pointer p-4" hover onClick={() => navigate(goalEventsHref(project.id, route.params, g.filters))}>
               <div className="flex items-center justify-between gap-2 text-muted">
                 <span className="truncate text-[12px] font-medium" title={g.name}>{g.name}</span>
-                {rate != null && before != null && <Delta cur={rate} prev={before} />}
+                <span className="flex items-center gap-2">{rate != null && before != null && Math.abs(rate - before) >= 0.1 * before && g.sessions >= 20 && <WhyButton onClick={() => onWhy({ metric: 'goal', goalId: g.id, label: `${g.name} conversion` })} />}
+                  {rate != null && before != null && <Delta cur={rate} prev={before} />}</span>
               </div>
               <div className="kpi mt-2 text-[28px] font-semibold leading-none tracking-tight">{fmtRate(rate)}</div>
               <div className="mt-2 truncate text-[11.5px] text-faint">{fmtNum(g.sessions)} sessions · {fmtNum(g.conversions)} conversions</div>
@@ -234,7 +245,11 @@ export function Overview() {
   const prev = usePreviousTotals(project.id, range);
   const pages = usePages(project.id, range);
   const clicks = useClicks(project.id, range);
+  const deploys = useReleaseMarkers(project.id, range);
+  const [why, setWhy] = useState<ExplainSpec | null>(null);
+  const type = (value: string) => [{ field: 'type', op: 'eq' as const, value }];
   const s = stats.data;
+  const markers = useMemo(() => (deploys.data ?? []).map((m) => ({ t: Date.parse(m.firstSeen), label: markerLabel(m), color: m.kind === 'web' ? 'var(--accent)' : 'var(--muted)' })), [deploys.data]);
   const chart = useMemo(() => {
     if (!s) return null;
     const times = s.series.map((p) => Date.parse(p.t));
@@ -251,15 +266,15 @@ export function Overview() {
     <div className="space-y-4">
       <FilterBar scope="events" />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        <Kpi label="Pageviews" icon={<Eye size={14} />} cur={T('pageviews')} prev={P('pageviews')} spark={sp('pageview')} color="var(--s1)" />
-        <Kpi label="Sessions" icon={<Layers size={14} />} cur={T('sessions')} prev={P('sessions')} color="var(--s7)" note={s && s.totals.sessions ? `${(s.totals.pageviews / s.totals.sessions).toFixed(1)} pages / session${s.botSessions ? ` · ${fmtNum(s.botSessions)} bot sessions hidden` : ''}` : s?.botSessions ? `${fmtNum(s.botSessions)} bot sessions hidden` : ''} />
+        <Kpi label="Pageviews" icon={<Eye size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('pageview'), label: 'Pageviews' })} cur={T('pageviews')} prev={P('pageviews')} spark={sp('pageview')} color="var(--s1)" />
+        <Kpi label="Sessions" icon={<Layers size={14} />} onWhy={() => setWhy({ metric: 'sessions', label: 'Sessions' })} cur={T('sessions')} prev={P('sessions')} color="var(--s7)" note={s && s.totals.sessions ? `${(s.totals.pageviews / s.totals.sessions).toFixed(1)} pages / session${s.botSessions ? ` · ${fmtNum(s.botSessions)} bot sessions hidden` : ''}` : s?.botSessions ? `${fmtNum(s.botSessions)} bot sessions hidden` : ''} />
         <Kpi label="Users" icon={<Users size={14} />} cur={T('users')} prev={P('users')} color="var(--s7)" note={s && s.totals.users ? `${(s.totals.sessions / s.totals.users).toFixed(2)} sessions / user` : ''} />
-        <Kpi label="Clicks" icon={<MousePointerClick size={14} />} cur={T('clicks')} prev={P('clicks')} spark={sp('click')} color="var(--s3)" />
-        <Kpi label="Errors" icon={<Bug size={14} />} cur={T('errors')} prev={P('errors')} spark={sp('error')} color="var(--s8)" invert />
-        <Kpi label="HTTP errors" icon={<Globe size={14} />} cur={T('httpErrors')} prev={P('httpErrors')} spark={sp('http_error')} color="var(--s2)" invert />
+        <Kpi label="Clicks" icon={<MousePointerClick size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('click'), label: 'Clicks' })} cur={T('clicks')} prev={P('clicks')} spark={sp('click')} color="var(--s3)" />
+        <Kpi label="Errors" icon={<Bug size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('error'), label: 'Errors' })} cur={T('errors')} prev={P('errors')} spark={sp('error')} color="var(--s8)" invert />
+        <Kpi label="HTTP errors" icon={<Globe size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('http_error'), label: 'Failed requests' })} cur={T('httpErrors')} prev={P('httpErrors')} spark={sp('http_error')} color="var(--s2)" invert />
       </div>
 
-      <GoalTiles />
+      <GoalTiles onWhy={setWhy} />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
       <Card className="xl:col-span-2">
@@ -267,13 +282,14 @@ export function Overview() {
         <div className="px-3 pb-3">
           {!chart ? <Skeleton className="h-[280px]" /> : empty ? (
             <EmptyState icon={<Download size={22} />} title="No events in this range" action={<Button variant="primary" onClick={() => navigate(pageHref(project.id, 'settings', route.params))}>Install the snippet</Button>}>Add the snippet to your site and events will show up here within seconds.</EmptyState>
-          ) : <TimeChart times={chart.times} series={chart.series} mode="bars" height={280} />}
+          ) : <TimeChart times={chart.times} series={chart.series} mode="bars" height={280} markers={markers} bucketMs={s!.bucketSeconds * 1000} />}
         </div>
       </Card>
       <VitalsCard />
       </div>
 
       <Visitors />
+      <ExplainDrawer spec={why} onClose={() => setWhy(null)} />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Card>

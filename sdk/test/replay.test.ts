@@ -197,6 +197,45 @@ describe('recorder', () => {
     expect(sessionStorage.length + localStorage.length).toBe(0) // mem: nothing stored on the device
   })
 
+  it('records hovers on clickable elements that last long enough, with their label; never taps', async () => {
+    document.body.innerHTML = '<p id="p">text</p><button id="b" data-track="buy"><span id="s">Buy now</span></button><a id="a" href="/x">Docs</a>'
+    const f = mockFetch((url) => (url.endsWith('/replay/start') ? { ok: true, status: 200, json: async () => ({ ok: true }) } : { ok: true, status: 200 }))
+    const stop = start(host())
+    await vi.advanceTimersByTimeAsync(MIN_SESSION_MS)
+    await vi.waitFor(() => expect(replayEvents(f).length).toBeGreaterThan(0))
+    const over = (id: string, pointerType = 'mouse') => document.getElementById(id)!.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType }))
+    over('s') // inside the button: the button is what's hovered
+    await vi.advanceTimersByTimeAsync(400)
+    over('b') // still the same button
+    await vi.advanceTimersByTimeAsync(100)
+    over('a') // ends the button's hover (500 ms); the link is passed over too quickly
+    await vi.advanceTimersByTimeAsync(100)
+    over('p')
+    over('b', 'touch')
+    await vi.advanceTimersByTimeAsync(1000)
+    over('p')
+    stop()
+    await vi.waitFor(() => expect(replayEvents(f).flatMap((e) => e.d.r).some((r) => r[0] === 7)).toBe(true))
+    const hovers = replayEvents(f).flatMap((e) => e.d.r).filter((r) => r[0] === 7)
+    expect(hovers).toEqual([[7, expect.any(Number), '#b', expect.any(Number), 'Buy now', 'buy']])
+    expect(hovers[0][3]).toBeGreaterThanOrEqual(500)
+    expect(hovers[0][3]).toBeLessThan(600)
+  })
+
+  it('leaves hover labels out when the project masks all text', async () => {
+    document.body.innerHTML = '<a id="a" href="/x">Secret plan</a><p id="p">x</p>'
+    const f = mockFetch((url) => (url.endsWith('/replay/start') ? { ok: true, status: 200, json: async () => ({ ok: true }) } : { ok: true, status: 200 }))
+    const stop = start(host({ c: { on: true, rate: 1, mask: true } }))
+    await vi.advanceTimersByTimeAsync(MIN_SESSION_MS)
+    await vi.waitFor(() => expect(replayEvents(f).length).toBeGreaterThan(0))
+    document.getElementById('a')!.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    await vi.advanceTimersByTimeAsync(400)
+    stop() // a hover in progress is recorded when the recording stops
+    await vi.waitFor(() => expect(replayEvents(f).flatMap((e) => e.d.r).some((r) => r[0] === 7)).toBe(true))
+    expect(replayEvents(f).flatMap((e) => e.d.r).filter((r) => r[0] === 7)).toEqual([[7, expect.any(Number), '#a', expect.any(Number)]])
+    expect(JSON.stringify(replayEvents(f).flatMap((e) => e.d.r).filter((r) => r[0] !== 0))).not.toContain('Secret')
+  })
+
   it('waits for a trigger without sending anything, then sends the lead-up', async () => {
     document.body.innerHTML = '<p>hi</p>'
     const f = mockFetch((url) => (url.endsWith('/replay/start') ? { ok: true, status: 200, json: async () => ({ ok: true }) } : { ok: true, status: 200 }))

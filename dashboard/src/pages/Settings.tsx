@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Database, Eye, EyeOff, KeyRound, RotateCw, Trash2, UserPlus } from 'lucide-react';
-import { useInviteMember, useMembers, useRemoveMember, useRenameProject, useRotateKey, useSetRetention } from '../api/hooks';
+import { useDeleteProject, useInviteMember, useMembers, useRemoveMember, useRenameProject, useRotateKey, useRotateUploadKey, useSetRetention, useUploadKey } from '../api/hooks';
 import type { Project } from '../api/contract';
 import { useProject } from '../lib/project';
 import { Badge, Button, Card, CardHeader, CopyButton, Dialog, Skeleton, useToast } from '../ui/kit';
@@ -44,6 +44,8 @@ export function SettingsPage() {
         </div>
       </Card>
 
+      {owner && <SourceMapsCard pid={project.id} />}
+
       <Card>
         <CardHeader title="Members" sub={<>Invited people get access the next time they sign in with that email. New users create an account at <span className="font-mono">{location.origin + location.pathname}#/signup</span>.</>} />
         {owner && <form className="flex gap-3 px-4 pb-3" onSubmit={(e) => { e.preventDefault(); const v = inv.trim(); if (v) { invite.mutate(v, { onError: (er) => toast({ title: 'Invite failed', body: (er as Error).message, tone: 'bad' }) }); setInv(''); } }}>
@@ -63,6 +65,8 @@ export function SettingsPage() {
         <CardHeader title="Install" sub="Ready-to-paste snippets with your write key filled in." />
         <div className="px-4 pb-4"><Install project={project} /></div>
       </Card>
+
+      {owner && <DeleteProjectCard project={project} />}
 
       <Dialog open={confirm} onClose={() => setConfirm(false)} title="Rotate write key?"
         footer={<><Button variant="ghost" onClick={() => setConfirm(false)}>Cancel</Button><Button variant="danger" disabled={rotate.isPending} onClick={() => rotate.mutate(undefined, { onSuccess: () => { setConfirm(false); toast({ title: 'Write key rotated', body: 'Update your snippets and exporters.', tone: 'good' }); } })}>Rotate key</Button></>}>
@@ -97,6 +101,73 @@ function RetentionCard({ project, owner }: { project: Project; owner: boolean })
           <p><span className="font-medium text-fg">Raw data is stored as compressed Parquet files in S3, in your AWS account.</span> What you store grows with your traffic times this setting, but at S3 prices a long retention stays cheap; queries read only the days they cover. Your deployment allows up to {maxDays} days (the stack's <code className="font-mono text-[11.5px]">MaxRetentionDays</code> parameter).</p>
         </div>
       </div>
+    </Card>
+  );
+}
+
+function DeleteProjectCard({ project }: { project: Project }) {
+  const toast = useToast();
+  const del = useDeleteProject(project.id);
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const matches = typed.trim() === project.name.trim();
+  const close = () => { setOpen(false); setTyped(''); };
+  const submit = () => {
+    if (!matches || del.isPending) return;
+    del.mutate(undefined, {
+      onSuccess: () => toast({ title: `Deleted ${project.name}`, tone: 'good' }),
+      onError: (er) => toast({ title: 'Could not delete the project', body: (er as Error).message, tone: 'bad' }),
+    });
+  };
+  return (
+    <Card>
+      <CardHeader title="Delete project" sub="Removes the project and everything it has collected" />
+      <div className="flex flex-wrap items-center gap-3 px-4 pb-4">
+        <p className="min-w-[260px] flex-1 text-[12.5px] leading-relaxed text-muted">Members lose access, the write key stops working, and kiosks, triggers and Slack connections stop at once. Events, logs, traces, metrics and recordings are deleted from the database and S3 over the next few minutes. This can't be undone.</p>
+        <Button variant="danger" onClick={() => setOpen(true)}><Trash2 size={14} />Delete project</Button>
+      </div>
+      <Dialog open={open} onClose={close} title={`Delete ${project.name}?`}
+        footer={<><Button variant="ghost" onClick={close}>Cancel</Button><Button variant="danger" disabled={!matches || del.isPending} onClick={submit}><Trash2 size={14} />Delete project</Button></>}>
+        <form className="space-y-3 text-[13px] text-muted" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <p>All of this project's data, settings and members are deleted for good. Sites and services still sending to its write key are refused.</p>
+          <label className="block space-y-1.5">
+            <span>Type <span className="font-medium text-fg">{project.name}</span> to confirm</span>
+            <input className="field" autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} aria-label="Project name" />
+          </label>
+        </form>
+      </Dialog>
+    </Card>
+  );
+}
+
+function SourceMapsCard({ pid }: { pid: string }) {
+  const toast = useToast();
+  const uk = useUploadKey(pid, true);
+  const rotate = useRotateUploadKey(pid);
+  const [reveal, setReveal] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const key = uk.data?.uploadKey;
+  const cmd = `npx wgo-sourcemaps --endpoint ${location.origin} --key ${key ?? 'uk_…'} --release 1.4.0 dist/`;
+  return (
+    <Card>
+      <CardHeader title="Source maps" sub="Upload source maps from your build so error stacks show your original code. The upload key is a secret: keep it in CI, not in client code." />
+      <div className="flex flex-wrap items-center gap-3 px-4 pb-3">
+        <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border border-line bg-[var(--hl)] px-3 py-2"><KeyRound size={14} className="text-faint" />
+          {key ? <code className="min-w-0 flex-1 truncate font-mono text-[12.5px]">{reveal ? key : key.slice(0, 6) + '•'.repeat(Math.max(8, key.length - 10)) + key.slice(-4)}</code> : <Skeleton className="h-4 flex-1" />}
+          <button onClick={() => setReveal(!reveal)} className="text-faint hover:text-fg cursor-pointer">{reveal ? <EyeOff size={15} /> : <Eye size={15} />}</button></div>
+        {key && <CopyButton text={key} className="!py-2" />}
+        <Button variant="danger" onClick={() => setConfirm(true)}><RotateCw size={14} />Rotate key</Button>
+      </div>
+      <div className="space-y-3 px-4 pb-4 text-[12.5px] leading-relaxed text-muted">
+        <p>Build with hidden source maps, then upload them after each deploy. Use the same <span className="font-mono text-[11.5px]">release</span> you pass to <span className="font-mono text-[11.5px]">wgo.init</span>.</p>
+        <div className="flex items-center gap-2 rounded-lg border border-line bg-[var(--hl)] px-3 py-2"><code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11.5px]">{cmd}</code><CopyButton text={cmd} /></div>
+        <p>Vite: <span className="font-mono text-[11.5px]">build: {'{ sourcemap: \'hidden\' }'}</span>. webpack: <span className="font-mono text-[11.5px]">devtool: 'hidden-source-map'</span>.</p>
+        <p>Don't deploy the <span className="font-mono text-[11.5px]">.map</span> files to your site. Anyone could read your source from them. Delete them after uploading.</p>
+      </div>
+      <Dialog open={confirm} onClose={() => setConfirm(false)} title="Rotate upload key?"
+        footer={<><Button variant="ghost" onClick={() => setConfirm(false)}>Cancel</Button><Button variant="danger" disabled={rotate.isPending} onClick={() => rotate.mutate(undefined, { onSuccess: () => { setConfirm(false); toast({ title: 'Upload key rotated', body: 'Update the key in your CI.', tone: 'good' }); } })}>Rotate key</Button></>}>
+        <p className="text-[13px] text-muted">The current key stops working immediately. Update it in your CI before the next upload.</p>
+      </Dialog>
     </Card>
   );
 }

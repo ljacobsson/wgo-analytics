@@ -1,3 +1,4 @@
+import { setTimeout as realSleep } from 'node:timers/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as A from '../src/index'
 import { selector, stableClass, stableId } from '../src/selector'
@@ -207,5 +208,63 @@ describe('rage clicks', () => {
     for (let i = 0; i < 3; i++) click(q('#b'))
     await A.flush()
     expect(clicks().filter((e) => e.d!.rage)).toHaveLength(2)
+  })
+})
+
+describe('dead clicks', () => {
+  it('flags a click on a button when nothing changes within 1 s', async () => {
+    html('<button id="b">x</button>')
+    A.init(cfg({ autocapture: on }))
+    click(q('#b'))
+    await vi.advanceTimersByTimeAsync(1100)
+    await A.flush()
+    expect(clicks()[0].d!.dead).toBe(1)
+  })
+
+  it('flags links, role=button and submit inputs too', async () => {
+    html('<a id="a">a</a><div id="r" role="button">r</div><input id="s" type="submit" value="Go">')
+    A.init(cfg({ autocapture: on }))
+    for (const id of ['#a', '#r', '#s']) { click(q(id)); await vi.advanceTimersByTimeAsync(1100) }
+    await A.flush()
+    expect(clicks().map((e) => e.d!.dead)).toEqual([1, 1, 1])
+  })
+
+  it('does not flag a click that changes the DOM', async () => {
+    html('<button id="b">x</button><div id="out"></div>')
+    A.init(cfg({ autocapture: on }))
+    q('#b').addEventListener('click', () => { q('#out').textContent = 'done' })
+    click(q('#b'))
+    await realSleep(20) // happy-dom delivers mutation records on a real timer
+    await vi.advanceTimersByTimeAsync(1100)
+    await A.flush()
+    expect(clicks()[0].d).not.toHaveProperty('dead')
+  })
+
+  it('does not flag when the location changes', async () => {
+    html('<button id="b">x</button>')
+    A.init(cfg({ autocapture: on }))
+    click(q('#b'))
+    history.pushState({}, '', '/after-click')
+    await vi.advanceTimersByTimeAsync(1100)
+    await A.flush()
+    expect(clicks()[0].d).not.toHaveProperty('dead')
+    history.pushState({}, '', '/')
+  })
+
+  it('does not mutate an event that was already sent', async () => {
+    html('<button id="b">x</button>')
+    A.init(cfg({ autocapture: on }))
+    click(q('#b'))
+    await A.flush()
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(clicks()[0].d).not.toHaveProperty('dead')
+  })
+
+  it('never flags non-interactive elements or new-tab links', async () => {
+    html('<div id="d">x</div><p id="p">y</p><a id="n" href="/x" target="_blank">n</a><a id="m" href="mailto:a@b.c">m</a>')
+    A.init(cfg({ autocapture: on }))
+    for (const id of ['#d', '#p', '#n', '#m']) { click(q(id)); await vi.advanceTimersByTimeAsync(1100) }
+    await A.flush()
+    expect(clicks().every((e) => !('dead' in e.d!))).toBe(true)
   })
 })

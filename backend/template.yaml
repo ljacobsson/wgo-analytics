@@ -149,6 +149,16 @@ Resources:
           - Id: abort-incomplete-uploads
             Status: Enabled
             AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
+          # uploaded source maps (sourcemaps/project_id=…/release=…/*.map)
+          - Id: expire-sourcemaps
+            Status: Enabled
+            Prefix: sourcemaps/
+            ExpirationInDays: 400
+          # homepage screenshots (lib/sites.ts) replace themselves daily; this only catches strays
+          - Id: expire-site-screenshots
+            Status: Enabled
+            Prefix: sites/
+            ExpirationInDays: 30
 
   # DuckDB (bindings + httpfs) for the functions that query raw data; built by layers/duckdb/Makefile
   DuckDbLayer:
@@ -720,12 +730,24 @@ Resources:
         Variables:
           SLACK_CLIENT_ID: !Ref SlackClientId
           SLACK_CLIENT_SECRET: !Ref SlackClientSecret
+          STACK_NAME: !Ref AWS::StackName
+          DSQL_CLUSTER_ID: !GetAtt DsqlCluster.Identifier
+          TRIGGER_FUNCTION: !Ref TriggerFunction
       Policies:
         - S3ReadPolicy: { BucketName: !Ref DataBucket }
+        # "Run now" on an uptime check records its result like the scheduled run does
+        - S3WritePolicy: { BucketName: !Ref DataBucket }
         - Statement:
             - Effect: Allow
               Action: dsql:DbConnectAdmin
               Resource: !GetAtt DsqlCluster.ResourceArn
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !GetAtt TriggerFunction.Arn
+            # the Costs page: Cost Explorer and CloudWatch reads can't be scoped to a resource
+            - Effect: Allow
+              Action: [ce:GetCostAndUsage, cloudwatch:GetMetricData, cloudwatch:ListMetrics]
+              Resource: '*'
       Events:
         # explicit methods (not ANY) so CORS preflight OPTIONS never reaches the JWT authorizer
         ApiGet:
@@ -890,6 +912,34 @@ Resources:
         External: [pg-native, '@duckdb/node-api']
         EntryPoints: [src/handlers/replay.ts]
 
+  # Source map uploads from CI: POST /sourcemaps/upload-url answers with a presigned S3 PUT. Authenticated in the
+  # function by the project's upload key (header x-wgo-upload-key), so no Cognito authorizer.
+  SourcemapFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: sourcemaps.handler
+      MemorySize: 512
+      Timeout: 10
+      Policies:
+        - S3WritePolicy: { BucketName: !Ref DataBucket }
+        - Statement:
+            - Effect: Allow
+              Action: dsql:DbConnectAdmin
+              Resource: !GetAtt DsqlCluster.ResourceArn
+      Events:
+        SourcemapUploadUrl:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /sourcemaps/upload-url, Method: POST }
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        External: [pg-native, '@duckdb/node-api']
+        EntryPoints: [src/handlers/sourcemaps.ts]
+
   # MCP server (/mcp) and its OAuth discovery documents. No API Gateway authorizer: unauthenticated calls must
   # get the 401 + WWW-Authenticate challenge that starts the OAuth flow, so the function verifies tokens.
   # Its public URL comes from the request (CloudFront Function below), not from the distribution: the
@@ -1025,6 +1075,42 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*'
 
+  # Threshold and anomaly triggers (lib/monitor.ts), every minute. With none enabled a run is one small DSQL query.
+  MonitorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: monitor.handler
+      MemorySize: 1024
+      Timeout: 55
+      ReservedConcurrentExecutions: 1
+      Layers: [!Ref DuckDbLayer]
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+      Environment:
+        Variables:
+          WRITE_BUFFER_SECONDS: !Ref WriteBufferSeconds
+      Policies:
+        - S3ReadPolicy: { BucketName: !Ref DataBucket }
+        - Statement:
+            - Effect: Allow
+              Action: dsql:DbConnectAdmin
+              Resource: !GetAtt DsqlCluster.ResourceArn
+      Events:
+        Schedule:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(1 minute)
+            RetryPolicy: { MaximumRetryAttempts: 0 }
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        External: [pg-native, '@duckdb/node-api']
+        EntryPoints: [src/handlers/monitor.ts]
+
   # ---------------------------------------------------------------- maintenance
   # Every 15 minutes: merging small Parquet files, hourly rollups, hourly cluster metrics, daily retention (and,
   # once, moving raw rows that older versions kept in DSQL). Each run stops after 12 minutes and resumes next
@@ -1044,6 +1130,7 @@ Resources:
           DSQL_CLUSTER_ID: !GetAtt DsqlCluster.Identifier
           CLUSTER_METRICS_PROJECT_ID: !Ref ClusterMetricsProjectId
           TRIGGER_FUNCTION: !Ref TriggerFunction
+          STACK_NAME: !Ref AWS::StackName
       Policies:
         - S3CrudPolicy: { BucketName: !Ref DataBucket }
         - Statement:
@@ -1056,6 +1143,10 @@ Resources:
             # CloudWatch metric reads can't be scoped to a resource
             - Effect: Allow
               Action: [cloudwatch:GetMetricData, cloudwatch:ListMetrics]
+              Resource: '*'
+            # cost budgets (lib/budgets.ts); Cost Explorer can't be scoped to a resource either
+            - Effect: Allow
+              Action: ce:GetCostAndUsage
               Resource: '*'
       Events:
         Schedule:
@@ -1071,6 +1162,94 @@ Resources:
         Sourcemap: true
         External: [pg-native, '@duckdb/node-api']
         EntryPoints: [src/handlers/maintenance.ts]
+
+  # Uptime checks: fetches the checks that are due, every minute, one run at a time (no retries, so runs never overlap)
+  UptimeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: uptime.handler
+      MemorySize: 256
+      Timeout: 70
+      ReservedConcurrentExecutions: 1
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+      Environment:
+        Variables:
+          TRIGGER_FUNCTION: !Ref TriggerFunction
+      Policies:
+        - S3WritePolicy: { BucketName: !Ref DataBucket }
+        - Statement:
+            - Effect: Allow
+              Action: dsql:DbConnectAdmin
+              Resource: !GetAtt DsqlCluster.ResourceArn
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !GetAtt TriggerFunction.Arn
+      Events:
+        Schedule:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(1 minute)
+            RetryPolicy: { MaximumRetryAttempts: 0 }
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        External: [pg-native, '@duckdb/node-api']
+        EntryPoints: [src/handlers/uptime.ts]
+
+  # Headless Chromium + puppeteer-core for ScreenshotFunction; built by layers/chromium/Makefile
+  ChromiumLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      ContentUri: layers/chromium
+      CompatibleRuntimes: [nodejs22.x]
+      CompatibleArchitectures: [arm64]
+    Metadata:
+      BuildMethod: makefile
+      BuildArchitecture: arm64
+
+  # Homepage screenshots for the dashboard's All projects page (lib/sites.ts): every 15 minutes, it screenshots the
+  # projects whose public site (found by the maintenance job) wasn't shot today, so each one at most once a day.
+  # With nothing due a run is one query and never starts the browser.
+  # One run at a time, no retries.
+  ScreenshotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: screenshot.handler
+      MemorySize: 2048
+      Timeout: 300
+      EphemeralStorage: { Size: 1024 }
+      ReservedConcurrentExecutions: 1
+      Layers: [!Ref ChromiumLayer]
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [s3:PutObject, s3:DeleteObject]
+              Resource: !Sub '${DataBucket.Arn}/sites/*'
+            - Effect: Allow
+              Action: dsql:DbConnectAdmin
+              Resource: !GetAtt DsqlCluster.ResourceArn
+      Events:
+        Schedule:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(15 minutes)
+            RetryPolicy: { MaximumRetryAttempts: 0 }
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        External: [pg-native, '@duckdb/node-api', '@sparticuz/chromium', puppeteer-core]
+        EntryPoints: [src/handlers/screenshot.ts]
 
   # ---------------------------------------------------------------- schema migration
   MigrateFunction:
@@ -1098,7 +1277,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt MigrateFunction.Arn
       SchemaVersion: !Ref SchemaVersion
-      SchemaHash: '2026-11-18-1' # bump when src/lib/schema.ts changes
+      SchemaHash: '2026-11-19-7' # bump when src/lib/schema.ts changes
 
   # ---------------------------------------------------------------- dashboard + SDK hosting
   WebBucket:
@@ -1257,6 +1436,15 @@ Resources:
             CachedMethods: [GET, HEAD]
             CachePolicyId: !FindInMap [CloudFront, Managed, CachingDisabled]
             OriginRequestPolicyId: !Ref IngestOriginRequestPolicy
+            Compress: false
+          # source map uploads (CI): the upload key header must reach the function
+          - PathPattern: /sourcemaps/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: !FindInMap [CloudFront, Managed, CachingDisabled]
+            OriginRequestPolicyId: !FindInMap [CloudFront, Managed, AllViewerExceptHostHeader]
             Compress: false
           # MCP: needs the Authorization header, which only an all-viewer-headers policy forwards
           - PathPattern: /mcp

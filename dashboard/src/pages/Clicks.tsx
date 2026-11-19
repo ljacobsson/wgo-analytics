@@ -6,8 +6,10 @@ import type { ClickRow } from '../api/contract';
 import { useProject } from '../lib/project';
 import { useTime } from '../lib/time';
 import { useLive } from '../live/store';
-import { navigate, pageHref, useRoute } from '../lib/router';
-import { Badge, Button, Card, Dialog, EmptyState, ErrorState, Field, Mono, useToast } from '../ui/kit';
+import { navigate, pageHref, useRoute, useSetParams } from '../lib/router';
+import { Badge, Button, Card, Dialog, EmptyState, ErrorState, Field, Mono, Segmented, useToast } from '../ui/kit';
+import { FrustrationTab } from './Frustration';
+import { HeatmapTab } from './Heatmap';
 import { RowsSkeleton, TableHead } from './common';
 import { fmtNum, relTime } from '../lib/format';
 
@@ -59,7 +61,22 @@ function AliasDialog({ row, onClose }: { row: ClickRow | null; onClose: () => vo
 
 const COLS = 'grid-cols-[minmax(160px,1.3fr)_minmax(90px,.7fr)_minmax(180px,1.5fr)_minmax(150px,1.2fr)_70px_80px_80px_160px]';
 
+type Tab = 'top' | 'frustration' | 'heatmap';
+const TABS: Array<{ value: Tab; label: string }> = [{ value: 'top', label: 'Top clicks' }, { value: 'frustration', label: 'Frustration' }, { value: 'heatmap', label: 'Heatmap' }];
+
 export function ClicksPage() {
+  const route = useRoute(); const set = useSetParams();
+  const raw = route.params.get('tab');
+  const tab: Tab = raw === 'frustration' || raw === 'heatmap' ? raw : 'top';
+  return (
+    <div className="space-y-4">
+      <Segmented value={tab} onChange={(v) => set({ tab: v === 'top' ? null : v })} options={TABS} />
+      {tab === 'frustration' ? <><FilterBar scope="events" /><FrustrationTab /></> : tab === 'heatmap' ? <><FilterBar scope="events" /><HeatmapTab /></> : <TopClicks />}
+    </div>
+  );
+}
+
+function TopClicks() {
   const { project } = useProject(); const { range } = useTime(); const route = useRoute();
   const live = useLive(); const toast = useToast();
   const { data, isPending, isError, error, refetch } = useClicks(project.id, range);

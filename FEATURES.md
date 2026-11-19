@@ -4,10 +4,10 @@
 
 ### See what's going on in your web app and the services behind it
 
-WGO collects clicks, pageviews, errors and Web Vitals from the browser, and traces, logs and metrics from your
-backends over OpenTelemetry. It all lands in one dashboard that updates as it happens.
+WGO monitors your real users in the browser (clicks, pageviews, errors and Web Vitals) and collects traces, logs
+and metrics from your backends over OpenTelemetry. It all lands in one dashboard that updates as it happens.
 
-[Web analytics](#live-web-analytics) · [OpenTelemetry](#opentelemetry-metrics-traces-and-logs) · [Android](#a-home-screen-widget-for-android) · [Wall screens](#your-dashboard-on-a-wall-screen) · [MCP](#ask-your-ai-assistant-with-mcp) · [Deploy it yourself](README.md#deploy-it-yourself)
+[Web analytics](#live-web-analytics) · [OpenTelemetry](#opentelemetry-metrics-traces-and-logs) · [Alerts](#know-when-something-breaks-and-why) · [Costs](#see-what-it-costs) · [Android](#a-home-screen-widget-for-android) · [Wall screens](#your-dashboard-on-a-wall-screen) · [MCP](#ask-your-ai-assistant-with-mcp) · [Deploy it yourself](README.md#deploy-it-yourself)
 
 </div>
 
@@ -20,7 +20,7 @@ backends over OpenTelemetry. It all lands in one dashboard that updates as it ha
 ## Live web analytics
 
 Add one script tag and WGO records every click, pageview, JavaScript error, failed API call and Web Vital
-without any extra code. Events show up within seconds.
+from your real users, without any extra code. Events show up within seconds.
 
 - 👀 Watch a button, page or error and see each hit arrive, with an optional toast or browser notification.
 - 🏷️ Give a captured click a readable name, like "Pricing: start trial" instead of `div.w-full > button`. Everyone
@@ -37,7 +37,14 @@ without any extra code. Events show up within seconds.
 - 🎬 Watch what a visitor did: their pointer, clicks, scrolling and page changes, replayed over snapshots of the
   page. It records no video, so a session costs kilobytes. Record a share of sessions, or only the ones that hit an
   error or reach a page you choose, with hourly and daily limits. Typed text is never recorded.
-- 🪶 The browser SDK is about 10 KB gzipped. It batches and compresses events, and holds on to them while the
+- 😤 See where visitors get stuck: rage clicks, dead clicks (the page did nothing) and clicks followed by an error,
+  per element, each with the recordings behind it.
+- 🔥 A click heatmap for any page, on desktop or mobile, drawn over a snapshot of the page when recordings are on.
+- 🔁 Retention cohorts: who comes back after their first visit or first conversion, by day, week or month, up to
+  400 days back.
+- 🧩 Readable stack traces from minified code: upload your source maps from CI with one command. Suppress noise,
+  like a browser extension's errors, with wildcard rules.
+- 🪶 The browser SDK is about 11 KB gzipped. It batches and compresses events, and holds on to them while the
   visitor is offline.
 
 ```html
@@ -68,6 +75,35 @@ OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 The dashboard has a setup guide for Node.js and Python, on servers and AWS Lambda.
 
 ![The Metrics page: a list of OpenTelemetry metrics such as http.server.request.duration, with a chart of the selected metric over 24 hours](docs/screenshots/metrics.jpg)
+
+---
+
+## Know when something breaks, and why
+
+- 🔗 A failed request in the browser opens the backend trace it started, and the trace links back to the visitor's
+  session and recording.
+- 🏷️ Tell WGO which version is running and every release is compared with the one before it: errors, failed
+  requests, Web Vitals and conversion. Deploys show as markers on the charts.
+- 🤔 When a number on the Overview moves, **Why?** says which page, browser, country or release accounts for it,
+  when it started and which release went out just before.
+- 🚨 Alert on each matching event, on a threshold ("no pageviews in 30 minutes", "p95 above 1 s") or on anything
+  unusual for the time of day, in Slack or by webhook.
+- 💓 Uptime checks fetch your URLs every 1, 5 or 15 minutes. A check goes down after two failures in a row.
+
+---
+
+## See what it costs
+
+WGO runs in your AWS account, so the bill is yours, and so is the view of it.
+
+- 💰 The Costs page shows what the install costs this month, per day and per AWS service, and about how much that
+  is per million events.
+- 🧮 Budgets set a monthly limit for the whole install or one project. They alert as spend passes the percentages you
+  choose, or when the month's forecast passes the limit, in Slack or by webhook.
+- ✋ A budget can also stop collecting data when it's reached, until the month ends or you raise the limit.
+
+Cost figures are estimates. Set up [AWS Budgets](https://console.aws.amazon.com/billing/home#/budgets) for your
+whole account too.
 
 ---
 
@@ -125,8 +161,9 @@ chat.
 - 🔑 You sign in with your WGO account in the browser. There is no API key to copy.
 - 🔒 Access is limited to the projects you are a member of. It's read-only, except that the assistant can give
   click targets readable names.
-- 🧰 Twenty tools cover the overview, top pages and clicks, click names, conversion goals and funnels, errors,
-  failed requests, Web Vitals, visitor locations, traces, logs and metrics.
+- 🧰 Twenty-six tools cover the overview, top pages and clicks, click names, frustration, conversion goals and
+  funnels, retention, errors, failed requests, releases, explanations of a change, Web Vitals, visitor locations,
+  recordings, uptime, traces, logs and metrics. Ask for "sessions that hovered the buy button but never clicked it".
 
 ```sh
 claude mcp add --transport http wgo https://wgo.example.com/mcp

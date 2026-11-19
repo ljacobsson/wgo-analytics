@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { Member, Project, Role } from '../contract';
+import type { Member, Project, Role, UploadKey } from '../contract';
 import { allowlistMessage, emailAllowed } from './allowlist';
 import { HttpError } from './http';
 import { query } from './db';
@@ -12,6 +12,46 @@ export function generateWriteKey(): string {
   let out = 'wk_';
   for (const b of bytes) out += KEY_ALPHABET[b % KEY_ALPHABET.length];
   return out;
+}
+
+export function generateUploadKey(): string {
+  const bytes = randomBytes(32);
+  let out = 'uk_';
+  for (const b of bytes) out += KEY_ALPHABET[b % KEY_ALPHABET.length];
+  return out;
+}
+
+/** The source map upload key (a CI secret) of a project, created on first read. Owners only. */
+export async function getUploadKey(email: string, projectId: string): Promise<UploadKey> {
+  await requireOwner(email, projectId);
+  const rows = await query<{ upload_key: string | null }>('SELECT upload_key FROM projects WHERE id = $1', [projectId]);
+  if (rows[0]?.upload_key) return { uploadKey: rows[0].upload_key };
+  const key = generateUploadKey();
+  // only fill it when still empty, so two first reads agree on one key
+  await query('UPDATE projects SET upload_key = $2 WHERE id = $1 AND upload_key IS NULL', [projectId, key]);
+  const again = await query<{ upload_key: string }>('SELECT upload_key FROM projects WHERE id = $1', [projectId]);
+  return { uploadKey: again[0].upload_key };
+}
+
+export async function rotateUploadKey(email: string, projectId: string): Promise<UploadKey> {
+  await requireOwner(email, projectId);
+  const key = generateUploadKey();
+  await query('UPDATE projects SET upload_key = $2 WHERE id = $1', [projectId, key]);
+  uploadKeyCache.clear();
+  return { uploadKey: key };
+}
+
+const uploadKeyCache = new Map<string, { projectId: string | null; exp: number }>();
+
+export async function projectIdForUploadKey(key: string | undefined): Promise<string | null> {
+  if (!key || !/^uk_[A-Za-z0-9]{20,80}$/.test(key)) return null;
+  const hit = uploadKeyCache.get(key);
+  if (hit && hit.exp > Date.now()) return hit.projectId;
+  const rows = await query<{ id: string }>('SELECT id FROM projects WHERE upload_key = $1 LIMIT 1', [key]);
+  const projectId = rows[0]?.id ?? null;
+  uploadKeyCache.set(key, { projectId, exp: Date.now() + (projectId ? 30_000 : 5_000) });
+  if (uploadKeyCache.size > 500) uploadKeyCache.delete(uploadKeyCache.keys().next().value!);
+  return projectId;
 }
 
 // ---- write key -> project id, cached per container (keys are looked up on every ingest call) ----
@@ -107,6 +147,29 @@ export async function rotateKey(email: string, projectId: string): Promise<Proje
   await query('UPDATE projects SET write_key = $2 WHERE id = $1', [projectId, generateWriteKey()]);
   keyCache.delete(p.writeKey);
   return getProject(email, projectId);
+}
+
+/**
+ * Settings and links of a project. Cleared as soon as the project is deleted, so its kiosks, triggers and Slack
+ * channels stop working right away. All are small (a handful of rows per project).
+ */
+export const PROJECT_CONFIG_TABLES = [
+  'project_members', 'kiosks', 'triggers', 'integrations', 'saved_views', 'goals', 'click_aliases', 'recording_settings',
+  'error_suppressions', 'budgets',
+] as const;
+
+/**
+ * Delete a project (owners only). The project disappears for everyone and its write key stops working at once;
+ * its raw data, rollups and other bulk rows are removed by the maintenance job (lib/purge.ts), which finds it
+ * through the deleted_projects row. That row is written first, so a failure halfway still gets cleaned up.
+ */
+export async function deleteProject(email: string, projectId: string): Promise<void> {
+  const p = await requireOwner(email, projectId);
+  await query('INSERT INTO deleted_projects (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [projectId]);
+  await query('DELETE FROM projects WHERE id = $1', [projectId]);
+  for (const table of PROJECT_CONFIG_TABLES) await query(`DELETE FROM ${table} WHERE project_id = $1`, [projectId]);
+  keyCache.delete(p.writeKey);
+  forgetRetention(projectId);
 }
 
 export async function listMembers(email: string, projectId: string): Promise<Member[]> {
