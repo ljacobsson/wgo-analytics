@@ -980,6 +980,9 @@ Resources:
         McpDelete:
           Type: HttpApi
           Properties: { ApiId: !Ref HttpApi, Path: /mcp, Method: DELETE }
+        McpRegister: # dynamic client registration, forwarded to Cognito (lib/mcp/http.ts registerClient)
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /mcp/register, Method: POST }
         WellKnown:
           Type: HttpApi
           Properties: { ApiId: !Ref HttpApi, Path: '/.well-known/{proxy+}', Method: GET }
@@ -1446,8 +1449,8 @@ Resources:
             CachePolicyId: !FindInMap [CloudFront, Managed, CachingDisabled]
             OriginRequestPolicyId: !FindInMap [CloudFront, Managed, AllViewerExceptHostHeader]
             Compress: false
-          # MCP: needs the Authorization header, which only an all-viewer-headers policy forwards
-          - PathPattern: /mcp
+          # MCP (/mcp and /mcp/register): needs the Authorization header, which only an all-viewer-headers policy forwards
+          - PathPattern: /mcp*
             TargetOriginId: api
             ViewerProtocolPolicy: https-only
             AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]

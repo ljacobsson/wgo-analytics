@@ -13,6 +13,7 @@ import { buildMcpServer } from './tools';
  *   POST /mcp                                        Streamable HTTP, stateless (2026-07-28 + 2025-era clients)
  *   GET  /.well-known/oauth-protected-resource[/mcp] RFC 9728: the resource (= the /mcp URL) and its authorization server
  *   GET  /.well-known/oauth-authorization-server     RFC 8414 metadata describing Cognito's OAuth endpoints
+ *   POST /mcp/register                               RFC 7591 registration, forwarded to Cognito DCR (see registerClient)
  *
  * Authorization is Cognito's MCP auth: clients self-register through Cognito dynamic client registration,
  * the user signs in on Cognito managed login, and the client asks for a token bound to this server's URL
@@ -20,6 +21,7 @@ import { buildMcpServer } from './tools';
  */
 
 export const MCP_PATH = '/mcp';
+export const REGISTER_PATH = '/mcp/register';
 
 export interface McpAuthConfig {
   /** Cognito user pool domain, e.g. `wgo-1a2b3c4d.auth.eu-west-1.amazoncognito.com` (managed login). */
@@ -72,7 +74,8 @@ export function authMetadata(publicOrigin: string, auth: McpAuthConfig): AuthMet
       issuer: publicOrigin,
       authorization_endpoint: `${as}/oauth2/authorize`,
       token_endpoint: `${as}/oauth2/token`,
-      registration_endpoint: `${as}/oauth2/register`,
+      // ours, not Cognito's: registerClient makes sure the client may request the read scope
+      registration_endpoint: `${publicOrigin}${REGISTER_PATH}`,
       revocation_endpoint: `${as}/oauth2/revoke`,
       jwks_uri: `${auth.cognitoIssuer}/.well-known/jwks.json`,
       response_types_supported: ['code'],
@@ -83,6 +86,43 @@ export function authMetadata(publicOrigin: string, auth: McpAuthConfig): AuthMet
       scopes_supported: [readScope(resourceUrl), 'openid', 'email', 'profile'],
     },
   };
+}
+
+/** Scopes every registered client may request: the read scope plus the OIDC ones in scopesSupported. */
+const registeredScopes = (resourceUrl: string) => [readScope(resourceUrl), 'openid', 'email', 'profile'];
+
+/**
+ * Dynamic client registration, forwarded to Cognito's /oauth2/register. Cognito gives a client that registers
+ * without a `scope` only `openid`, so its later authorization request for the read scope fails with
+ * invalid_scope. ChatGPT registers that way (Claude sends a scope). The scopes we advertise are added to every
+ * registration. The client still gets only the scopes it asks for when it authorizes.
+ */
+async function registerClient(request: Request, publicOrigin: string, auth: McpAuthConfig): Promise<Response> {
+  const text = await request.text();
+  if (text.length > 64 * 1024) return jsonResponse(413, { error: 'invalid_client_metadata', error_description: 'Request too large' });
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(text);
+  } catch {
+    return jsonResponse(400, { error: 'invalid_client_metadata', error_description: 'Body must be JSON client metadata' });
+  }
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return jsonResponse(400, { error: 'invalid_client_metadata', error_description: 'Body must be a JSON object' });
+  }
+  const meta = metadata as Record<string, unknown>;
+  const requested = typeof meta.scope === 'string' ? meta.scope.split(' ').filter(Boolean) : [];
+  const scope = [...new Set([...requested, ...registeredScopes(`${publicOrigin}${MCP_PATH}`)])].join(' ');
+
+  const res = await fetch(`https://${auth.cognitoDomain}/oauth2/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ ...meta, scope }),
+  });
+  // only the body and status: Cognito also sets an XSRF cookie for its own host
+  return new Response(await res.text(), {
+    status: res.status,
+    headers: { 'content-type': res.headers.get('content-type') ?? 'application/json', 'cache-control': 'no-store' },
+  });
 }
 
 export async function mcpFetch(request: Request, opts: McpFetchOptions): Promise<Response> {
@@ -100,6 +140,12 @@ export async function mcpFetch(request: Request, opts: McpFetchOptions): Promise
       return jsonResponse(200, buildOAuthProtectedResourceMetadata(meta), { 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' });
     }
     return jsonResponse(404, { error: 'Not found' });
+  }
+
+  if (url.pathname === REGISTER_PATH) {
+    if (!auth) return jsonResponse(404, { error: 'Not found (no OAuth in local development)' });
+    if (request.method !== 'POST') return jsonResponse(405, { error: 'Method not allowed' }, { allow: 'POST' });
+    return registerClient(request, publicOrigin, auth);
   }
 
   if (url.pathname !== MCP_PATH) return jsonResponse(404, { error: 'Not found' });

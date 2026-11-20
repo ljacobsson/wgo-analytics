@@ -1,6 +1,6 @@
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { OAuthError, OAuthErrorCode, type AuthInfo } from '@modelcontextprotocol/server';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { mcpFetch, readScope, type McpAuthConfig } from '../src/lib/mcp/http';
 import { scriptSnippet, windowParams } from '../src/lib/mcp/tools';
 import { dcrConfig, updateRequest } from '../src/handlers/mcpauth';
@@ -60,7 +60,7 @@ describe('MCP OAuth discovery', () => {
       issuer: ORIGIN,
       authorization_endpoint: `${as}/oauth2/authorize`,
       token_endpoint: `${as}/oauth2/token`,
-      registration_endpoint: `${as}/oauth2/register`,
+      registration_endpoint: `${ORIGIN}/mcp/register`,
       jwks_uri: `${auth.cognitoIssuer}/.well-known/jwks.json`,
       code_challenge_methods_supported: ['S256'],
     });
@@ -69,6 +69,63 @@ describe('MCP OAuth discovery', () => {
 
   it('has no discovery documents in local development', async () => {
     const res = await mcpFetch(new Request('http://localhost:8787/.well-known/oauth-protected-resource/mcp'), { publicOrigin: 'http://localhost:8787', auth: null });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('MCP dynamic client registration', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const register = (body: string, method = 'POST') =>
+    mcpFetch(new Request(`${ORIGIN}/mcp/register`, { method, headers: { 'content-type': 'application/json' }, body: method === 'POST' ? body : undefined }), { publicOrigin: ORIGIN, auth });
+
+  const stubCognito = () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response('{"client_id":"dcr_x"}', { status: 201, headers: { 'content-type': 'application/json;charset=UTF-8', 'set-cookie': 'XSRF-TOKEN=1' } });
+    });
+    return calls;
+  };
+
+  it('adds the read and OIDC scopes when the client registers without a scope (ChatGPT)', async () => {
+    const calls = stubCognito();
+    const res = await register(JSON.stringify({ client_name: 'ChatGPT', redirect_uris: ['https://chatgpt.com/cb'], token_endpoint_auth_method: 'none' }));
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({ client_id: 'dcr_x' });
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(`https://${auth.cognitoDomain}/oauth2/register`);
+    expect(calls[0].body).toMatchObject({ client_name: 'ChatGPT', redirect_uris: ['https://chatgpt.com/cb'], token_endpoint_auth_method: 'none' });
+    expect(String(calls[0].body.scope).split(' ').sort()).toEqual([SCOPE, 'email', 'openid', 'profile'].sort());
+  });
+
+  it('keeps the scopes a client asks for and adds the missing ones', async () => {
+    const calls = stubCognito();
+    await register(JSON.stringify({ client_name: 'Claude', redirect_uris: ['https://claude.ai/cb'], scope: `${SCOPE} offline_access` }));
+    const scopes = String(calls[0].body.scope).split(' ');
+    expect(scopes.filter((s) => s === SCOPE)).toHaveLength(1);
+    expect(scopes).toContain('offline_access');
+    expect(scopes).toContain('openid');
+  });
+
+  it('passes Cognito errors through', async () => {
+    vi.stubGlobal('fetch', async () => new Response('{"error":"invalid_redirect_uri"}', { status: 400, headers: { 'content-type': 'application/json' } }));
+    const res = await register(JSON.stringify({ redirect_uris: ['http://evil'] }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid_redirect_uri' });
+  });
+
+  it('rejects bodies that are not a JSON object, and other methods', async () => {
+    const calls = stubCognito();
+    expect((await register('not json')).status).toBe(400);
+    expect((await register('[1]')).status).toBe(400);
+    expect((await register('', 'GET')).status).toBe(405);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not exist in local development', async () => {
+    const res = await mcpFetch(new Request('http://localhost:8787/mcp/register', { method: 'POST', body: '{}' }), { publicOrigin: 'http://localhost:8787', auth: null });
     expect(res.status).toBe(404);
   });
 });
