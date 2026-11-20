@@ -9,12 +9,15 @@ import androidx.glance.appwidget.state.getAppWidgetState
 import androidx.glance.appwidget.state.updateAppWidgetState
 import androidx.glance.state.PreferencesGlanceStateDefinition
 import kotlinx.serialization.Serializable
+import tools.lars.wgo.data.ALL_PROJECTS
 import tools.lars.wgo.data.WgoJson
+import tools.lars.wgo.data.WidgetOverview
 import tools.lars.wgo.data.WidgetSummary
 
 /** Per-widget choices made in [tools.lars.wgo.ui.ConfigActivity]. */
 @Serializable
 data class WidgetConfig(
+    /** a project id, or [ALL_PROJECTS] for an overview of every project */
     val projectId: String,
     val projectName: String,
     val stats: List<String>,
@@ -23,12 +26,16 @@ data class WidgetConfig(
     val theme: String = "auto",
     /** background opacity, 30..100 */
     val opacity: Int = 100,
-)
+) {
+    val allProjects: Boolean get() = projectId == ALL_PROJECTS
+}
 
 /** The last fetched data plus fetch status. A failed refresh keeps the previous summary on screen. */
 @Serializable
 data class WidgetData(
     val summary: WidgetSummary? = null,
+    /** set instead of [summary] for an all-projects widget */
+    val overview: WidgetOverview? = null,
     val updatedAt: Long = 0,
     val refreshing: Boolean = false,
     val error: String? = null,

@@ -30,6 +30,10 @@ class WgoApi(private val apiUrl: String, private val token: String) {
         return get("/widget/v1/projects/${Uri.encode(projectId)}/summary?range=${Uri.encode(range)}&stats=${Uri.encode(keys)}")
     }
 
+    /** The same built-in stats for every project, busiest first. */
+    suspend fun overview(range: String, stats: List<String>): WidgetOverview =
+        get("/widget/v1/overview?range=${Uri.encode(range)}&stats=${Uri.encode(stats.joinToString(","))}")
+
     private suspend inline fun <reified T> get(path: String): T = withContext(Dispatchers.IO) {
         val conn = (URL(apiUrl + path).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000

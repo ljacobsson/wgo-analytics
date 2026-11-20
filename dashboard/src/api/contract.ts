@@ -758,6 +758,7 @@ export interface DeviceCreated {
 // GET /widget/v1/me                                             -> WidgetMe
 // GET /widget/v1/projects/{pid}/catalog                         -> WidgetCatalog
 // GET /widget/v1/projects/{pid}/summary?range&stats=<k1,k2,…>   -> WidgetSummary   (max 8 stats)
+// GET /widget/v1/overview?range&stats=<k1,k2,k3>                 -> WidgetOverview  (every project; max 3 built-in, non-text stats)
 export interface WidgetMe {
   email: string;
   projects: Array<{ id: string; name: string }>;
@@ -798,6 +799,15 @@ export interface WidgetSummary {
   to: string;
   generatedAt: string;
   stats: WidgetStat[];
+}
+export interface WidgetOverview {
+  range: WidgetRange;
+  from: string;
+  to: string;
+  generatedAt: string;
+  total: number; // projects the user can see; `projects` holds at most 30 of them
+  /** busiest first, by the first stat */
+  projects: Array<{ project: { id: string; name: string }; stats: WidgetStat[]; error: string | null }>;
 }
 
 // ---------- kiosks: wall displays without sign-in (e.g. a Raspberry Pi, set up with /downloads/wgo-kiosk.sh) ----------

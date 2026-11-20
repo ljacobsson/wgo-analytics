@@ -2,7 +2,8 @@
 
 A home-screen widget showing live stats from a WGO deployment. Users pick a project, a time range and up to 8
 stats per widget. The widget adapts to its size: one big number at 2×1, a row of tiles at 4×2, and a hero chart
-with a grid at 4×3 and larger. It ships as an APK that the dashboard serves under **Mobile widget**.
+with a grid at 4×3 and larger. A widget can also show **all projects**: one row per project, busiest first,
+with up to 3 built-in stats each. It ships as an APK that the dashboard serves under **Mobile widget**.
 
 ## How it fits together
 
@@ -25,6 +26,9 @@ Widget refresh (WorkManager, 15–180 min, or ↻) ─▶ GET {apiUrl}/widget/v1
   and error logs. Each project also gets its own tracked clicks (`track:<name>`), custom events (`event:<name>`)
   and OTel metrics (`metric:<name>`). Additive stats come from a single scan over 48 buckets: the previous window
   plus the current one, which yields the total, the comparison and the sparkline.
+- **All projects** (`GET /widget/v1/overview`) computes the same stats for every project the user can see (up to
+  30, four at a time) over one shared window, sorted by the first stat. Only built-in, non-text stats are allowed,
+  since tracked clicks, events and metrics differ per project. The widget stores `projectId = "*"` for this mode.
 - **Refresh**: Android runs background work at most every 15 minutes, so that's the floor for unattended
   updates. Tapping ↻ fetches immediately, and so does opening the app.
 

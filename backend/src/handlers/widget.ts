@@ -4,7 +4,7 @@ import { authenticateDevice } from '../lib/devices';
 import { allowlistMessage, emailAllowed } from '../lib/allowlist';
 import { handleError, header, HttpError, json } from '../lib/http';
 import { getProject, listProjects } from '../lib/projects';
-import { catalog, summary } from '../lib/widget';
+import { catalog, overview, summary } from '../lib/widget';
 
 /**
  * Read-only API for the Android widget, authenticated with a device token instead of Cognito
@@ -13,6 +13,7 @@ import { catalog, summary } from '../lib/widget';
  *   GET /widget/v1/me
  *   GET /widget/v1/projects/{pid}/catalog
  *   GET /widget/v1/projects/{pid}/summary?range=24h&stats=pageviews,errors
+ *   GET /widget/v1/overview?range=24h&stats=visitors_now,pageviews,errors
  */
 export function deviceToken(event: APIGatewayProxyEventV2): string | undefined {
   const bearer = header(event, 'authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1];
@@ -31,6 +32,8 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (resource === 'me' && !pid) {
       const projects = await listProjects(email);
       result = { email, projects: projects.map((p) => ({ id: p.id, name: p.name })) } satisfies WidgetMe;
+    } else if (resource === 'overview' && !pid) {
+      result = await overview(await listProjects(email), event.queryStringParameters ?? {});
     } else if (resource === 'projects' && pid && (sub === 'catalog' || sub === 'summary')) {
       const project = await getProject(email, pid); // membership check: 404 for projects the user can't see
       result = sub === 'catalog' ? await catalog(project.id) : await summary({ id: project.id, name: project.name }, event.queryStringParameters ?? {});

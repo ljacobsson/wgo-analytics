@@ -60,13 +60,19 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import tools.lars.wgo.data.ALL_PROJECTS
 import tools.lars.wgo.data.AccountStore
+import tools.lars.wgo.data.DEFAULT_OVERVIEW_STATS
 import tools.lars.wgo.data.DEFAULT_STATS
+import tools.lars.wgo.data.MAX_OVERVIEW_STATS
 import tools.lars.wgo.data.MAX_STATS
+import tools.lars.wgo.data.OVERVIEW_STATS
+import tools.lars.wgo.data.OverviewRow
 import tools.lars.wgo.data.ProjectRef
 import tools.lars.wgo.data.RANGES
 import tools.lars.wgo.data.StatOption
 import tools.lars.wgo.data.WgoApi
+import tools.lars.wgo.data.WidgetOverview
 import tools.lars.wgo.data.WidgetStat
 import tools.lars.wgo.data.WidgetSummary
 import tools.lars.wgo.widget.Fmt
@@ -118,8 +124,21 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
     var theme by remember { mutableStateOf("auto") }
     var opacity by remember { mutableFloatStateOf(100f) }
     var preview by remember { mutableStateOf<List<WidgetStat>?>(null) }
+    var overviewPreview by remember { mutableStateOf<WidgetOverview?>(null) }
     var previewFor by remember { mutableStateOf("") } // which project/range/stats `preview` was computed for
     var saving by remember { mutableStateOf(false) }
+
+    val allProjects = projectId == ALL_PROJECTS
+    val maxStats = if (allProjects) MAX_OVERVIEW_STATS else MAX_STATS
+
+    fun selectProject(id: String) {
+        // an overview row has room for a few built-in stats only
+        if (id == ALL_PROJECTS && !allProjects) {
+            val keep = stats.filter { it in OVERVIEW_STATS }.take(MAX_OVERVIEW_STATS).ifEmpty { DEFAULT_OVERVIEW_STATS }
+            stats.clear(); stats.addAll(keep)
+        }
+        projectId = id
+    }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { account = AccountStore.get(ctx) }
 
@@ -137,15 +156,17 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
         runCatching { WgoApi(a).me() }
             .onSuccess { me ->
                 projects = me.projects
-                if (projectId == null || me.projects.none { it.id == projectId }) projectId = me.projects.firstOrNull()?.id
+                val known = me.projects.any { it.id == projectId } || (projectId == ALL_PROJECTS && me.projects.isNotEmpty())
+                if (!known) projectId = me.projects.firstOrNull()?.id
                 error = null
             }
             .onFailure { error = it.message ?: "Couldn't load your projects" }
     }
 
-    LaunchedEffect(projectId, account) {
+    LaunchedEffect(projectId, account, projects) {
         val a = account ?: return@LaunchedEffect
-        val pid = projectId ?: return@LaunchedEffect
+        // an overview offers built-ins only, which every project's catalog lists
+        val pid = (if (allProjects) projects?.firstOrNull()?.id else projectId) ?: return@LaunchedEffect
         runCatching { WgoApi(a).catalog(pid) }.onSuccess { options = it.options }
     }
 
@@ -153,17 +174,22 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
     LaunchedEffect(projectId, range, stats.toList(), account) {
         val a = account ?: return@LaunchedEffect
         val pid = projectId ?: return@LaunchedEffect
-        if (stats.isEmpty()) { preview = emptyList(); return@LaunchedEffect }
+        if (stats.isEmpty()) { preview = emptyList(); overviewPreview = null; return@LaunchedEffect }
         delay(350)
         val keys = stats.toList()
-        runCatching { WgoApi(a).summary(pid, range, keys) }.onSuccess { preview = it.stats; previewFor = "$pid|$range|$keys" }
+        if (pid == ALL_PROJECTS) {
+            if (keys.any { it !in OVERVIEW_STATS } || keys.size > MAX_OVERVIEW_STATS) return@LaunchedEffect
+            runCatching { WgoApi(a).overview(range, keys) }.onSuccess { overviewPreview = it; previewFor = "$pid|$range|$keys" }
+        } else {
+            runCatching { WgoApi(a).summary(pid, range, keys) }.onSuccess { preview = it.stats; previewFor = "$pid|$range|$keys" }
+        }
     }
 
     val labelOf = { key: String -> options.firstOrNull { it.key == key }?.label ?: key.substringAfter(':').replace('_', ' ').replaceFirstChar { it.uppercase() } }
 
     fun save() {
         val pid = projectId ?: return
-        val name = projects?.firstOrNull { it.id == pid }?.name ?: ""
+        val name = if (pid == ALL_PROJECTS) "All projects" else projects?.firstOrNull { it.id == pid }?.name ?: ""
         saving = true
         scope.launch {
             val id = WidgetStore.glanceId(ctx, appWidgetId)
@@ -174,9 +200,14 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
             }
             WidgetStore.saveConfig(ctx, id, WidgetConfig(pid, name, stats.toList(), range, theme, opacity.toInt()))
             // show the preview's numbers immediately; the refresh below replaces them within seconds
-            val shown = preview?.takeIf { previewFor == "$pid|$range|${stats.toList()}" }
+            val fresh = previewFor == "$pid|$range|${stats.toList()}"
+            val shown = preview?.takeIf { fresh && pid != ALL_PROJECTS }
+            val shownOverview = overviewPreview?.takeIf { fresh && pid == ALL_PROJECTS }
             if (shown != null) WidgetStore.updateData(ctx, id) {
-                WidgetData(WidgetSummary(ProjectRef(pid, name), range, "", "", "", shown), System.currentTimeMillis(), refreshing = true)
+                WidgetData(summary = WidgetSummary(ProjectRef(pid, name), range, "", "", "", shown), updatedAt = System.currentTimeMillis(), refreshing = true)
+            }
+            if (shownOverview != null) WidgetStore.updateData(ctx, id) {
+                WidgetData(overview = shownOverview, updatedAt = System.currentTimeMillis(), refreshing = true)
             }
             StatsWidget().update(ctx, id)
             Scheduler.schedulePeriodic(ctx)
@@ -197,7 +228,7 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
             return@Box
         }
 
-        val grouped = options.filter { it.key !in stats }.groupBy { it.category }
+        val grouped = options.filter { it.key !in stats && (!allProjects || it.key in OVERVIEW_STATS) }.groupBy { it.category }
         LazyColumn(
             Modifier.fillMaxSize().safeDrawingPadding(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 110.dp),
@@ -212,8 +243,9 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
                     if (list == null) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Brand.accent)
                     } else {
-                        SectionTitle("Project")
-                        ChipFlow(list.map { it.id to it.name }, projectId) { projectId = it }
+                        SectionTitle("Project", if (allProjects) "One row per project, busiest first" else null)
+                        val choices = list.map { it.id to it.name }
+                        ChipFlow(if (list.size > 1) listOf(ALL_PROJECTS to "All projects") + choices else choices, projectId) { selectProject(it) }
                     }
                     Spacer(Modifier.height(16.dp))
                     SectionTitle("Time range", "Totals, comparisons and sparklines cover this window")
@@ -223,7 +255,11 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
 
             item {
                 Panel {
-                    SectionTitle("Your stats", "The first one is shown largest. Pick up to $MAX_STATS.")
+                    SectionTitle(
+                        "Your stats",
+                        if (allProjects) "Shown for every project. The first one orders the list and gets a chart. Pick up to $maxStats."
+                        else "The first one is shown largest. Pick up to $maxStats.",
+                    )
                     if (stats.isEmpty()) Text("Add stats from the list below.", color = Brand.faint, fontSize = 13.5.sp)
                     stats.forEachIndexed { i, key ->
                         SelectedRow(
@@ -236,16 +272,16 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
                 }
             }
 
-            item { Preview(preview, stats.toList(), labelOf) }
+            item { if (allProjects) OverviewPreview(overviewPreview, stats.toList(), labelOf) else Preview(preview, stats.toList(), labelOf) }
 
             grouped.forEach { (category, opts) ->
                 item(key = "cat-$category") {
                     Text(category.uppercase(), color = Brand.faint, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 4.dp, top = 6.dp))
                 }
                 items(opts, key = { it.key }) { opt ->
-                    OptionRow(opt, enabled = stats.size < MAX_STATS) {
-                        if (stats.size < MAX_STATS) stats.add(opt.key)
-                        else Toast.makeText(ctx, "A widget shows at most $MAX_STATS stats", Toast.LENGTH_SHORT).show()
+                    OptionRow(opt, enabled = stats.size < maxStats) {
+                        if (stats.size < maxStats) stats.add(opt.key)
+                        else Toast.makeText(ctx, if (allProjects) "An all-projects widget shows at most $maxStats stats" else "A widget shows at most $maxStats stats", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -324,6 +360,53 @@ private fun OptionRow(opt: StatOption, enabled: Boolean, onAdd: () -> Unit) {
             if (opt.description.isNotBlank()) Text(opt.description, color = Brand.faint, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Icon(Icons.Default.Add, contentDescription = "Add", tint = if (enabled) Brand.accent else Brand.faint)
+    }
+}
+
+/** A Compose rendition of an all-projects widget: one row per project with the chosen stats. */
+@Composable
+private fun OverviewPreview(overview: WidgetOverview?, keys: List<String>, labelOf: (String) -> String) {
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Preview", color = Brand.fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            if (overview == null) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp, color = Brand.accent)
+            else Icon(Icons.Default.Check, contentDescription = null, tint = Brand.good, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.padding(horizontal = 12.dp)) {
+            Text("Project", color = Brand.faint, fontSize = 11.sp, modifier = Modifier.weight(1f))
+            keys.forEach { Text(labelOf(it), color = Brand.faint, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.width(72.dp)) }
+        }
+        val rows = overview?.projects?.take(6) ?: emptyList()
+        rows.forEach { row -> OverviewPreviewRow(row, keys) }
+        overview?.let { if (it.total > rows.size) Text("+${it.total - rows.size} more, as many as fit the widget", color = Brand.faint, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, top = 6.dp)) }
+    }
+}
+
+@Composable
+private fun OverviewPreviewRow(row: OverviewRow, keys: List<String>) {
+    val byKey = row.stats.associateBy { it.key }
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(12.dp)).background(Brand.tile).padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(row.project.name, color = Brand.fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            row.error?.let { Text(it, color = Brand.warn, fontSize = 11.5.sp) }
+        }
+        keys.forEachIndexed { i, key ->
+            val s = byKey[key]
+            Column(Modifier.width(72.dp), horizontalAlignment = Alignment.End) {
+                Text(
+                    s?.let { Fmt.value(it) } ?: "–",
+                    color = when (s?.rating) { "good" -> Brand.good; "warn" -> Brand.warn; "bad" -> Brand.bad; else -> Brand.fg },
+                    fontSize = if (i == 0) 16.sp else 14.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                )
+                if (i == 0) s?.let { Fmt.delta(it) }?.let { d ->
+                    Text(d.label, color = when (d.tone) { Fmt.Tone.GOOD -> Brand.good; Fmt.Tone.BAD -> Brand.bad; else -> Brand.faint }, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
     }
 }
 

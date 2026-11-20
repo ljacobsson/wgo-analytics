@@ -48,10 +48,12 @@ import androidx.glance.state.GlanceStateDefinition
 import androidx.glance.state.PreferencesGlanceStateDefinition
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
+import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import tools.lars.wgo.R
 import tools.lars.wgo.data.Account
 import tools.lars.wgo.data.AccountStore
+import tools.lars.wgo.data.OverviewRow
 import tools.lars.wgo.data.WidgetStat
 import tools.lars.wgo.ui.ConfigActivity
 import tools.lars.wgo.ui.MainActivity
@@ -96,10 +98,10 @@ private class Ui(
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
     )
 
-    fun open(page: String): Action {
+    fun open(page: String, projectId: String = config.projectId): Action {
         val dash = account.dashUrl
         if (dash.isBlank()) return actionStartActivity(Intent(ctx, MainActivity::class.java))
-        val url = "$dash/#/p/${Uri.encode(config.projectId)}/$page?range=${config.range}"
+        val url = "$dash/#/p/${Uri.encode(projectId)}/$page?range=${config.range}"
         return actionStartActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
@@ -136,26 +138,32 @@ private fun Body(ui: Ui) {
     val size = LocalSize.current
     val w = size.width.value - 2 * PAD
     val h = size.height.value - 2 * PAD
-    val stats = ui.data.summary?.stats
-    if (stats.isNullOrEmpty()) {
-        Column(GlanceModifier.fillMaxSize()) {
-            if (h >= 70) Header(ui, compact = w < 160)
-            Box(GlanceModifier.fillMaxSize().clickable(actionRunCallback<RefreshAction>()), contentAlignment = Alignment.Center) {
-                val err = ui.data.error
-                Text(
-                    if (err != null && !ui.data.refreshing) "$err · tap to retry" else "Loading…",
-                    style = TextStyle(color = ui.pal.p(if (err != null) ui.pal.warn else ui.pal.muted), fontSize = 12.sp),
-                )
-            }
-        }
-        return
-    }
+    val overview = ui.data.overview?.takeIf { ui.config.allProjects }
+    val stats = ui.data.summary?.stats?.takeIf { !ui.config.allProjects }
     when {
+        overview != null && overview.projects.isNotEmpty() -> Overview(ui, overview.projects, overview.total, w, h)
+        overview != null -> Placeholder(ui, w, h, "No projects yet", warn = false, retry = false)
+        stats.isNullOrEmpty() -> {
+            val err = ui.data.error?.takeIf { !ui.data.refreshing }
+            Placeholder(ui, w, h, if (err != null) "$err · tap to retry" else "Loading…", warn = err != null, retry = true)
+        }
         w < 170 && h < 200 -> Compact(ui, stats, w, h)
         w < 170 -> Tall(ui, stats, w, h)
         // a board needs room for the hero chart plus at least one row of tiles
         h < 250 -> Strip(ui, stats, w, h)
         else -> Board(ui, stats, w, h)
+    }
+}
+
+/** No numbers to show yet: loading, a failed first load, or nothing to list. */
+@Composable
+private fun Placeholder(ui: Ui, w: Float, h: Float, message: String, warn: Boolean, retry: Boolean) {
+    Column(GlanceModifier.fillMaxSize()) {
+        if (h >= 70) Header(ui, compact = w < 160)
+        val box = GlanceModifier.fillMaxSize()
+        Box(if (retry) box.clickable(actionRunCallback<RefreshAction>()) else box, contentAlignment = Alignment.Center) {
+            Text(message, style = TextStyle(color = ui.pal.p(if (warn) ui.pal.warn else ui.pal.muted), fontSize = 12.sp))
+        }
     }
 }
 
@@ -234,10 +242,92 @@ private fun Board(ui: Ui, stats: List<WidgetStat>, w: Float, h: Float) {
     }
 }
 
+/**
+ * All projects: one row per project, busiest first. Each stat gets a value column (the first one with its
+ * change), headed by the stat labels; wide widgets add a sparkline of the first stat. Narrow ones show only it.
+ */
+@Composable
+private fun Overview(ui: Ui, rows: List<OverviewRow>, total: Int, w: Float, h: Float) {
+    val pal = ui.pal
+    val showHeader = h >= 100
+    val rowH = 44f
+    val minRowH = 38f
+    val rowGap = 6f
+    val colW = 60f
+    val sparkW = 48f
+    val nameMin = 84f
+    val keys = rows.firstOrNull { it.stats.isNotEmpty() }?.stats ?: emptyList()
+    // what fits beside the project name, the sparkline going first when space runs out
+    val cols = min(keys.size, max(1, floor((w - 20 - nameMin) / colW).toInt()))
+    val spark = w - 20 - nameMin - cols * colW >= sparkW + 6
+    val labels = cols > 1 || w >= 220
+    val avail = h - (if (showHeader) HEADER else 0f) - (if (labels) 16f else 0f)
+    val fit = max(1, floor((avail + rowGap) / (minRowH + rowGap)).toInt())
+    val shown = rows.take(fit)
+    val hidden = total - shown.size
+    // when the list overflows, rows share the height (the reported size runs a little large); otherwise they keep theirs
+    val fill = rows.size > fit
+
+    Column(GlanceModifier.fillMaxSize()) {
+        if (showHeader) Header(ui, compact = w < 200, extra = if (hidden > 0) "+$hidden more" else null)
+        if (labels) Row(GlanceModifier.fillMaxWidth().height(16.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.Top) {
+            Text("Project", maxLines = 1, modifier = GlanceModifier.defaultWeight(), style = TextStyle(color = pal.p(pal.faint), fontSize = 9.5.sp))
+            if (spark) Spacer(GlanceModifier.width((sparkW + 6).dp))
+            keys.take(cols).forEach { s ->
+                Text(
+                    s.label, maxLines = 1, modifier = GlanceModifier.width(colW.dp),
+                    style = TextStyle(color = pal.p(pal.faint), fontSize = 9.5.sp, textAlign = TextAlign.End),
+                )
+            }
+        }
+        shown.forEachIndexed { i, row ->
+            if (i > 0) Spacer(GlanceModifier.height(rowGap.dp))
+            OverviewRowView(ui, row, cols, colW, if (spark) sparkW else 0f, if (fill) GlanceModifier.defaultWeight() else GlanceModifier.height(rowH.dp))
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.OverviewRowView(ui: Ui, row: OverviewRow, cols: Int, colW: Float, sparkW: Float, sizing: GlanceModifier) {
+    val pal = ui.pal
+    val lead = row.stats.firstOrNull()
+    Row(
+        GlanceModifier.fillMaxWidth().then(sizing).background(pal.tile).cornerRadius(14.dp).padding(horizontal = 10.dp)
+            .clickable(ui.open(lead?.page ?: "overview", row.project.id)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(GlanceModifier.defaultWeight()) {
+            Text(row.project.name, maxLines = 1, style = TextStyle(color = pal.p(pal.text), fontSize = 13.sp, fontWeight = FontWeight.Bold))
+            if (row.error != null) Text(row.error, maxLines = 1, style = TextStyle(color = pal.p(pal.warn), fontSize = 10.sp))
+            else if (cols == 1 && lead != null) Text(lead.label, maxLines = 1, style = TextStyle(color = pal.p(pal.faint), fontSize = 10.sp))
+        }
+        if (sparkW > 0 && lead != null && lead.series.size >= 2) {
+            Sparkline.render(ui.ctx, lead.series, sparkW, 22f, pal.spark(lead.key, lead.rating, lead.better), zeroBased = lead.unit == "count")?.let {
+                Image(ImageProvider(it), contentDescription = null, modifier = GlanceModifier.size(sparkW.dp, 22.dp), contentScale = ContentScale.FillBounds)
+            }
+            Spacer(GlanceModifier.width(6.dp))
+        } else if (sparkW > 0) Spacer(GlanceModifier.width((sparkW + 6).dp))
+        row.stats.take(cols).forEachIndexed { i, s ->
+            Column(GlanceModifier.width(colW.dp), horizontalAlignment = Alignment.End) {
+                Text(
+                    Fmt.value(s), maxLines = 1,
+                    style = TextStyle(
+                        color = pal.p(ratingOr(pal, s)), fontSize = if (i == 0) 15.sp else 13.sp,
+                        fontWeight = FontWeight.Bold, textAlign = TextAlign.End,
+                    ),
+                )
+                if (i == 0) Fmt.delta(s)?.let {
+                    Text(it.label, maxLines = 1, style = TextStyle(color = pal.p(pal.tone(it.tone)), fontSize = 9.5.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End))
+                }
+            }
+        }
+    }
+}
+
 // ------------------------------------------------------------------ pieces
 
 @Composable
-private fun Header(ui: Ui, compact: Boolean) {
+private fun Header(ui: Ui, compact: Boolean, extra: String? = null) {
     val pal = ui.pal
     val data = ui.data
     val time = if (data.updatedAt > 0) DateFormat.getTimeFormat(ui.ctx).format(Date(data.updatedAt)) else null
@@ -245,7 +335,7 @@ private fun Header(ui: Ui, compact: Boolean) {
         data.error != null -> listOfNotNull(data.error, time).joinToString(" · ")
         compact -> time ?: ui.config.range
         else -> listOfNotNull(Fmt.rangeLabel(ui.config.range), time?.let { "updated $it" }).joinToString(" · ")
-    }
+    }.let { if (extra != null && data.error == null) "$it · $extra" else it }
     Column(GlanceModifier.fillMaxWidth().height(HEADER.dp)) {
         Row(GlanceModifier.fillMaxWidth().height((HEADER - 8).dp), verticalAlignment = Alignment.CenterVertically) { // 2 text lines
             Image(ImageProvider(R.drawable.ic_wgo_mark), contentDescription = null, modifier = GlanceModifier.size(if (compact) 16.dp else 20.dp))

@@ -173,7 +173,7 @@ export function WidgetPage() {
         <Step n={3} title="Add the widget">
           <ol className="list-decimal space-y-1.5 pl-4 text-[13px] text-muted marker:text-faint">
             <li>In the app, tap <span className="text-fg">Add to home screen</span>. Or long-press your home screen, open <span className="text-fg">Widgets</span> and drag <span className="text-fg">WGO stats</span> out.</li>
-            <li>Choose a project, a time range and up to 8 stats. The first stat is shown largest.</li>
+            <li>Choose a project, a time range and up to 8 stats. The first stat is shown largest. Or choose <span className="text-fg">All projects</span> for one row per project with up to 3 stats.</li>
             <li>Resize it any way you like: 2×1 shows one number, 4×2 a row of tiles, 4×3 and up a full board with charts.</li>
             <li>Tap the project name to change the stats later, and <RefreshCw size={12} className="inline" /> to refresh right away. Background updates run every 15 to 180 minutes; you set the interval in the app.</li>
           </ol>

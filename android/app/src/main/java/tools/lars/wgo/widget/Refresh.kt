@@ -34,10 +34,15 @@ object Refresher {
         }
         WidgetStore.updateData(context, id) { it.copy(refreshing = true) }
         StatsWidget().update(context, id)
-        val result = runCatching { WgoApi(account).summary(config.projectId, config.range, config.stats) }
+        val api = WgoApi(account)
+        val result = runCatching {
+            val now = System.currentTimeMillis()
+            if (config.allProjects) WidgetData(overview = api.overview(config.range, config.stats), updatedAt = now)
+            else WidgetData(summary = api.summary(config.projectId, config.range, config.stats), updatedAt = now)
+        }
         WidgetStore.updateData(context, id) { old ->
             result.fold(
-                onSuccess = { WidgetData(summary = it, updatedAt = System.currentTimeMillis()) },
+                onSuccess = { it },
                 onFailure = { e ->
                     val kind = when {
                         e is ApiException && e.unauthorized -> "auth"

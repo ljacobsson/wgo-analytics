@@ -367,6 +367,20 @@ d('integration (PostgreSQL)', async () => {
     expect((await w(`/widget/v1/projects/${pid}/summary`, token, { stats: 'pageviews', range: '2y' })).status).toBe(400);
     expect((await w(`/widget/v1/projects/${pid}/summary`, token, { stats: [...stats, 'lcp'].join(',') })).status).toBe(400);
 
+    // overview: the same stats for every project the device's user can see
+    const ov = await w('/widget/v1/overview', token, { range: '1h', stats: 'pageviews,visitors_now,errors' });
+    expect(ov.status).toBe(200);
+    expect(ov.body).toMatchObject({ range: '1h', total: 1 });
+    expect(ov.body.projects).toHaveLength(1);
+    expect(ov.body.projects[0].project).toEqual({ id: pid, name: 'Shop 2' });
+    expect(ov.body.projects[0].error).toBeNull();
+    expect(ov.body.projects[0].stats.map((x: any) => x.key)).toEqual(['pageviews', 'visitors_now', 'errors']);
+    expect(ov.body.projects[0].stats[0]).toMatchObject({ value: 3, previous: 0 });
+    expect((await w('/widget/v1/overview', other, { stats: 'pageviews' })).body).toMatchObject({ total: 0, projects: [] });
+    expect((await w('/widget/v1/overview', token, { stats: 'top_page' })).status).toBe(400); // text stats don't fit a row
+    expect((await w('/widget/v1/overview', token, { stats: 'track:buy' })).status).toBe(400); // per-project stats
+    expect((await w('/widget/v1/overview', token, { stats: 'pageviews,sessions,users,errors' })).status).toBe(400);
+
     const list = (await call('GET', '/api/devices')).body;
     expect(list).toHaveLength(1);
     expect(list[0].lastUsedAt).toBeTruthy();

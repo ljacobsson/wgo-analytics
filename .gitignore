@@ -11,6 +11,4 @@ slack-app-manifest.json
 .wgo-store/
 
 # HyperFrames caches in video/: check reports, snapshots, history, thumbnails, transcodes
-video/.hyperframes/
-video/.thumbnails/
-video/.transcode-cache/
+video/

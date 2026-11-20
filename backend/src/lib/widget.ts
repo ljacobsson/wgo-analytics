@@ -1,4 +1,4 @@
-import type { WidgetCatalog, WidgetRange, WidgetStat, WidgetStatOption, WidgetSummary } from '../contract';
+import type { WidgetCatalog, WidgetOverview, WidgetRange, WidgetStat, WidgetStatOption, WidgetSummary } from '../contract';
 import { breakdown, pages } from './analytics';
 import { Hll } from './hll';
 import { HttpError } from './http';
@@ -380,17 +380,15 @@ const LOADERS: Array<{ keys: string[]; load: Loader }> = [
   { keys: ['top_country'], load: topCountry },
 ];
 
-export async function summary(project: { id: string; name: string }, p: Params): Promise<WidgetSummary> {
-  const range = parseWidgetRange(p.range);
-  const keys = parseStatKeys(p.stats);
+/** Compute [keys] for one project over the last [range]. */
+async function computeStats(pid: string, range: WidgetRange, keys: string[], to = new Date()): Promise<{ from: Date; to: Date; stats: WidgetStat[] }> {
   const span = RANGES[range];
-  const to = new Date();
   const w: Win = { to, from: new Date(to.getTime() - span), prevFrom: new Date(to.getTime() - 2 * span), step: span / 1000 / POINTS };
 
   const results: Record<string, Part> = {};
   await Promise.all([
-    ...LOADERS.filter((l) => l.keys.some((k) => keys.includes(k))).map(async (l) => Object.assign(results, await l.load(project.id, w, keys))),
-    ...keys.filter((k) => DYNAMIC.test(k)).map(async (k) => { results[k] = await dynamicStat(project.id, w, k); }),
+    ...LOADERS.filter((l) => l.keys.some((k) => keys.includes(k))).map(async (l) => Object.assign(results, await l.load(pid, w, keys))),
+    ...keys.filter((k) => DYNAMIC.test(k)).map(async (k) => { results[k] = await dynamicStat(pid, w, k); }),
   ]);
 
   const stats: WidgetStat[] = keys.map((key) => {
@@ -411,5 +409,62 @@ export async function summary(project: { id: string; name: string }, p: Params):
       page: def?.page ?? (kind === 'track' ? 'clicks' : kind === 'metric' ? 'metrics' : 'events'),
     };
   });
-  return { project, range, from: w.from.toISOString(), to: w.to.toISOString(), generatedAt: new Date().toISOString(), stats };
+  return { from: w.from, to: w.to, stats };
+}
+
+export async function summary(project: { id: string; name: string }, p: Params): Promise<WidgetSummary> {
+  const range = parseWidgetRange(p.range);
+  const keys = parseStatKeys(p.stats);
+  const { from, to, stats } = await computeStats(project.id, range, keys);
+  return { project, range, from: from.toISOString(), to: to.toISOString(), generatedAt: new Date().toISOString(), stats };
+}
+
+// ---------------------------------------------------------------- overview (all projects)
+
+export const MAX_OVERVIEW_STATS = 3;
+const MAX_OVERVIEW_PROJECTS = 30;
+const OVERVIEW_CONCURRENCY = 4;
+/** Text stats don't fit a one-line project row. Dynamic stats (track:/event:/metric:) are per project. */
+const OVERVIEW_KEYS = Object.keys(BUILTIN).filter((k) => BUILTIN[k].unit !== 'text');
+
+export function parseOverviewKeys(v: string | undefined): string[] {
+  const keys = parseStatKeys(v);
+  if (keys.length > MAX_OVERVIEW_STATS) throw new HttpError(400, `At most ${MAX_OVERVIEW_STATS} stats per project in an overview`);
+  for (const k of keys) if (!OVERVIEW_KEYS.includes(k)) throw new HttpError(400, `Not available in an overview: ${k}`);
+  return keys;
+}
+
+/**
+ * The same stats for every project the user can see, busiest first (by the first stat). A project that fails
+ * to load comes back with an error instead of failing the whole overview.
+ */
+export async function overview(projects: Array<{ id: string; name: string }>, p: Params): Promise<WidgetOverview> {
+  const range = parseWidgetRange(p.range);
+  const keys = parseOverviewKeys(p.stats);
+  const list = projects.slice(0, MAX_OVERVIEW_PROJECTS);
+  const to = new Date(); // one window for every project, so the rows compare
+  const rows: WidgetOverview['projects'] = new Array(list.length);
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < list.length; i = next++) {
+      const project = { id: list[i].id, name: list[i].name };
+      try {
+        rows[i] = { project, stats: (await computeStats(project.id, range, keys, to)).stats, error: null };
+      } catch (err) {
+        console.error('widget overview: project failed', project.id, err);
+        rows[i] = { project, stats: [], error: 'Failed to load' };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(OVERVIEW_CONCURRENCY, list.length) }, worker));
+  const lead = (r: WidgetOverview['projects'][number]) => r.stats[0]?.value ?? -1;
+  rows.sort((a, b) => lead(b) - lead(a) || a.project.name.localeCompare(b.project.name));
+  return {
+    range,
+    from: new Date(to.getTime() - RANGES[range]).toISOString(),
+    to: to.toISOString(),
+    generatedAt: new Date().toISOString(),
+    total: projects.length,
+    projects: rows,
+  };
 }

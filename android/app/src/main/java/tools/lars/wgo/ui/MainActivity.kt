@@ -59,6 +59,8 @@ import kotlinx.coroutines.launch
 import tools.lars.wgo.data.Account
 import tools.lars.wgo.data.AccountStore
 import tools.lars.wgo.data.ApiException
+import tools.lars.wgo.data.ALL_PROJECTS
+import tools.lars.wgo.data.DEFAULT_OVERVIEW_STATS
 import tools.lars.wgo.data.DEFAULT_STATS
 import tools.lars.wgo.data.Pairing
 import tools.lars.wgo.data.ProjectRef
@@ -243,7 +245,8 @@ private fun Home(account: Account, onDisconnect: () -> Unit) {
             try {
                 val me = WgoApi(account).me()
                 projects = me.projects
-                if (selected == null || me.projects.none { it.id == selected }) selected = me.projects.firstOrNull()?.id
+                val known = me.projects.any { it.id == selected } || (selected == ALL_PROJECTS && me.projects.size > 1)
+                if (!known) selected = me.projects.firstOrNull()?.id
                 loadError = null
             } catch (e: ApiException) {
                 loadError = if (e.unauthorized) "This device was disconnected from the dashboard. Disconnect and pair again." else e.message
@@ -289,15 +292,16 @@ private fun Home(account: Account, onDisconnect: () -> Unit) {
                 if (list.size > 1) {
                     Text("Project", color = Brand.faint, fontSize = 12.sp)
                     Spacer(Modifier.height(6.dp))
-                    ChipFlow(list.map { it.id to it.name }, selected) { selected = it }
+                    ChipFlow(listOf(ALL_PROJECTS to "All projects") + list.map { it.id to it.name }, selected) { selected = it }
                     Spacer(Modifier.height(12.dp))
                 }
                 GradientButton(
                     "Add to home screen",
                     icon = { Icon(Icons.Default.Add, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
                     onClick = {
-                        val p = list.first { it.id == selected }
-                        val ok = StatsWidgetReceiver.requestPin(ctx, WidgetConfig(p.id, p.name, DEFAULT_STATS))
+                        val config = if (selected == ALL_PROJECTS) WidgetConfig(ALL_PROJECTS, "All projects", DEFAULT_OVERVIEW_STATS)
+                        else list.first { it.id == selected }.let { WidgetConfig(it.id, it.name, DEFAULT_STATS) }
+                        val ok = StatsWidgetReceiver.requestPin(ctx, config)
                         if (!ok) Toast.makeText(ctx, "Long-press your home screen, tap Widgets, then choose WGO", Toast.LENGTH_LONG).show()
                     },
                     modifier = Modifier.fillMaxWidth(),
