@@ -377,9 +377,9 @@ private fun OverviewPreview(overview: WidgetOverview?, keys: List<String>, label
             Text("Project", color = Brand.faint, fontSize = 11.sp, modifier = Modifier.weight(1f))
             keys.forEach { Text(labelOf(it), color = Brand.faint, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.width(72.dp)) }
         }
-        val rows = overview?.projects?.take(6) ?: emptyList()
+        val rows = overview?.projects ?: emptyList()
         rows.forEach { row -> OverviewPreviewRow(row, keys) }
-        overview?.let { if (it.total > rows.size) Text("+${it.total - rows.size} more, as many as fit the widget", color = Brand.faint, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, top = 6.dp)) }
+        overview?.let { if (it.total > rows.size) Text("Showing the busiest ${rows.size} of ${it.total} projects", color = Brand.faint, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, top = 6.dp)) }
     }
 }
 

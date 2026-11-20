@@ -5,6 +5,7 @@ import { HttpError } from './http';
 import { projectRetention } from './retention';
 import { hourlySketches, hourlyTypes, planRange, type Plan } from './rollups';
 import { rawQuery } from './store/duck';
+import { suppressedSql } from './suppressions';
 
 /**
  * Data for the Android home-screen widget: a catalog of stats the user can pick, and a summary that computes
@@ -197,7 +198,10 @@ async function rolledEventCounts(pid: string, w: Win, plan: Plan): Promise<Recor
 
 const eventCounts: Loader = async (pid, w, keys) => {
   const plan = await widgetPlan(pid, w);
-  if (plan) return rolledEventCounts(pid, w, plan);
+  if (plan) return rolledEventCounts(pid, w, plan); // rollups already leave out suppressed errors
+  // errors a suppression rule covers but that were stored before the rule existed don't count (as on the dashboard)
+  const params: unknown[] = [pid, w.prevFrom, w.to, w.step];
+  const S = await suppressedSql(pid, params);
   const [rows, [d]] = await Promise.all([
     rawQuery<{ b: number; pageview: number; click: number; error: number; http_error: number; sessions: number; users: number }>(pid, span(w),
       `SELECT ${B('ts')} AS b,
@@ -206,8 +210,8 @@ const eventCounts: Loader = async (pid, w, keys) => {
               sum(CASE WHEN type = 'error' THEN 1 ELSE 0 END)::int AS error,
               sum(CASE WHEN type = 'http_error' THEN 1 ELSE 0 END)::int AS http_error,
               count(DISTINCT session_id)::int AS sessions, count(DISTINCT anon_id)::int AS users
-         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL GROUP BY 1`,
-      [pid, w.prevFrom, w.to, w.step],
+         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL${S} GROUP BY 1`,
+      params,
     ),
     // distinct counts don't add up across buckets: count each window once
     keys.some((k) => k === 'sessions' || k === 'users')

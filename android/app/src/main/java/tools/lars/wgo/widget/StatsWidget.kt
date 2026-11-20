@@ -27,6 +27,8 @@ import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.appWidgetBackground
 import androidx.glance.appwidget.cornerRadius
+import androidx.glance.appwidget.lazy.LazyColumn
+import androidx.glance.appwidget.lazy.itemsIndexed
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.currentState
@@ -243,16 +245,16 @@ private fun Board(ui: Ui, stats: List<WidgetStat>, w: Float, h: Float) {
 }
 
 /**
- * All projects: one row per project, busiest first. Each stat gets a value column (the first one with its
- * change), headed by the stat labels; wide widgets add a sparkline of the first stat. Narrow ones show only it.
+ * All projects: one row per project, busiest first, in a list that scrolls when the projects don't all fit.
+ * Each stat gets a value column (the first one with its change), headed by the stat labels; wide widgets add a
+ * sparkline of the first stat. Narrow ones show only it.
  */
 @Composable
 private fun Overview(ui: Ui, rows: List<OverviewRow>, total: Int, w: Float, h: Float) {
     val pal = ui.pal
     val showHeader = h >= 100
-    val rowH = 44f
-    val minRowH = 38f
-    val rowGap = 6f
+    val rowH = 40f
+    val rowGap = 5f
     val colW = 60f
     val sparkW = 48f
     val nameMin = 84f
@@ -261,15 +263,11 @@ private fun Overview(ui: Ui, rows: List<OverviewRow>, total: Int, w: Float, h: F
     val cols = min(keys.size, max(1, floor((w - 20 - nameMin) / colW).toInt()))
     val spark = w - 20 - nameMin - cols * colW >= sparkW + 6
     val labels = cols > 1 || w >= 220
-    val avail = h - (if (showHeader) HEADER else 0f) - (if (labels) 16f else 0f)
-    val fit = max(1, floor((avail + rowGap) / (minRowH + rowGap)).toInt())
-    val shown = rows.take(fit)
-    val hidden = total - shown.size
-    // when the list overflows, rows share the height (the reported size runs a little large); otherwise they keep theirs
-    val fill = rows.size > fit
+    val hidden = total - rows.size // the server lists at most 30 projects
 
     Column(GlanceModifier.fillMaxSize()) {
-        if (showHeader) Header(ui, compact = w < 200, extra = if (hidden > 0) "+$hidden more" else null)
+        // narrow headers have room for the update time only
+        if (showHeader) Header(ui, compact = w < 200, extra = if (w < 200) null else "${rows.size} projects" + if (hidden > 0) " of $total" else "")
         if (labels) Row(GlanceModifier.fillMaxWidth().height(16.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.Top) {
             Text("Project", maxLines = 1, modifier = GlanceModifier.defaultWeight(), style = TextStyle(color = pal.p(pal.faint), fontSize = 9.5.sp))
             if (spark) Spacer(GlanceModifier.width((sparkW + 6).dp))
@@ -280,9 +278,12 @@ private fun Overview(ui: Ui, rows: List<OverviewRow>, total: Int, w: Float, h: F
                 )
             }
         }
-        shown.forEachIndexed { i, row ->
-            if (i > 0) Spacer(GlanceModifier.height(rowGap.dp))
-            OverviewRowView(ui, row, cols, colW, if (spark) sparkW else 0f, if (fill) GlanceModifier.defaultWeight() else GlanceModifier.height(rowH.dp))
+        LazyColumn(GlanceModifier.fillMaxWidth().defaultWeight()) {
+            itemsIndexed(rows, itemId = { _, row -> row.project.id.hashCode().toLong() }) { i, row ->
+                Column(GlanceModifier.fillMaxWidth().padding(top = if (i > 0) rowGap.dp else 0.dp)) {
+                    OverviewRowView(ui, row, cols, colW, if (spark) sparkW else 0f, GlanceModifier.height(rowH.dp))
+                }
+            }
         }
     }
 }

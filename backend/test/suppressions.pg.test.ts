@@ -87,6 +87,13 @@ d('error suppression (PostgreSQL)', async () => {
     expect(stats.totals.errors).toBe(1);
     expect(stats.series.reduce((a: number, p: { error: number }) => a + p.error, 0)).toBe(1);
 
+    // nor does the Android widget, for one project or all of them
+    const { summary, overview } = await import('../src/lib/widget');
+    const widgetErrors = (await summary({ id: pid, name: 'Pingis' }, { range: '1h', stats: 'errors' })).stats[0];
+    expect(widgetErrors.value).toBe(1);
+    expect(widgetErrors.series.reduce((a, b) => a + b, 0)).toBe(1);
+    expect((await overview([{ id: pid, name: 'Pingis' }], { range: '1h', stats: 'errors' })).projects[0].stats[0].value).toBe(1);
+
     // and the maintenance job recounts the rolled hours
     const hours = [...new Set([floorHour(now - 600_000), floorHour(now - 580_000)])];
     const rolled = async () => (await Promise.all(hours.map(errorRollup))).reduce((a, b) => a + b, 0);
