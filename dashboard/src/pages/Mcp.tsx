@@ -14,6 +14,10 @@ const CLIENTS: Array<{ value: Client; label: string }> = [
 /** Keep in sync with backend/src/lib/mcp/tools.ts. */
 const TOOLS: Array<{ group: string; tools: Array<[string, string]> }> = [
   {
+    group: 'Setup',
+    tools: [['create_project', 'New project with its script tag'], ['get_install_snippet', 'Script tag and OTLP settings']],
+  },
+  {
     group: 'Product analytics',
     tools: [
       ['list_projects', 'Your projects (start here)'], ['get_overview', 'Traffic totals and trend'], ['top_pages', 'Most viewed pages'],
@@ -81,7 +85,7 @@ function Instructions({ client, url, local }: { client: Client; url: string; loc
         local
           ? <>Locally there is no authentication: any client can connect.</>
           : <>It uses <b className="text-fg">OAuth 2.1</b> with dynamic client registration: clients that support MCP authorization discover the sign-in page from the URL themselves. There’s no API key to configure.</>,
-        <>The server only answers with read-only tools; nothing an assistant does can change your data or settings.</>,
+        <>Apart from creating a project and naming click targets, the tools are read-only: an assistant can’t change or delete your data or settings.</>,
       ]} />;
   }
 }
@@ -158,7 +162,7 @@ export function McpPage() {
         </div>
       </div>
       <Card>
-        <CardHeader title="Tools" sub={`${TOOLS.reduce((n, g) => n + g.tools.length, 0)} read-only tools; the assistant picks which to call`} />
+        <CardHeader title="Tools" sub={`${TOOLS.reduce((n, g) => n + g.tools.length, 0)} tools; the assistant picks which to call`} />
         <div className="grid grid-cols-1 gap-x-8 gap-y-4 px-4 pb-4 md:grid-cols-2">
           {TOOLS.map((g) => (
             <div key={g.group}>

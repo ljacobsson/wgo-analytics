@@ -2,7 +2,7 @@ import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { OAuthError, OAuthErrorCode, type AuthInfo } from '@modelcontextprotocol/server';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { mcpFetch, readScope, type McpAuthConfig } from '../src/lib/mcp/http';
-import { windowParams } from '../src/lib/mcp/tools';
+import { scriptSnippet, windowParams } from '../src/lib/mcp/tools';
 import { dcrConfig, updateRequest } from '../src/handlers/mcpauth';
 
 const ORIGIN = 'https://wgo.example.com';
@@ -117,10 +117,12 @@ describe('MCP bearer auth', () => {
     const find = msg.result.tools.find((t: { name: string }) => t.name === 'find_recordings');
     expect(find.inputSchema.properties.did.items.properties.action.enum).toEqual(['hover', 'click', 'rage_click', 'pageview', 'event', 'error']);
     expect(find.inputSchema.properties.did.items.properties).toHaveProperty('notClicked');
-    // the only tool that writes is naming a click target, and it's marked as such
+    // the only tools that write create a project or name a click target, and they're marked as such
     const writes = msg.result.tools.filter((t: { annotations?: { readOnlyHint?: boolean } }) => !t.annotations?.readOnlyHint);
-    expect(writes.map((t: { name: string }) => t.name)).toEqual(['set_click_alias']);
-    expect(writes[0].annotations).toMatchObject({ destructiveHint: false, idempotentHint: true });
+    expect(writes.map((t: { name: string }) => t.name).sort()).toEqual(['create_project', 'set_click_alias']);
+    const hints = (name: string) => writes.find((t: { name: string }) => t.name === name).annotations;
+    expect(hints('set_click_alias')).toMatchObject({ destructiveHint: false, idempotentHint: true });
+    expect(hints('create_project')).toMatchObject({ destructiveHint: false, idempotentHint: false });
   });
 
   it('only accepts browser origins of its own host or localhost', async () => {
@@ -132,6 +134,14 @@ describe('MCP bearer auth', () => {
 
   afterEach(() => {
     delete process.env.ALLOWED_EMAIL_DOMAINS;
+  });
+});
+
+describe('MCP install snippet', () => {
+  it('matches the dashboard\'s default script tag', () => {
+    expect(scriptSnippet('https://wgo.example.com', 'wk_abc123abc123')).toBe(
+      '<script src="https://wgo.example.com/sdk/v1/wgo.js" data-write-key="wk_abc123abc123" data-endpoint="https://wgo.example.com" async></script>',
+    );
   });
 });
 

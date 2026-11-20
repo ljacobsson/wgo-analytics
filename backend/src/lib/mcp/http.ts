@@ -47,8 +47,8 @@ const handler = createMcpHandler(
   (ctx) => {
     const email = ctx.authInfo?.extra?.email;
     if (typeof email !== 'string' || !email) throw new Error('MCP request without a resolved user');
-    const origin = ctx.authInfo?.extra?.origin;
-    return buildMcpServer(email, typeof origin === 'string' ? origin : undefined);
+    const { origin, ingestOrigin } = ctx.authInfo?.extra ?? {};
+    return buildMcpServer(email, typeof origin === 'string' ? origin : undefined, typeof ingestOrigin === 'string' ? ingestOrigin : undefined);
   },
   { responseMode: 'json', keepAliveMs: 0, maxRequestBodySize: 256 * 1024, onerror: (err) => console.warn('mcp:', err.message) },
 );
@@ -111,7 +111,7 @@ export async function mcpFetch(request: Request, opts: McpFetchOptions): Promise
 
   let authInfo: AuthInfo;
   if (!auth) {
-    authInfo = { token: 'dev', clientId: 'dev', scopes: [], extra: { email: opts.devEmail ?? 'dev@localhost.test' } };
+    authInfo = { token: 'dev', clientId: 'dev', scopes: [], extra: { email: opts.devEmail ?? 'dev@localhost.test', ingestOrigin: publicOrigin } };
   } else {
     const resourceUrl = `${publicOrigin}${MCP_PATH}`;
     const bearer = {
@@ -129,7 +129,8 @@ export async function mcpFetch(request: Request, opts: McpFetchOptions): Promise
     if (!email) return bearerAuthChallengeResponse(new OAuthError(OAuthErrorCode.InvalidToken, 'Unknown or disabled user'), bearer);
     if (!emailAllowed(email)) return jsonResponse(403, { error: allowlistMessage() });
     // through CloudFront, the public origin is the dashboard's: tools link to its pages
-    authInfo = { ...authInfo, extra: { ...authInfo.extra, email, origin: publicOrigin } };
+    // and it also serves the SDK and ingest (the IngestUrl and SdkUrl stack outputs)
+    authInfo = { ...authInfo, extra: { ...authInfo.extra, email, origin: publicOrigin, ingestOrigin: publicOrigin } };
   }
 
   return handler.fetch(request, { authInfo });

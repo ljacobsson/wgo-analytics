@@ -8,15 +8,16 @@ import * as FR from '../frustration';
 import * as C from '../cohorts';
 import * as G from '../goals';
 import * as GF from '../funnel';
+import type { Project } from '../../contract';
 import { HttpError } from '../http';
 import * as P from '../projects';
 import { BEHAVIOR_ACTIONS, findRecordings } from '../recordingSearch';
 import * as U from '../uptime';
 
 /**
- * WGO's MCP tools: read-only views over the same queries the dashboard uses, plus naming click targets (aliases),
- * which any project member can also do in the dashboard. Every tool that takes a `projectId` checks membership for
- * the signed-in user first, exactly like /api/projects/{pid}/*.
+ * WGO's MCP tools: read-only views over the same queries the dashboard uses, plus naming click targets (aliases)
+ * and creating a project, which any user can also do in the dashboard. Every tool that takes a `projectId` checks
+ * membership for the signed-in user first, exactly like /api/projects/{pid}/*.
  */
 
 type Q = Record<string, string | undefined>;
@@ -26,6 +27,8 @@ Browser data (pageviews, clicks, JavaScript errors, failed HTTP requests, Web Vi
 OpenTelemetry traces, logs and metrics are stored per project.
 
 Call list_projects first to get project ids. Every other tool takes a projectId.
+To start tracking a site or app, call create_project (unless list_projects already has a project for it) and
+add the returned snippet to the site's HTML <head>; get_install_snippet gives the snippet of an existing project.
 Time windows: pass \`range\` (e.g. "15m", "1h", "24h", "7d", max "92d") or ISO-8601 \`from\`/\`to\`. Without
 either, product analytics tools cover the last 24 hours and trace/log tools the last hour.
 Raw data is kept per project (default 14 days). Overview stats, top pages and breakdowns over longer windows
@@ -82,6 +85,8 @@ function fail(err: unknown): CallToolResult {
 }
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
+/** Adds something new; calling it twice adds two. */
+const CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
 /** Changes a label shared with the project's members; setting the same value twice changes nothing more. */
 const LABEL_WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
@@ -96,8 +101,36 @@ const behavior = z.object({
   notClicked: z.boolean().optional().describe('hover only, in `did`: the visitor never clicked the element they hovered during the recording'),
 });
 
-/** A fresh server for one request, acting as `email`. `origin`: the dashboard's, for links to its pages. */
-export function buildMcpServer(email: string, origin?: string): McpServer {
+/** The dashboard's default script tag: `scriptSnippet` in dashboard/src/pages/SnippetOptions.tsx with DEFAULT_OPTIONS. */
+export function scriptSnippet(ingestOrigin: string, writeKey: string): string {
+  return `<script src="${ingestOrigin}/sdk/v1/wgo.js" data-write-key="${writeKey}" data-endpoint="${ingestOrigin}" async></script>`;
+}
+
+/** What an assistant needs to start sending a project data: the browser snippet and the OTLP settings. */
+export function installInfo(project: Project, ingestOrigin: string, origin?: string) {
+  const { id, name, role, writeKey, createdAt } = project;
+  return {
+    project: { id, name, role, writeKey, createdAt },
+    snippet: scriptSnippet(ingestOrigin, writeKey),
+    howToInstall:
+      'Paste `snippet` once into the <head> of every page (index.html, or the root layout/template of a framework app, e.g. app/layout.tsx in Next.js). '
+      + 'It captures pageviews (including client-side navigation), clicks, JavaScript errors, failed requests and Web Vitals by itself. '
+      + 'Optional, from code after the script has loaded: WGO.identify(userId) when a user logs in, WGO.reset() on logout, WGO.track(name, props) for custom events. '
+      + 'Add data-track="name" to an element to give its clicks a stable name, data-wgo-ignore to never record clicks on it, data-wgo-mask to hide its text.',
+    openTelemetry: {
+      OTEL_EXPORTER_OTLP_ENDPOINT: ingestOrigin,
+      OTEL_EXPORTER_OTLP_HEADERS: `x-wgo-key=${writeKey}`,
+      OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+    },
+    ...(origin ? { dashboard: `${origin}/#/p/${id}` } : {}),
+  };
+}
+
+/**
+ * A fresh server for one request, acting as `email`. `origin`: the dashboard's, for links to its pages.
+ * `ingestOrigin`: where the SDK is served and data is sent, for install snippets.
+ */
+export function buildMcpServer(email: string, origin?: string, ingestOrigin?: string): McpServer {
   const server = new McpServer({ name: 'wgo', title: 'WGO analytics', version: '1.0.0' }, { instructions: INSTRUCTIONS });
 
   /** Registers a tool (read-only unless `hints` say otherwise) whose handler runs after the project membership check. */
@@ -107,7 +140,7 @@ export function buildMcpServer(email: string, origin?: string): McpServer {
     description: string,
     shape: S,
     run: (pid: string, args: z.infer<z.ZodObject<S>>) => Promise<unknown>,
-    hints: typeof READ_ONLY | typeof LABEL_WRITE = READ_ONLY,
+    hints: typeof READ_ONLY | typeof LABEL_WRITE | typeof CREATE = READ_ONLY,
   ) => {
     const inputSchema = z.object({ projectId, ...shape });
     server.registerTool(name, { title, description, inputSchema, annotations: { title, ...hints } }, (async (args: { projectId: string }) => {
@@ -136,6 +169,38 @@ export function buildMcpServer(email: string, origin?: string): McpServer {
         return fail(err);
       }
     },
+  );
+
+  const install = (project: Project) => {
+    if (!ingestOrigin) throw new HttpError(503, 'This server does not know its public URL; copy the snippet from the dashboard (Settings → Install)');
+    return installInfo(project, ingestOrigin, origin);
+  };
+
+  server.registerTool(
+    'create_project',
+    {
+      title: 'Create a project',
+      description: 'Creates a new project (one site or app) owned by you and returns its id, write key and a ready-to-paste script tag (`snippet`) that sends its data to the new project, with instructions where to put it and OpenTelemetry exporter settings. Check list_projects first: calling this twice creates two projects.',
+      inputSchema: z.object({ name: z.string().min(1).max(100).describe('Project name, 1-100 characters, e.g. the site\'s domain or the app\'s name') }),
+      annotations: { title: 'Create a project', ...CREATE },
+    },
+    async ({ name }) => {
+      try {
+        const trimmed = name.trim();
+        if (!trimmed) throw new HttpError(400, 'Project name must be 1-100 characters');
+        return ok(install(await P.createProject(email, trimmed)));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  projectTool(
+    'get_install_snippet',
+    'Install snippet',
+    'The script tag (`snippet`) that sends a project\'s browser data, where to put it, and OpenTelemetry exporter settings for its backend services.',
+    {},
+    async (pid) => install(await P.getProject(email, pid)),
   );
 
   projectTool(

@@ -489,8 +489,9 @@ claude mcp add --transport http wgo https://wgo.example.com/mcp
 
 There is no key to copy. The client registers itself, opens a browser, and you sign in with your WGO account.
 It then sees exactly the projects you're a member of. The tools are:
+- **Setup:** `create_project` creates a project you own and returns its script tag with the new write key filled in, so an assistant can add it to your site's `<head>` in one go. `get_install_snippet` returns the same for an existing project.
 - **Product analytics:** `list_projects`, `get_overview`, `top_clicks`, `top_pages`, `goal_conversions`, `goal_funnel`, `get_retention`, `list_frustration`, `list_errors`, `list_failed_requests`, `explain_change`, `list_releases`, `breakdown`, `web_vitals`, `visitor_locations`, `search_events`, `find_recordings`, `list_uptime_checks`
-- **Click aliases:** `list_click_aliases`, and `set_click_alias`, which gives an autocaptured selector a readable name. It's the only tool that changes anything, and it only changes labels that any project member can also edit in the dashboard.
+- **Click aliases:** `list_click_aliases`, and `set_click_alias`, which gives an autocaptured selector a readable name. Apart from `create_project`, it's the only tool that changes anything, and it only changes labels that any project member can also edit in the dashboard.
 - **OpenTelemetry:** `list_services`, `list_traces`, `get_trace`, `search_logs`, `list_metrics`, `get_metric_series`
 
 Use the dashboard's host (the `McpUrl` stack output). The raw API Gateway URL has no OAuth resource of its own.

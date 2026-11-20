@@ -160,10 +160,12 @@ chat.
 
 - 🔑 You sign in with your WGO account in the browser. There is no API key to copy.
 - 🔒 Access is limited to the projects you are a member of. It's read-only, except that the assistant can give
-  click targets readable names.
-- 🧰 Twenty-six tools cover the overview, top pages and clicks, click names, frustration, conversion goals and
-  funnels, retention, errors, failed requests, releases, explanations of a change, Web Vitals, visitor locations,
-  recordings, uptime, traces, logs and metrics. Ask for "sessions that hovered the buy button but never clicked it".
+  click targets readable names and create a project.
+- 🚀 Ask it to "add WGO to this site": it creates the project and pastes the script tag, with the new write key
+  filled in, into your code.
+- 🧰 Twenty-eight tools cover project setup, the overview, top pages and clicks, click names, frustration,
+  conversion goals and funnels, retention, errors, failed requests, releases, explanations of a change, Web Vitals,
+  visitor locations, recordings, uptime, traces, logs and metrics. Ask for "sessions that hovered the buy button but never clicked it".
 
 ```sh
 claude mcp add --transport http wgo https://wgo.example.com/mcp
