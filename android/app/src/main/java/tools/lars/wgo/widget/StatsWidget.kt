@@ -83,6 +83,7 @@ class StatsWidget : GlanceAppWidget() {
 private const val PAD = 12f
 private const val GAP = 8f
 private const val HEADER = 44f // header row + gap below it
+private const val MAX_CHILDREN = 10 // Glance renders at most 10 children per Row/Column/Box
 
 /** Everything a layout needs, resolved once per composition. */
 private class Ui(
@@ -245,7 +246,8 @@ private fun Board(ui: Ui, stats: List<WidgetStat>, w: Float, h: Float) {
 }
 
 /**
- * All projects: one row per project, busiest first, in a list that scrolls when the projects don't all fit.
+ * All projects: one row per project, busiest first. Rows stretch to fill the widget when they all fit, and
+ * become a scrolling list when they don't.
  * Each stat gets a value column (the first one with its change), headed by the stat labels; wide widgets add a
  * sparkline of the first stat. Narrow ones show only it.
  */
@@ -264,6 +266,10 @@ private fun Overview(ui: Ui, rows: List<OverviewRow>, total: Int, w: Float, h: F
     val spark = w - 20 - nameMin - cols * colW >= sparkW + 6
     val labels = cols > 1 || w >= 220
     val hidden = total - rows.size // the server lists at most 30 projects
+    // all rows fit at their normal height: stretch them to fill the widget; otherwise scroll. Glance drops the
+    // children of a container past the 10th, so stretched rows get a column of their own and gaps are padding.
+    val avail = h - (if (showHeader) HEADER else 0f) - (if (labels) 16f else 0f)
+    val fits = rows.size <= MAX_CHILDREN && rows.size * (rowH + rowGap) - rowGap <= avail
 
     Column(GlanceModifier.fillMaxSize()) {
         // narrow headers have room for the update time only
@@ -278,7 +284,13 @@ private fun Overview(ui: Ui, rows: List<OverviewRow>, total: Int, w: Float, h: F
                 )
             }
         }
-        LazyColumn(GlanceModifier.fillMaxWidth().defaultWeight()) {
+        if (fits) Column(GlanceModifier.fillMaxWidth().defaultWeight()) {
+            rows.forEachIndexed { i, row ->
+                Column(GlanceModifier.fillMaxWidth().defaultWeight().padding(top = if (i > 0) rowGap.dp else 0.dp)) {
+                    OverviewRowView(ui, row, cols, colW, if (spark) sparkW else 0f, GlanceModifier.fillMaxHeight())
+                }
+            }
+        } else LazyColumn(GlanceModifier.fillMaxWidth().defaultWeight()) {
             itemsIndexed(rows, itemId = { _, row -> row.project.id.hashCode().toLong() }) { i, row ->
                 Column(GlanceModifier.fillMaxWidth().padding(top = if (i > 0) rowGap.dp else 0.dp)) {
                     OverviewRowView(ui, row, cols, colW, if (spark) sparkW else 0f, GlanceModifier.height(rowH.dp))

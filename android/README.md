@@ -3,7 +3,8 @@
 A home-screen widget showing live stats from a WGO deployment. Users pick a project, a time range and up to 8
 stats per widget. The widget adapts to its size: one big number at 2×1, a row of tiles at 4×2, and a hero chart
 with a grid at 4×3 and larger. A widget can also show **all projects**: one row per project, busiest first,
-with up to 3 built-in stats each, in a list that scrolls when they don't all fit. It ships as an APK that the dashboard serves under **Mobile widget**.
+with up to 3 built-in stats each. The rows stretch to fill the widget, or scroll when they don't all fit. It ships
+as an APK that the dashboard serves under **Mobile widget**.
 
 ## How it fits together
 
