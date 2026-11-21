@@ -8,15 +8,19 @@ import * as FR from '../frustration';
 import * as C from '../cohorts';
 import * as G from '../goals';
 import * as GF from '../funnel';
-import type { Project } from '../../contract';
+import { TRIGGER_WINDOWS, type Project, type Trigger } from '../../contract';
+import { OPS } from '../filters';
+import * as M from '../monitor';
+import * as S from '../slack';
+import * as T from '../triggers';
 import { HttpError } from '../http';
 import * as P from '../projects';
 import { BEHAVIOR_ACTIONS, findRecordings } from '../recordingSearch';
 import * as U from '../uptime';
 
 /**
- * WGO's MCP tools: read-only views over the same queries the dashboard uses, plus naming click targets (aliases)
- * and creating a project, which any user can also do in the dashboard. Every tool that takes a `projectId` checks
+ * WGO's MCP tools: read-only views over the same queries the dashboard uses, plus naming click targets (aliases),
+ * defining conversion goals and triggers (alerts) and creating a project, which any member can also do in the dashboard. Every tool that takes a `projectId` checks
  * membership for the signed-in user first, exactly like /api/projects/{pid}/*.
  */
 
@@ -42,7 +46,15 @@ in list_failed_requests), and get_trace shows the page and visitor that sent it.
 Session recordings (when the project records them): find_recordings finds them by what visitors did or didn't
 do, e.g. hovered an element but never clicked it, or reached /pricing but never /signup, and links to each one.
 Clicks are captured automatically with a CSS selector. When a selector is hard to read, give it an alias with
-set_click_alias (the dashboard and top_clicks then show the alias); it changes labels only, never data.`;
+set_click_alias (the dashboard and top_clicks then show the alias); it changes labels only, never data.
+Conversion goals: list_goals shows each goal's definition. To track a new conversion (a signup, a purchase, a
+click on a button), call create_goal with event filters; check them first with search_events (same fields), e.g.
+that a /thank-you pageview or a "checkout_completed" custom event actually occurs. Goals count from raw events, so
+a new goal immediately covers the project's retention. update_goal changes one, delete_goal removes it.
+Triggers (alerts) notify a webhook or a connected Slack channel: on every new matching event, log or span
+(kind "match"), when a number over a window crosses a value ("threshold"), or when it's unusual for the time of
+day ("anomaly"). list_triggers shows them and the Slack channels you can send to; preview_trigger shows what a
+threshold/anomaly trigger would see right now; create_trigger saves one; test_trigger sends a sample notification.`;
 
 const RANGE_RE = /^(\d+)\s*(m|h|d)$/i;
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
@@ -87,8 +99,55 @@ function fail(err: unknown): CallToolResult {
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 /** Adds something new; calling it twice adds two. */
 const CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
-/** Changes a label shared with the project's members; setting the same value twice changes nothing more. */
+/** Changes a label or definition shared with the project's members (never recorded data); setting the same value twice changes nothing more. */
 const LABEL_WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
+/** Removes something members set up (never recorded data). */
+const DELETE = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } as const;
+/** Saves a trigger, which sends notifications to a webhook or Slack: open world. */
+const TRIGGER_CREATE = { ...CREATE, openWorldHint: true } as const;
+const TRIGGER_WRITE = { ...LABEL_WRITE, openWorldHint: true } as const;
+/** Sends a sample notification now. */
+const SEND = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } as const;
+type Hints = { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean };
+
+const EVENT_FIELDS = 'A built-in event field: type (pageview, click, error, http_error, custom, vitals, identify), path, url, title, referrer, selector, elementText, elementTag, trackName (data-track), name (custom event name), errorMessage, httpRoute, httpStatus, userId, browser, os, device, country…; or props.<path> for event properties, e.g. props.props.plan for a custom event\'s `plan`';
+/** A filter as in the dashboard's filter bar and the API; `field` describes the fields of its scope. */
+const filterOf = (field: string) => z.object({
+  field: z.string().min(1).max(200).describe(field),
+  op: z.enum(OPS as [string, ...string[]]).describe('eq/neq exact; contains/not_contains/starts_with/ends_with case-insensitive; gt/gte/lt/lte; set/not_set need no value'),
+  value: z.union([z.string().max(500), z.number()]).optional(),
+});
+const eventFilter = filterOf(EVENT_FIELDS);
+const anyFilter = filterOf(
+  `events scope: ${EVENT_FIELDS}. logs scope: body, service, severityText, severityNumber (17+ = error), traceId, attributes.<key>, resource.<key>. spans scope: name, service, durationMs, statusCode (2 = error), statusMessage, kind, traceId, attributes.<key> (e.g. attributes.http.route), resource.<key>`,
+);
+
+const triggerShape = {
+  name: z.string().min(1).max(120).describe('Trigger name, 1-120 characters'),
+  filters: z.array(anyFilter).max(20).describe('Rows to watch, all filters must match. At least one for match triggers; threshold/anomaly may pass [] to watch every row of the scope'),
+  destination: z.union([
+    z.object({ type: z.literal('webhook'), url: z.string().url().describe('Public https URL. hooks.slack.com URLs get a Slack-formatted message; others get JSON signed with X-WGO-Signature (HMAC-SHA256 with signingSecret)') }),
+    z.object({ type: z.literal('slack'), integrationId: z.string().describe('A Slack channel id from list_triggers.slackChannels') }),
+  ]),
+  cooldownSeconds: z.number().int().min(0).max(86400).optional().describe('Least time between notifications (default 300). Matches in between are counted and reported with the next one'),
+  enabled: z.boolean().optional().describe('Default true; false pauses it'),
+  metric: z.object({
+    agg: z.enum(['count', 'sessions', 'session_rate', 'avg', 'p75', 'p95']).describe('count of matching rows; sessions with a match; session_rate: share (0..1) of all sessions with a match (events only); avg/p75/p95 of `field`'),
+    field: z.string().optional().describe('Numeric field for avg/p75/p95, e.g. durationMs or props.lcp'),
+  }).optional().describe('threshold/anomaly only'),
+  condition: z.union([
+    z.object({ op: z.enum(['above', 'below']), value: z.number() }),
+    z.object({ direction: z.enum(['up', 'down', 'either']), sensitivity: z.enum(['low', 'medium', 'high']) }),
+  ]).optional().describe('threshold: {op, value}, e.g. {op: "below", value: 1} = nothing arrived. anomaly: {direction, sensitivity}'),
+  windowMinutes: z.number().int().optional().describe(`threshold/anomaly only: one of ${TRIGGER_WINDOWS.join(', ')}`),
+};
+const triggerScope = z.enum(['events', 'logs', 'spans']).optional().describe('What it watches (default events): product events, OpenTelemetry logs or spans');
+const triggerKind = z.enum(['match', 'threshold', 'anomaly']).optional().describe('Default match');
+
+/** Slack-bound triggers never need the webhook signing secret, so only webhook ones show it. */
+const publicTrigger = ({ signingSecret, ...t }: Trigger) => (t.destination.type === 'webhook' ? { ...t, signingSecret } : t);
+const goalFilters = z.array(eventFilter).min(1).max(20);
+const goalSteps = z.array(z.object({ name: z.string().min(1).max(80), filters: goalFilters })).max(G.MAX_STEPS);
 
 const behavior = z.object({
   action: z.enum(BEHAVIOR_ACTIONS as [string, ...string[]]).describe(
@@ -140,7 +199,7 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
     description: string,
     shape: S,
     run: (pid: string, args: z.infer<z.ZodObject<S>>) => Promise<unknown>,
-    hints: typeof READ_ONLY | typeof LABEL_WRITE | typeof CREATE = READ_ONLY,
+    hints: Hints = READ_ONLY,
   ) => {
     const inputSchema = z.object({ projectId, ...shape });
     server.registerTool(name, { title, description, inputSchema, annotations: { title, ...hints } }, (async (args: { projectId: string }) => {
@@ -275,6 +334,128 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
     'Failed fetch/XHR calls made by the browser, grouped by method, normalized route and status (0 = network failure).',
     { ...windowShape, limit: limit(50, 200) },
     (pid, a) => A.httpErrors(pid, { ...windowParams(a), limit: str(a.limit ?? 50) }),
+  );
+
+  projectTool(
+    'list_goals',
+    'Goal definitions',
+    'The project\'s conversion goals, oldest first: id, name, the event filters that count as a conversion, optional funnel steps before it, and who created it. goal_conversions has their numbers.',
+    {},
+    (pid) => G.listGoals(pid),
+  );
+
+  projectTool(
+    'create_goal',
+    'Create a conversion goal',
+    `Defines a conversion goal shared with all project members: a session converts when it has at least one event matching all \`filters\`. E.g. a signup page: [{field: "type", op: "eq", value: "pageview"}, {field: "path", op: "eq", value: "/welcome"}]; a custom event: [{field: "type", op: "eq", value: "custom"}, {field: "name", op: "eq", value: "checkout_completed"}]; a button: [{field: "type", op: "eq", value: "click"}, {field: "trackName", op: "eq", value: "signup"}]. Optional \`steps\` (at most ${G.MAX_STEPS}, in order) are the funnel before the goal, shown by goal_funnel. Check list_goals first: calling this twice creates two goals (at most ${G.MAX_GOALS} per project). Returns the goal; it counts past events too, so goal_conversions shows numbers right away.`,
+    {
+      name: z.string().min(1).max(120).describe('Goal name, 1-120 characters, e.g. "Signed up"'),
+      filters: goalFilters.describe('Event filters, all must match'),
+      steps: goalSteps.optional().describe('Funnel steps before the goal, each with a name (1-80 characters) and event filters'),
+    },
+    (pid, a) => G.createGoal(pid, email, a as never),
+    CREATE,
+  );
+
+  projectTool(
+    'update_goal',
+    'Change a conversion goal',
+    'Changes a goal\'s name, filters or funnel steps (id from list_goals); what you leave out stays. `steps: []` removes the funnel steps. Its numbers are recomputed from raw events, so the change applies to the past too.',
+    {
+      goalId: z.string().describe('Goal id from list_goals'),
+      name: z.string().min(1).max(120).optional(),
+      filters: goalFilters.optional().describe('Replaces the goal\'s filters'),
+      steps: goalSteps.optional().describe('Replaces the funnel steps'),
+    },
+    (pid, { goalId, ...body }) => G.updateGoal(pid, goalId, body as never),
+    LABEL_WRITE,
+  );
+
+  projectTool(
+    'delete_goal',
+    'Delete a conversion goal',
+    'Removes a goal (id from list_goals) for all project members. Recorded events stay, so recreating it with the same filters brings its numbers back.',
+    { goalId: z.string().describe('Goal id from list_goals') },
+    async (pid, a) => {
+      await G.deleteGoal(pid, a.goalId);
+      return { deleted: a.goalId };
+    },
+    DELETE,
+  );
+
+  projectTool(
+    'list_triggers',
+    'Triggers (alerts)',
+    'The project\'s triggers with their kind, scope, filters, destination, cooldown, whether enabled, when they last fired and the last delivery status (threshold/anomaly also their current state and usual range), plus `slackChannels`: the Slack channels connected to the project that a trigger can notify (connecting a new one is done in the dashboard, Settings → Triggers).',
+    {},
+    async (pid) => {
+      const [triggers, slackChannels] = await Promise.all([T.listTriggers(pid), S.listIntegrations(pid)]);
+      return { triggers: triggers.map(publicTrigger), slackChannels: slackChannels.map(({ id, channel, teamName }) => ({ id, channel, teamName })) };
+    },
+  );
+
+  projectTool(
+    'preview_trigger',
+    'Preview a trigger',
+    'What a threshold or anomaly trigger would see right now, without saving it: the current value over its window, whether it would fire, and for anomaly triggers the usual range at this time of day. Use it to pick a sensible threshold before create_trigger.',
+    {
+      scope: triggerScope,
+      kind: z.enum(['threshold', 'anomaly']),
+      filters: triggerShape.filters,
+      metric: triggerShape.metric.unwrap(),
+      condition: triggerShape.condition.unwrap(),
+      windowMinutes: z.number().int().describe(`One of ${TRIGGER_WINDOWS.join(', ')}`),
+    },
+    (pid, a) => M.previewTrigger(pid, a as never),
+  );
+
+  projectTool(
+    'create_trigger',
+    'Create a trigger (alert)',
+    `Saves a trigger shared with all project members. Kinds: "match" notifies on every new row matching all \`filters\` (checked as data arrives), e.g. errors on /checkout: scope events, filters [{field: "type", op: "eq", value: "error"}, {field: "path", op: "starts_with", value: "/checkout"}]. "threshold" notifies when \`metric\` over the last \`windowMinutes\` crosses \`condition\` and again when it resolves (checked every minute), e.g. no pageviews in 30 minutes: filters [{field: "type", op: "eq", value: "pageview"}], metric {agg: "count"}, condition {op: "below", value: 1}, windowMinutes 30. "anomaly" notifies when the metric is unusual for the time of day compared with the previous 7 days (needs 3 days of data). Scope and kind can't be changed later. Notifications go to a public https webhook or a Slack channel from list_triggers.slackChannels. Check list_triggers first: calling this twice creates two triggers. A webhook trigger's result has signingSecret for verifying X-WGO-Signature. test_trigger sends a sample notification.`,
+    { scope: triggerScope, kind: triggerKind, ...triggerShape },
+    async (pid, a) => publicTrigger(await T.createTrigger(pid, email, a as never, origin)),
+    TRIGGER_CREATE,
+  );
+
+  projectTool(
+    'update_trigger',
+    'Change a trigger',
+    'Changes a trigger (id from list_triggers): name, filters, destination, cooldown, enabled (false pauses it) and, for threshold/anomaly, metric, condition and window. What you leave out stays. Changing what a threshold/anomaly trigger measures resets its state. Scope and kind can\'t be changed: create a new trigger instead.',
+    {
+      triggerId: z.string().describe('Trigger id from list_triggers'),
+      name: triggerShape.name.optional(),
+      filters: triggerShape.filters.optional(),
+      destination: triggerShape.destination.optional(),
+      cooldownSeconds: triggerShape.cooldownSeconds,
+      enabled: triggerShape.enabled,
+      metric: triggerShape.metric,
+      condition: triggerShape.condition,
+      windowMinutes: triggerShape.windowMinutes,
+    },
+    async (pid, { triggerId, ...body }) => publicTrigger(await T.updateTrigger(pid, triggerId, body as never, origin)),
+    TRIGGER_WRITE,
+  );
+
+  projectTool(
+    'delete_trigger',
+    'Delete a trigger',
+    'Removes a trigger (id from list_triggers) for all project members; it stops notifying. To pause it instead, update_trigger with enabled false.',
+    { triggerId: z.string().describe('Trigger id from list_triggers') },
+    async (pid, a) => {
+      await T.deleteTrigger(pid, a.triggerId);
+      return { deleted: a.triggerId };
+    },
+    DELETE,
+  );
+
+  projectTool(
+    'test_trigger',
+    'Send a test notification',
+    'Sends a sample notification from a trigger (id from list_triggers) to its destination now, marked as a test, and returns whether it was delivered and the status (HTTP status, or the Slack error).',
+    { triggerId: z.string().describe('Trigger id from list_triggers') },
+    (pid, a) => T.testTrigger(pid, a.triggerId),
+    SEND,
   );
 
   projectTool(

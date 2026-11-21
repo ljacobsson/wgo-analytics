@@ -40,6 +40,14 @@ async function createInstance(): Promise<DuckDBInstance> {
     TimeZone: 'UTC',
     // PostgreSQL's order: NULLs last ascending, first descending
     default_null_order: 'nulls_last_on_asc_first_on_desc',
+    // A warm container keeps the bytes and footers of files it has read (DuckDB's external file cache) and
+    // reads them again without asking S3. Keys are never rewritten (store/write.ts newFileName; merges write
+    // new keys), so cached files need no revalidation: by default every query sent one request per file
+    // to check it, which was most of a refreshing dashboard's S3 cost. Only files new since the container
+    // last saw them are fetched.
+    validate_external_file_cache: 'NO_VALIDATION',
+    enable_http_metadata_cache: 'true',
+    parquet_metadata_cache: 'true',
   };
   const memMb = Number(process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE);
   if (memMb) {

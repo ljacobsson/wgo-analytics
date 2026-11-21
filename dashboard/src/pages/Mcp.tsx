@@ -27,6 +27,13 @@ const TOOLS: Array<{ group: string; tools: Array<[string, string]> }> = [
     ],
   },
   {
+    group: 'Goals and triggers',
+    tools: [
+      ['create_goal', 'Define a conversion goal'], ['update_goal', 'Change a goal'], ['create_trigger', 'Alert to a webhook or Slack'],
+      ['preview_trigger', 'Check a threshold before saving'], ['test_trigger', 'Send a test notification'],
+    ],
+  },
+  {
     group: 'OpenTelemetry',
     tools: [
       ['list_services', 'Services, errors and latency'], ['list_traces', 'Search traces'], ['get_trace', 'One trace’s spans'],

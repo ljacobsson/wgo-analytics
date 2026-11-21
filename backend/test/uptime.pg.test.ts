@@ -123,17 +123,19 @@ d('uptime checks and costs (PostgreSQL)', async () => {
       },
     }) as never;
     const usage = async () => ({ dataBucketBytes: 123, dsqlStorageBytes: 456 });
+    const shares = async () => ({ lambda: new Map([['all', { ingestion: 3, querying: 1 }]]), dsql: new Map() });
 
     it('caches a result for 12 hours, then asks again', async () => {
       await query('INSERT INTO rollups (project_id, dim, hour, key, events, sessions) VALUES ($1, $2, $3, $4, $5, $6)', [pid, 'type', new Date(now - 3600e3), 'pageview', 1200, 0]);
-      const a = await C.getCosts(pid, now, { ce: ce(false), usage });
+      const a = await C.getCosts(pid, now, { ce: ce(false), usage, shares });
       expect(a).toMatchObject({ setup: false, monthToDate: 0.8, lastMonth: 1.5, usage: { eventsThisMonth: 1200, projectEventsThisMonth: 1200, dataBucketBytes: 123, dsqlStorageBytes: 456 } });
+      expect(a.categories.map((c) => [c.category, c.amount])).toEqual([['storage', 0], ['ingestion', 0.6], ['querying', 0.2], ['other', 0]]);
       expect(calls).toBe(1);
       const [{ n }] = await query<{ n: string }>('SELECT count(*) AS n FROM cost_cache');
       expect(Number(n)).toBe(1);
-      await C.getCosts(undefined, now + 11 * 3600e3, { ce: ce(false), usage });
+      await C.getCosts(undefined, now + 11 * 3600e3, { ce: ce(false), usage, shares });
       expect(calls).toBe(1);
-      const b = await C.getCosts(undefined, now + 12 * 3600e3 + 1000, { ce: ce(false), usage });
+      const b = await C.getCosts(undefined, now + 12 * 3600e3 + 1000, { ce: ce(false), usage, shares });
       expect(calls).toBe(2);
       expect(b.usage.projectEventsThisMonth).toBeUndefined();
     });
@@ -141,16 +143,26 @@ d('uptime checks and costs (PostgreSQL)', async () => {
     it('falls back to setup, cached for only 1 hour', async () => {
       await query('DELETE FROM cost_cache');
       calls = 0;
-      const a = await C.getCosts(undefined, now, { ce: ce(true), usage });
+      const a = await C.getCosts(undefined, now, { ce: ce(true), usage, shares });
       expect(a.setup).toBe(true);
       expect(a.reason).toContain('AccessDenied');
       expect(a.monthToDate).toBe(0);
-      await C.getCosts(undefined, now + 30 * 60e3, { ce: ce(true), usage });
+      await C.getCosts(undefined, now + 30 * 60e3, { ce: ce(true), usage, shares });
       expect(calls).toBe(1);
-      await C.getCosts(undefined, now + 61 * 60e3, { ce: ce(false, true), usage });
+      await C.getCosts(undefined, now + 61 * 60e3, { ce: ce(false, true), usage, shares });
       expect(calls).toBe(2); // empty results (tag not activated) are setup too
-      expect((await C.getCosts(undefined, now + 62 * 60e3, { ce: ce(false), usage })).setup).toBe(true);
+      expect((await C.getCosts(undefined, now + 62 * 60e3, { ce: ce(false), usage, shares })).setup).toBe(true);
       expect(calls).toBe(2);
+    });
+
+    it('asks again when the cached report predates the category split', async () => {
+      await query('DELETE FROM cost_cache');
+      calls = 0;
+      const old = { ...(await C.getCosts(undefined, now, { ce: ce(false), usage, shares })), categories: undefined };
+      await query('UPDATE cost_cache SET data = $1::jsonb', [JSON.stringify(old)]);
+      const b = await C.getCosts(undefined, now + 60e3, { ce: ce(false), usage, shares });
+      expect(calls).toBe(2);
+      expect(b.categories).toHaveLength(4);
     });
   });
 });

@@ -174,12 +174,21 @@ describe('MCP bearer auth', () => {
     const find = msg.result.tools.find((t: { name: string }) => t.name === 'find_recordings');
     expect(find.inputSchema.properties.did.items.properties.action.enum).toEqual(['hover', 'click', 'rage_click', 'pageview', 'event', 'error']);
     expect(find.inputSchema.properties.did.items.properties).toHaveProperty('notClicked');
-    // the only tools that write create a project or name a click target, and they're marked as such
+    // the only tools that write create a project, name a click target or define goals and triggers, and they're marked as such
     const writes = msg.result.tools.filter((t: { annotations?: { readOnlyHint?: boolean } }) => !t.annotations?.readOnlyHint);
-    expect(writes.map((t: { name: string }) => t.name).sort()).toEqual(['create_project', 'set_click_alias']);
+    expect(writes.map((t: { name: string }) => t.name).sort()).toEqual([
+      'create_goal', 'create_project', 'create_trigger', 'delete_goal', 'delete_trigger', 'set_click_alias', 'test_trigger', 'update_goal', 'update_trigger',
+    ]);
     const hints = (name: string) => writes.find((t: { name: string }) => t.name === name).annotations;
     expect(hints('set_click_alias')).toMatchObject({ destructiveHint: false, idempotentHint: true });
     expect(hints('create_project')).toMatchObject({ destructiveHint: false, idempotentHint: false });
+    expect(hints('create_goal')).toMatchObject({ destructiveHint: false, idempotentHint: false });
+    expect(hints('update_goal')).toMatchObject({ destructiveHint: false, idempotentHint: true });
+    expect(hints('delete_goal')).toMatchObject({ destructiveHint: true, idempotentHint: true });
+    expect(hints('create_trigger')).toMatchObject({ destructiveHint: false, idempotentHint: false, openWorldHint: true });
+    expect(hints('update_trigger')).toMatchObject({ destructiveHint: false, idempotentHint: true, openWorldHint: true });
+    expect(hints('delete_trigger')).toMatchObject({ destructiveHint: true });
+    expect(hints('test_trigger')).toMatchObject({ destructiveHint: false, idempotentHint: false, openWorldHint: true });
   });
 
   it('only accepts browser origins of its own host or localhost', async () => {

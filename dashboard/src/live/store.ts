@@ -6,7 +6,7 @@ import { KIOSK_TOKEN } from '../lib/kiosk';
 
 export type LiveStatus = 'connecting' | 'connected' | 'reconnecting';
 export interface FeedItem { ev: LiveEvent; at: number }
-const FEED_CAP = 500;
+export const FEED_CAP = 500;
 // The latest firehose events are kept per project in localStorage, so a page opened right after them (the
 // overview after onboarding, a reload) can show what arrived before the warehouse has it.
 const RECENT_CAP = 100;

@@ -1,4 +1,4 @@
-import type { CostsResponse, UptimeBucket, UptimeCheck, UptimeIncident, UptimeResults } from '../api/contract';
+import type { CostCategory, CostsResponse, UptimeBucket, UptimeCheck, UptimeIncident, UptimeResults } from '../api/contract';
 import { hash, rnd } from './rng';
 
 /** Mock uptime checks: results are generated from the check's id and the clock, so they look the same on every load. */
@@ -85,23 +85,45 @@ export function resultsFor(c: MockCheck, from: number, to: number, now: number):
 export function mockCosts(pid: string, now: number, setup: boolean): CostsResponse {
   const fetchedAt = new Date(now - 3 * 3600e3).toISOString();
   if (setup) {
-    return { setup: true, reason: 'Cost Explorer returned no costs for this stack yet.', currency: 'USD', monthToDate: 0, lastMonth: 0, daily: [], services: [], usage: { eventsThisMonth: 0, dataBucketBytes: null, dsqlStorageBytes: null }, fetchedAt };
+    return { setup: true, reason: 'Cost Explorer returned no costs for this stack yet.', currency: 'USD', monthToDate: 0, lastMonth: 0, daily: [], services: [], categories: [], usage: { eventsThisMonth: 0, dataBucketBytes: null, dsqlStorageBytes: null }, fetchedAt };
   }
   const d = new Date(now);
   const dom = d.getUTCDate();
+  const r3 = (n: number) => Math.round(n * 1000) / 1000;
   const daily = Array.from({ length: 30 }, (_, i) => {
     const t = now - (29 - i) * 86400e3;
-    return { day: new Date(t).toISOString().slice(0, 10), amount: Math.round((0.085 + rnd(7, Math.floor(t / 86400e3)) * 0.03 + ([0, 6].includes(new Date(t).getUTCDay()) ? -0.02 : 0)) * 1000) / 1000 };
+    const k = Math.floor(t / 86400e3);
+    // storage grows slowly, ingestion follows traffic (lower on weekends), querying comes in bursts
+    const storage = 0.018 + i * 0.0003;
+    const ingestion = 0.036 + rnd(7, k) * 0.012 + ([0, 6].includes(new Date(t).getUTCDay()) ? -0.014 : 0);
+    const querying = 0.016 + rnd(11, k) * rnd(13, k) * 0.03;
+    const other = 0.008 + rnd(17, k) * 0.002;
+    const byCategory = { storage: r3(storage), ingestion: r3(ingestion), querying: r3(querying), other: r3(other) };
+    return { day: new Date(t).toISOString().slice(0, 10), amount: r3(storage + ingestion + querying + other), byCategory };
   });
   const monthPrefix = new Date(now).toISOString().slice(0, 7);
-  const monthToDate = Math.round(daily.filter((x) => x.day.startsWith(monthPrefix)).reduce((a, b) => a + b.amount, 0) * 100) / 100;
-  const parts: Array<[string, number]> = [['Amazon Aurora DSQL', 0.38], ['AWS Lambda', 0.22], ['Amazon CloudFront', 0.14], ['Amazon S3', 0.1], ['Amazon API Gateway', 0.08], ['Amazon SQS', 0.05], ['Other', 0.03]];
+  const month = daily.filter((x) => x.day.startsWith(monthPrefix));
+  const monthToDate = Math.round(month.reduce((a, b) => a + b.amount, 0) * 100) / 100;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const total = (c: CostCategory) => month.reduce((a, b) => a + b.byCategory[c], 0);
+  const split: Record<CostCategory, Array<[string, number]>> = {
+    storage: [['Amazon Simple Storage Service', 0.62], ['Amazon Aurora DSQL', 0.31], ['AmazonCloudWatch', 0.07]],
+    ingestion: [['AWS Lambda', 0.34], ['Amazon CloudFront', 0.26], ['Amazon API Gateway', 0.17], ['Amazon Aurora DSQL', 0.13], ['Amazon Simple Queue Service', 0.1]],
+    querying: [['Amazon Aurora DSQL', 0.46], ['AWS Lambda', 0.38], ['Amazon API Gateway', 0.1], ['Amazon Simple Storage Service', 0.06]],
+    other: [['AWS Lambda', 0.7], ['AmazonCloudWatch', 0.3]],
+  };
+  const categories = (['storage', 'ingestion', 'querying', 'other'] as CostCategory[]).map((category) => ({
+    category, amount: r2(total(category)), services: split[category].map(([service, share]) => ({ service, amount: r2(total(category) * share) })),
+  }));
+  const services = new Map<string, number>();
+  for (const c of categories) for (const s of c.services) services.set(s.service, (services.get(s.service) ?? 0) + s.amount);
   const eventsThisMonth = 1_240_000;
   const projectEvents = pid === 'prj_demo' ? 472_000 : 150_000;
   return {
     setup: false, currency: 'USD', monthToDate, lastMonth: 3.12,
     forecast: Math.round((monthToDate / Math.max(1, dom)) * new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate() * 100) / 100,
-    daily, services: parts.map(([service, share]) => ({ service, amount: Math.round(monthToDate * share * 100) / 100 })),
+    daily, categories,
+    services: [...services].sort((a, b) => b[1] - a[1]).map(([service, amount]) => ({ service, amount: r2(amount) })),
     usage: { eventsThisMonth, projectEventsThisMonth: projectEvents, dataBucketBytes: 3.4e9, dsqlStorageBytes: 0.21e9 }, fetchedAt,
   };
 }

@@ -491,7 +491,11 @@ There is no key to copy. The client registers itself, opens a browser, and you s
 It then sees exactly the projects you're a member of. The tools are:
 - **Setup:** `create_project` creates a project you own and returns its script tag with the new write key filled in, so an assistant can add it to your site's `<head>` in one go. `get_install_snippet` returns the same for an existing project.
 - **Product analytics:** `list_projects`, `get_overview`, `top_clicks`, `top_pages`, `goal_conversions`, `goal_funnel`, `get_retention`, `list_frustration`, `list_errors`, `list_failed_requests`, `explain_change`, `list_releases`, `breakdown`, `web_vitals`, `visitor_locations`, `search_events`, `find_recordings`, `list_uptime_checks`
-- **Click aliases:** `list_click_aliases`, and `set_click_alias`, which gives an autocaptured selector a readable name. Apart from `create_project`, it's the only tool that changes anything, and it only changes labels that any project member can also edit in the dashboard.
+- **Click aliases:** `list_click_aliases`, and `set_click_alias`, which gives an autocaptured selector a readable name.
+- **Goals:** `list_goals`, `create_goal`, `update_goal`, `delete_goal` define conversion goals (event filters, optional funnel steps). Goals count from raw events, so a new one has numbers right away.
+- **Triggers (alerts):** `list_triggers` (with the project's connected Slack channels), `preview_trigger`, `create_trigger`, `update_trigger`, `delete_trigger`, and `test_trigger`, which sends a sample notification. Connecting a Slack channel still happens in the dashboard.
+
+The tools that change anything (`create_project`, `set_click_alias` and the goal and trigger tools) only do what any project member can also do in the dashboard, and never touch recorded data.
 - **OpenTelemetry:** `list_services`, `list_traces`, `get_trace`, `search_logs`, `list_metrics`, `get_metric_series`
 
 Use the dashboard's host (the `McpUrl` stack output). The raw API Gateway URL has no OAuth resource of its own.

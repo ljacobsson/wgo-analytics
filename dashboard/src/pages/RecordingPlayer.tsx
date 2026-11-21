@@ -57,7 +57,13 @@ export function RecordingPlayerPage({ sessionId }: { sessionId: string }) {
   }, [events, t]);
   useEffect(() => {
     if (!state?.playing || current < 0) return;
-    list.current?.querySelector(`[data-i="${current}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // scroll the list itself, not with scrollIntoView: that also scrolls the page, which on a phone (list below
+    // the player) drags the player out of view as events play
+    const box = list.current, row = box?.querySelector<HTMLElement>(`[data-i="${current}"]`);
+    if (!box || !row) return;
+    const top = row.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+    if (top < box.scrollTop) box.scrollTo({ top, behavior: 'smooth' });
+    else if (top + row.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTo({ top: top + row.offsetHeight - box.clientHeight, behavior: 'smooth' });
   }, [current, state?.playing]);
 
   // keyboard: space plays and pauses, arrows skip 5 s

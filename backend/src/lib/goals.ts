@@ -4,6 +4,7 @@ import { parseRange } from './analytics';
 import { query } from './db';
 import { filterSql, filtersFrom, parseFilters } from './filters';
 import { HttpError } from './http';
+import { isUuid } from './projects';
 import { rawQuery } from './store/duck';
 
 /**
@@ -55,6 +56,7 @@ export async function listGoals(pid: string): Promise<Goal[]> {
 }
 
 async function getGoal(pid: string, id: string): Promise<GoalRow> {
+  if (!isUuid(id)) throw new HttpError(404, 'Goal not found');
   const [row] = await query<GoalRow>('SELECT * FROM goals WHERE project_id = $1 AND id = $2', [pid, id]);
   if (!row) throw new HttpError(404, 'Goal not found');
   return row;

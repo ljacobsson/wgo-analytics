@@ -7,6 +7,7 @@ import { query } from './db';
 import { matchesAll, type MatchRow } from './filterMatch';
 import { filterSql, parseFilters } from './filters';
 import { HttpError } from './http';
+import { isUuid } from './projects';
 
 // ---------------------------------------------------------------- validation
 
@@ -72,7 +73,7 @@ async function validateDestination(pid: string, d: unknown): Promise<TriggerDest
     return { type: 'webhook', url: dest.url };
   }
   if (dest?.type === 'slack' && typeof dest.integrationId === 'string') {
-    const rows = await query('SELECT 1 FROM integrations WHERE project_id = $1 AND id = $2 AND type = $3', [pid, dest.integrationId, 'slack']);
+    const rows = !isUuid(dest.integrationId) ? [] : await query('SELECT 1 FROM integrations WHERE project_id = $1 AND id = $2 AND type = $3', [pid, dest.integrationId, 'slack']);
     if (!rows.length) throw new HttpError(400, 'That Slack channel is not connected to this project');
     return { type: 'slack', integrationId: dest.integrationId };
   }
@@ -177,6 +178,7 @@ export async function listTriggers(pid: string): Promise<Trigger[]> {
 }
 
 async function getTrigger(pid: string, id: string): Promise<TriggerRow> {
+  if (!isUuid(id)) throw new HttpError(404, 'Trigger not found');
   const [row] = await query<TriggerRow>('SELECT * FROM triggers WHERE project_id = $1 AND id = $2', [pid, id]);
   if (!row) throw new HttpError(404, 'Trigger not found');
   return row;

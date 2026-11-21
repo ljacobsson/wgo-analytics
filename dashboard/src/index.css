@@ -140,6 +140,10 @@ body {
 
 @keyframes slide-in { from { opacity: 0; transform: translateY(-14px); background: color-mix(in srgb, var(--accent) 22%, transparent); } to { opacity: 1; transform: none; } }
 .row-new { animation: slide-in .45s cubic-bezier(.2,.8,.2,1); }
+/* Events page: rows brought in from the live feed open up from nothing, push the list down and glow briefly */
+@keyframes row-arrive { from { height: 0; opacity: 0; transform: translateY(-10px); } to { height: 2.5rem; opacity: 1; transform: none; } }
+@keyframes row-glow { from { background-color: color-mix(in srgb, var(--accent) 18%, transparent); } to { background-color: transparent; } }
+.row-arrive { overflow: hidden; animation: row-arrive .45s cubic-bezier(.2,.8,.2,1) backwards, row-glow 2.4s ease-out backwards; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pop-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
 @keyframes drawer-in { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }

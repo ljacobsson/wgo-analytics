@@ -1126,6 +1126,10 @@ export interface UptimeResults {
 // Signed-in users who own at least one project (others get 403). Amounts come from AWS Cost Explorer for the
 // resources of this stack (tag aws:cloudformation:stack-name, which must be activated as a cost allocation tag),
 // cached for 12 hours: Cost Explorer charges $0.01 per request. `setup: true` means no numbers are available yet.
+// Categories: storage (S3, DSQL, DynamoDB and log storage), ingestion (taking events in and writing them), querying
+// (the dashboard, MCP, widgets, kiosks and live view reading them) and other (background jobs, sign-in, logs).
+// Lambda and DSQL compute are shared, so they are divided by CloudWatch metrics (lib/costSplit.ts): estimates.
+export type CostCategory = 'storage' | 'ingestion' | 'querying' | 'other';
 export interface CostsResponse {
   setup: boolean;
   reason?: string; // set with `setup`: why there are no numbers
@@ -1133,8 +1137,10 @@ export interface CostsResponse {
   monthToDate: number;
   lastMonth: number;
   forecast?: number; // month-to-date projected linearly to the end of the month
-  daily: Array<{ day: string; amount: number }>; // last 30 days
+  daily: Array<{ day: string; amount: number; byCategory: Record<CostCategory, number> }>; // last 30 days
   services: Array<{ service: string; amount: number }>; // month to date, largest first
+  // month to date, in the order storage, ingestion, querying, other; each with its services, largest first
+  categories: Array<{ category: CostCategory; amount: number; services: Array<{ service: string; amount: number }> }>;
   usage: {
     eventsThisMonth: number;
     projectEventsThisMonth?: number; // with `pid`

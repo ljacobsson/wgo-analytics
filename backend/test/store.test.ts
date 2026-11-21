@@ -4,7 +4,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { filesFor, rawQuery } from '../src/lib/store/duck';
+import { duckQuery, filesFor, rawQuery } from '../src/lib/store/duck';
 import { location } from '../src/lib/store/files';
 import { compactProject, deleteDaysBefore, firstDay, mergeFiles } from '../src/lib/store/maintain';
 import { chunkJson, eventsFromMessages } from '../src/lib/store/queue';
@@ -91,6 +91,14 @@ describe('parquet store', () => {
     expect(await firstDay('logs', pid)).toBe('2026-11-15');
     expect((await rawQuery<{ body: string }>(pid, all, `SELECT body FROM logs ORDER BY ts`)).map((r) => r.body)).toEqual(['day -1', 'day 0']);
     expect(await firstDay('spans', pid)).toBeNull();
+  });
+
+  it('reuses cached S3 files without revalidating them (keys are never rewritten)', async () => {
+    const [s] = await duckQuery<Record<string, unknown>>(
+      `SELECT current_setting('validate_external_file_cache') AS validate, current_setting('enable_http_metadata_cache') AS http,
+              current_setting('parquet_metadata_cache') AS footers, current_setting('enable_external_file_cache') AS files`,
+    );
+    expect(s).toEqual({ validate: 'NO_VALIDATION', http: true, footers: true, files: true });
   });
 
   it('chunks queued events below the message size and revives their dates', () => {

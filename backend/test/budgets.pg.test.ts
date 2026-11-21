@@ -32,7 +32,7 @@ d('budgets (PostgreSQL)', async () => {
     return { status: res.statusCode!, body: JSON.parse(res.body as string) };
   };
   const costs = (monthToDate: number): CostsResponse => ({
-    setup: false, currency: 'USD', monthToDate, lastMonth: 10, forecast: monthToDate * 2, daily: [], services: [],
+    setup: false, currency: 'USD', monthToDate, lastMonth: 10, forecast: monthToDate * 2, daily: [], services: [], categories: [],
     usage: { eventsThisMonth: 0, dataBucketBytes: null, dsqlStorageBytes: null }, fetchedAt: new Date().toISOString(),
   });
   const pageview = async () => {
