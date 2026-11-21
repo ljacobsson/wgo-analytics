@@ -1,4 +1,4 @@
-# wgo-analytics
+# wgo-analytics-cli
 
 Command line for [WGO](https://github.com/ljacobsson/wgo-analytics), the self-hosted product analytics and
 observability backend on AWS. The CLI covers everything WGO's MCP server offers: traffic, errors, failed requests,
@@ -15,7 +15,7 @@ Requires Node.js 20 or later, and a WGO instance with MCP enabled (`MCP_ENABLED=
 ## Install and sign in
 
 ```sh
-npm install -g wgo-analytics
+npm install -g wgo-analytics-cli
 wgo login --url https://wgo.example.com
 ```
 

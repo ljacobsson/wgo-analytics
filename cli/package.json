@@ -1,5 +1,5 @@
 {
-  "name": "wgo-analytics",
+  "name": "wgo-analytics-cli",
   "version": "0.1.0",
   "description": "Command line for WGO analytics: everything its MCP server offers, with Cognito sign-in",
   "keywords": [
