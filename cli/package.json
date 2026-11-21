@@ -1,0 +1,45 @@
+{
+  "name": "wgo-analytics",
+  "version": "0.1.0",
+  "description": "Command line for WGO analytics: everything its MCP server offers, with Cognito sign-in",
+  "keywords": [
+    "wgo",
+    "analytics",
+    "observability",
+    "opentelemetry",
+    "cli",
+    "mcp"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/ljacobsson/wgo-analytics/tree/main/cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ljacobsson/wgo-analytics.git",
+    "directory": "cli"
+  },
+  "bugs": "https://github.com/ljacobsson/wgo-analytics/issues",
+  "type": "module",
+  "bin": {
+    "wgo": "./bin/wgo.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "prepack": "cp ../LICENSE LICENSE",
+    "prepublishOnly": "npm test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}

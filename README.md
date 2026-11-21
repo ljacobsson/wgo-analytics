@@ -67,6 +67,7 @@ next to your web analytics, in the same project.
 Connect Claude, VS Code, Cursor or any other MCP client and ask about traffic, errors, traces and metrics in
 plain language. You sign in with your WGO account in the browser, so there is no API key to copy. Access is
 limited to the projects you are a member of and is read-only, except that the assistant can name click targets.
+Agents that run shell commands can use the [`wgo` CLI](#command-line-wgo) instead, which does the same with fewer tokens.
 
 ### A home-screen widget for Android
 
@@ -515,6 +516,22 @@ don't need MCP. Cognito's guidance is to attach an AWS WAF rate-based rule to th
 Registered clients are not cleaned up automatically. List them with
 `aws cognito-idp list-user-pool-clients` and delete the stale ones.
 
+### Command line (`wgo`)
+
+The [`wgo-analytics`](cli/) npm package is a CLI with one command per MCP tool. It reads the tool list from
+`/mcp`, so it always matches the server. It signs in the same way as MCP clients (Cognito, in the browser):
+
+```bash
+npm install -g wgo-analytics
+wgo login --url https://wgo.example.com
+wgo use "My shop"
+wgo list-errors --range 24h --fields message,count --format tsv
+```
+
+It's meant for AI agents that can run shell commands. They load one short command list instead of every tool's
+schema, ask for a command's options only when they use it, and can trim results with `--fields` and
+`--format tsv`. It needs MCP enabled on the server. See [cli/README.md](cli/README.md).
+
 ## How it works
 
 <picture>
@@ -599,6 +616,7 @@ See [android/README.md](android/README.md).
 | [backend/](backend/) | AWS SAM app: ingest, OTLP, dashboard API, WebSocket live feed, MCP server, DSQL schema migration |
 | [dashboard/](dashboard/) | React dashboard: accounts, projects, install snippets, analytics, live watches, map, traces/logs/metrics |
 | [android/](android/) | Android home-screen widget app. [README](android/README.md) |
+| [cli/](cli/) | `wgo` command line (npm `wgo-analytics`): every MCP tool as a command, Cognito sign-in. [README](cli/README.md) |
 | [examples/demo.html](examples/demo.html) | Demo shop page that exercises every capture type (`?auto=1` drives itself) |
 | [scripts/setup.mjs](scripts/setup.mjs) | `npm run setup`: interactive first-deploy wizard that writes `deploy.env` |
 | [scripts/deploy.sh](scripts/deploy.sh) | One-shot deploy of everything |
