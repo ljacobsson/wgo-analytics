@@ -215,6 +215,7 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
             ]} />
             <Code lang="sh" title="after your build" code={`npx wgo-sourcemaps --endpoint ${HOST} --key uk_… --release 1.4.0 dist/`} />
             <P>The command uploads every <C>*.js.map</C> under the folder. It also reads <C>WGO_ENDPOINT</C>, <C>WGO_UPLOAD_KEY</C> and <C>WGO_RELEASE</C>, and exits with an error if an upload fails. Don't deploy the <C>.map</C> files to your site: they contain your source code. Maps are kept for 400 days, and stacks are mapped when you read them, so a map uploaded later also fixes older errors.</P>
+            <P>When a stack has no maps, the Errors and Events pages say <B>Source maps missing</B>. The quickest one-off fix is your AI assistant: with WGO's <Doc to="mcp">MCP server</Doc> connected, ask Claude Code in the app's repository to build it with source maps and upload them. Its <C>upload_sourcemaps</C> tool hands out upload links that work for 10 minutes, so no key is involved, and any project member can use it. Use the command above in CI to cover every deploy.</P>
           </Section>
 
           <Section id="otel" title="Backends (OpenTelemetry)">

@@ -98,5 +98,59 @@ d('source maps (PostgreSQL)', async () => {
 
     const { events } = await A.events(pid, { ...range, type: 'error' });
     expect(events[0].errorStack).toContain('src/cart.ts:4:');
+    expect(g.missingSourcemaps).toBeUndefined();
+  });
+
+  it('reports a release without maps, and a member fixes it with the upload_sourcemaps MCP tool', async () => {
+    const { mcpFetch } = await import('../src/lib/mcp/http');
+    const { clearSourcemapCache } = await import('../src/lib/sourcemaps');
+    const now = Date.now();
+    const stack = `Error: too cheap\n    at o (https://shop.test/assets/app-abc123.js:1:${col})`;
+    await ingest({
+      rawPath: '/ingest', headers: {}, isBase64Encoded: false, requestContext: { http: { method: 'POST' } },
+      body: JSON.stringify({ k: writeKey, a: 'anon-2', sentAt: now, ctx: { ua: 'Mozilla/5.0 Chrome/120.0', release: 'v8' },
+        e: [{ id: randomUUID(), t: 'error', ts: now - 1000, s: 's2', url: 'https://shop.test/cart', path: '/cart', d: { msg: 'too cheap', kind: 'error', stack } }] }),
+    } as unknown as APIGatewayProxyEventV2);
+    const range = { from: new Date(now - 3600_000).toISOString(), to: new Date(now + 60_000).toISOString() };
+    const group = async () => (await A.errors(pid, range)).find((x) => x.message.includes('too cheap'))!;
+
+    // the v7 map doesn't cover v8
+    expect((await group()).missingSourcemaps).toEqual({ release: 'v8', files: ['app-abc123.js'] });
+    const { events } = await A.events(pid, { ...range, type: 'error', q: 'too cheap' });
+    expect(events[0].missingSourcemaps).toEqual({ release: 'v8', files: ['app-abc123.js'] });
+
+    const res = await mcpFetch(new Request('http://localhost:8787/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-11-25' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'upload_sourcemaps', arguments: { projectId: pid, release: 'v8', files: ['dist/assets/app-abc123.js.map'] } } }),
+    }), { publicOrigin: 'http://localhost:8787', auth: null, devEmail: member });
+    const body = await res.text();
+    const msg = JSON.parse(body.startsWith('{') ? body : body.split('\n').find((l) => l.startsWith('data: '))!.slice(6));
+    expect(msg.result.isError).toBeFalsy();
+    const out = JSON.parse(msg.result.content[0].text);
+    expect(out).toMatchObject({ release: 'v8', files: [{ path: 'dist/assets/app-abc123.js.map', script: 'app-abc123.js' }] });
+    // what the curl PUT does on the dev server
+    const url = /'(http:\/\/localhost:8787\/sourcemaps\/put\/[^']+)'/.exec(out.command)![1];
+    const key = decodeURIComponent(new URL(url).pathname.slice('/sourcemaps/put/'.length));
+    expect(key).toBe(mapKey(pid, 'v8', 'app-abc123.js'));
+    await location().put(key, readFileSync(join(fix, 'app-abc123.js.map')));
+    clearSourcemapCache(); // misses are cached for a minute
+
+    const g = await group();
+    expect(g.missingSourcemaps).toBeUndefined();
+    expect(g.sampleStack).toContain('src/cart.ts:4:');
+  });
+
+  it('only lets project members upload', async () => {
+    const { mcpFetch } = await import('../src/lib/mcp/http');
+    const res = await mcpFetch(new Request('http://localhost:8787/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-11-25' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'upload_sourcemaps', arguments: { projectId: pid, files: ['a.js.map'] } } }),
+    }), { publicOrigin: 'http://localhost:8787', auth: null, devEmail: 'stranger@test.dev' });
+    const body = await res.text();
+    const msg = JSON.parse(body.startsWith('{') ? body : body.split('\n').find((l) => l.startsWith('data: '))!.slice(6));
+    expect(msg.result.isError).toBe(true);
+    expect(msg.result.content[0].text).not.toContain('sourcemaps/put');
   });
 });

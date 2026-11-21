@@ -15,7 +15,7 @@ const CLIENTS: Array<{ value: Client; label: string }> = [
 const TOOLS: Array<{ group: string; tools: Array<[string, string]> }> = [
   {
     group: 'Setup',
-    tools: [['create_project', 'New project with its script tag'], ['get_install_snippet', 'Script tag and OTLP settings']],
+    tools: [['create_project', 'New project with its script tag'], ['get_install_snippet', 'Script tag and OTLP settings'], ['upload_sourcemaps', 'Source maps for readable stacks']],
   },
   {
     group: 'Product analytics',
@@ -42,7 +42,7 @@ const TOOLS: Array<{ group: string; tools: Array<[string, string]> }> = [
   },
 ];
 
-function Steps({ items }: { items: React.ReactNode[] }) {
+export function Steps({ items }: { items: React.ReactNode[] }) {
   return (
     <ol className="space-y-3">
       {items.map((item, i) => (

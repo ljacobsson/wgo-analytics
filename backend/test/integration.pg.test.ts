@@ -236,6 +236,11 @@ d('integration (PostgreSQL)', async () => {
     const series = (await call('GET', `/api/projects/${pid}/metrics/series`, { query: { ...range, name: 'http.requests', agg: 'max', groupBy: 'route' } })).body;
     const byKey = Object.fromEntries(series.series.map((s: any) => [s.key, s.points[0].value]));
     expect(byKey).toEqual({ '/orders': 5, '/cart': 2 });
+    expect(series.attributeKeys).toEqual(['route']);
+    const byService = (await call('GET', `/api/projects/${pid}/metrics/series`, { query: { ...range, name: 'http.requests', agg: 'sum', groupBy: 'service.name' } })).body;
+    expect(byService.series.map((s: any) => [s.key, s.points[0].value])).toEqual([['api', 7]]);
+    const otherService = (await call('GET', `/api/projects/${pid}/metrics/series`, { query: { ...range, name: 'http.requests', service: 'nope' } })).body;
+    expect(otherService).toEqual({ bucketSeconds: expect.any(Number), series: [], attributeKeys: [] });
     const p95 = (await call('GET', `/api/projects/${pid}/metrics/series`, { query: { ...range, name: 'http.requests', agg: 'p95' } })).body;
     expect(p95.series).toHaveLength(1);
     expect(p95.series[0].key).toBe('http.requests');

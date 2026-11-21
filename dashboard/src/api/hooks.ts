@@ -87,8 +87,8 @@ export const useRetention = (pid: string, p: RetentionParams) => useQuery({
 });
 export const useServices = (pid: string, r: TimeRange) => useQuery(q<ServiceRow[]>(pid, 'services', r, 'services'));
 export const useMetrics = (pid: string, r: TimeRange) => useQuery(q<MetricInfo[]>(pid, 'metrics', r, 'metrics'));
-export const useMetricSeries = (pid: string, r: TimeRange, name: string | null, agg: string, groupBy: string) =>
-  useQuery(q<MetricSeriesResponse>(pid, 'metric-series', r, 'metrics/series', { name: name ?? '', agg, groupBy: groupBy || undefined }, !!name));
+export const useMetricSeries = (pid: string, r: TimeRange, name: string | null, service: string, agg: string, groupBy: string) =>
+  useQuery(q<MetricSeriesResponse>(pid, 'metric-series', r, 'metrics/series', { name: name ?? '', service: service || undefined, agg, groupBy: groupBy || undefined }, !!name));
 export const useTraces = (pid: string, r: TimeRange, f: { service?: string; minDurationMs?: number; errorsOnly?: boolean; q?: string }) =>
   useQuery(q<TraceSummary[]>(pid, 'traces', r, 'traces', { limit: 200, ...f }));
 /** `at`: any time within the trace (its start, a log record's time), so the API looks in the right day first */

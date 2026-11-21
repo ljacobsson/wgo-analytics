@@ -110,6 +110,7 @@ export interface AnalyticsEvent {
   errorStack: string | null;
   errorSource: string | null;
   fingerprint: string | null;
+  missingSourcemaps?: MissingSourcemaps; // set when errorStack points at scripts without an uploaded source map
   // http_error
   httpMethod: string | null;
   httpUrl: string | null;
@@ -524,10 +525,21 @@ export interface ErrorGroup {
   sampleStack: string | null; // symbolicated when an uploaded source map matches (see minifiedStack)
   minifiedStack: string | null; // the stack as the browser reported it; set only when mapping changed something
   stackFrames?: StackFrame[]; // parsed frames of sampleStack, with code context for mapped ones
+  missingSourcemaps?: MissingSourcemaps; // set when sampleStack points at scripts without an uploaded source map
   sampleUrl: string | null;
   source: string | null;
   series: number[]; // 24 equal buckets across [from,to] for a sparkline
   suppressedBy?: string | null; // id of an error suppression rule covering this group (new ones are dropped at ingest)
+}
+
+/**
+ * A stack whose frames are in your own scripts but none of them could be mapped: no source map was uploaded for
+ * these script files (for this release, or without one). Upload them with the `upload_sourcemaps` MCP tool or the
+ * `wgo-sourcemaps` CLI.
+ */
+export interface MissingSourcemaps {
+  release: string | null; // the SDK's release label the stack came from; null when the app sets none
+  files: string[]; // script file names without a map, e.g. index-abc123.js (at most 10)
 }
 
 export interface StackFrame {
@@ -691,11 +703,12 @@ export interface MetricInfo {
   lastSeen: string;
 }
 
-// GET /api/projects/{pid}/metrics/series?name&from&to&agg=avg|sum|min|max|p95&groupBy=<attribute key, optional>
-//   For histograms the per-point value is sum/count (mean).
+// GET /api/projects/{pid}/metrics/series?name&from&to&agg=avg|sum|min|max|p95&service=<optional>&groupBy=<attribute key, optional>
+//   For histograms the per-point value is sum/count (mean). groupBy=service.name splits by reporting service.
 export interface MetricSeriesResponse {
   bucketSeconds: number;
   series: Array<{ key: string; points: Array<{ t: string; value: number }> }>;
+  attributeKeys: string[]; // data point attribute keys seen on recent points (group-by choices)
 }
 
 // ---------- realtime (WebSocket) ----------

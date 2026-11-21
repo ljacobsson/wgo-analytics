@@ -17,6 +17,7 @@ import { HttpError } from '../http';
 import * as P from '../projects';
 import { BEHAVIOR_ACTIONS, findRecordings } from '../recordingSearch';
 import * as U from '../uptime';
+import { normalizeMapFile, normalizeRelease, UPLOAD_URL_TTL_SECONDS, uploadUrl } from '../sourcemaps';
 
 /**
  * WGO's MCP tools: read-only views over the same queries the dashboard uses, plus naming click targets (aliases),
@@ -39,6 +40,8 @@ Raw data is kept per project (default 14 days). Overview stats, top pages and br
 come from hourly aggregates (sessions/users are estimates, about ±2%); other tools only see the raw data.
 Start broad (get_overview, list_errors, list_failed_requests, list_services) and drill down
 (search_events with a fingerprint or sessionId, get_trace, search_logs with a traceId).
+An error group or error event with missingSourcemaps has a minified stack: no source map was uploaded for those
+scripts. When you have the app's source (e.g. Claude Code in its repository), offer to fix that with upload_sourcemaps.
 When a number moved ("why are errors up?", "why did signups drop?"), call explain_change first: it says which
 segments account for the change, when it started and which release went out just before. list_releases compares
 each version with the one before it. A failed browser request links to the backend trace it started (sampleTraceId
@@ -103,6 +106,8 @@ const CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHint: fa
 const LABEL_WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 /** Removes something members set up (never recorded data). */
 const DELETE = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } as const;
+/** Hands out upload URLs; uploading a map again under the same name replaces it with the same content. */
+const UPLOAD = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 /** Saves a trigger, which sends notifications to a webhook or Slack: open world. */
 const TRIGGER_CREATE = { ...CREATE, openWorldHint: true } as const;
 const TRIGGER_WRITE = { ...LABEL_WRITE, openWorldHint: true } as const;
@@ -159,6 +164,44 @@ const behavior = z.object({
   minMs: z.number().int().min(0).optional().describe('hover only: lasted at least this long, e.g. 2000 for a long hesitation'),
   notClicked: z.boolean().optional().describe('hover only, in `did`: the visitor never clicked the element they hovered during the recording'),
 });
+
+export const MAX_SOURCEMAP_UPLOADS = 50;
+
+/** Single-quotes a string for a POSIX shell. */
+const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * Upload URLs for local source map files and the curl command that PUTs them, run by the assistant from the
+ * directory the paths are relative to. Throws HttpError(400) for paths that aren't uniquely named .map files.
+ */
+export async function sourcemapUploads(pid: string, args: { release?: string; files: string[] }, fallbackOrigin: string | undefined) {
+  const release = normalizeRelease(args.release?.trim());
+  if (!release) throw new HttpError(400, 'release must be 1-100 characters: letters, digits and . _ ~ @ + = -');
+  const seen = new Map<string, string>();
+  for (const path of args.files) {
+    const file = normalizeMapFile(path);
+    if (!/\.map$/i.test(path) || !file) throw new HttpError(400, `Not a source map file name: ${path} (expected e.g. dist/assets/index-abc123.js.map)`);
+    if (seen.has(file)) throw new HttpError(400, `${seen.get(file)} and ${path} have the same file name, so one would replace the other. Upload maps of one build at a time.`);
+    seen.set(file, path);
+  }
+  const uploads = [];
+  for (const [file, path] of seen) {
+    const target = await uploadUrl(pid, release, file, fallbackOrigin);
+    if (!target) throw new HttpError(503, 'This server cannot sign uploads. Upload with the wgo-sourcemaps CLI instead (Settings → Source maps).');
+    uploads.push({ path, file, url: target.url });
+  }
+  const n = uploads.length;
+  return {
+    release: release === '_' ? null : release,
+    expiresAt: new Date(Date.now() + UPLOAD_URL_TTL_SECONDS * 1000).toISOString(),
+    files: uploads.map(({ path, file }) => ({ path, script: file })),
+    command: [...uploads.map((u) => `curl -fsS -T ${shellQuote(u.path)} ${shellQuote(u.url)}`), `echo ${shellQuote(`Uploaded ${n} source map${n === 1 ? '' : 's'}`)}`].join(' &&\n'),
+    next: 'Run `command` in a shell from the directory the paths are relative to, before expiresAt. Then delete the .map files from the build output '
+      + '(or make sure they are not deployed): they contain the source code. Stacks are mapped when read, so list_errors shows original '
+      + 'locations within about a minute, also for errors that happened before the upload. To upload on every deploy, use the '
+      + 'wgo-sourcemaps CLI in CI with the upload key from the dashboard (Settings → Source maps).',
+  };
+}
 
 /** The dashboard's default script tag: `scriptSnippet` in dashboard/src/pages/SnippetOptions.tsx with DEFAULT_OPTIONS. */
 export function scriptSnippet(ingestOrigin: string, writeKey: string): string {
@@ -313,6 +356,27 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
   );
 
   projectTool(
+    'upload_sourcemaps',
+    'Upload source maps',
+    'Uploads a build\'s source maps so JavaScript error stacks (list_errors, search_events and the dashboard) show the original files, lines and functions. '
+      + 'Returns a shell `command` that PUTs the local .map files with curl (upload URLs work for 10 minutes); run it yourself, the files never pass through this tool. '
+      + 'Use it from the app\'s source repository. Steps: '
+      + '1. Find the release label the app reports (the `release` option of WGO.init, or data-release on the script tag); list_errors shows it per error group in missingSourcemaps.release, with the script files that lack a map. '
+      + '2. Build the app with source maps that the bundles don\'t link to: Vite build.sourcemap: "hidden", webpack devtool: "hidden-source-map", esbuild --sourcemap=external. '
+      + 'The build must be of the deployed code: maps are found by the script\'s file name (index-abc123.js) and must match its contents. '
+      + '3. Call this with the path of every *.js.map in the build output (relative to where you will run the command) and the same release; omit release when the app sets none (those maps are then used for every release). '
+      + '4. Run `command`, then follow `next`.',
+    {
+      release: z.string().max(100).optional().describe('The app\'s release label, exactly as it passes it to the SDK, e.g. a git sha or "1.4.0". Omit when the app sets none.'),
+      files: z.array(z.string().min(1).max(1000).regex(/^[^\0\r\n]+$/, 'One path per entry'))
+        .min(1).max(MAX_SOURCEMAP_UPLOADS)
+        .describe(`Paths of the .js.map files, e.g. "dist/assets/index-abc123.js.map" (max ${MAX_SOURCEMAP_UPLOADS} per call; call again for more)`),
+    },
+    (pid, a) => sourcemapUploads(pid, a, ingestOrigin),
+    UPLOAD,
+  );
+
+  projectTool(
     'top_pages',
     'Top pages',
     'Most viewed pages (paths) with views and sessions.',
@@ -323,7 +387,7 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
   projectTool(
     'list_errors',
     'JavaScript errors',
-    'Browser JavaScript errors grouped by fingerprint: message, kind, source, sample stack (original source locations when source maps are uploaded; minifiedStack is the raw one), count, affected sessions, first/last seen and a sparkline. Pass a fingerprint to search_events for individual occurrences with stack traces.',
+    'Browser JavaScript errors grouped by fingerprint: message, kind, source, sample stack (original source locations when source maps are uploaded; minifiedStack is the raw one), count, affected sessions, first/last seen and a sparkline. missingSourcemaps (release and script files) means no source map matched the stack: upload_sourcemaps fixes that. Pass a fingerprint to search_events for individual occurrences with stack traces.',
     { ...windowShape, limit: limit(50, 200) },
     async (pid, a) => (await A.errors(pid, { ...windowParams(a), limit: str(a.limit ?? 50) })).map(({ stackFrames: _frames, ...g }) => g), // sampleStack is symbolicated when source maps are uploaded
   );
@@ -670,9 +734,10 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
       ...windowShape,
       name: z.string().min(1).describe('Metric name from list_metrics'),
       agg: z.enum(['avg', 'sum', 'min', 'max', 'p95']).optional().describe('Default avg'),
-      groupBy: z.string().optional().describe('Attribute key to split by'),
+      service: z.string().optional().describe('Only points reported by this service (from list_metrics)'),
+      groupBy: z.string().optional().describe('Attribute key to split by, or service.name to split by service'),
     },
-    (pid, a) => A.metricSeries(pid, { ...windowParams(a), name: a.name, agg: a.agg, groupBy: a.groupBy }),
+    (pid, a) => A.metricSeries(pid, { ...windowParams(a), name: a.name, agg: a.agg, service: a.service, groupBy: a.groupBy }),
   );
 
   projectTool(

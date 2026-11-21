@@ -43,8 +43,8 @@ real users (real user monitoring, RUM). Events show up within seconds.
   recordings are on.
 - **Retention:** cohorts of visitors by their first visit or first conversion, per day, week or month, and the share
   that came back after. Kept for 400 days, longer than raw events.
-- **Readable errors:** upload source maps from CI with `npx wgo-sourcemaps` and stacks show the original file, line
-  and function ([details](sdk/README.md#source-maps)). Suppression rules with `*` wildcards drop noise, such as a
+- **Readable errors:** upload source maps from CI with `npx wgo-sourcemaps`, or ask your AI assistant to do it over
+  MCP, and stacks show the original file, line and function ([details](sdk/README.md#source-maps)). Suppression rules with `*` wildcards drop noise, such as a
   browser extension's errors or a missing image, before it's stored.
 
 ![The Live page: click counters for the signup button, add to cart and checkout, and a world map with recent events at each location](docs/screenshots/live.jpg)

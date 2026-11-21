@@ -221,6 +221,8 @@ npx wgo-sourcemaps --endpoint https://wgo.example.com --key uk_... --release 1.4
 
 It uploads every `*.js.map` under the folders you give it, and exits non-zero if any upload fails. `WGO_ENDPOINT`, `WGO_UPLOAD_KEY` and `WGO_RELEASE` work as environment variables. Maps are matched by the script's file name (`index-abc123.js`) and the release; maps uploaded without a release are the fallback. Don't deploy the `.map` files to your site.
 
+When a stack has no maps, the dashboard says "Source maps missing". For a one-off upload without a key, connect WGO's MCP server to Claude Code and ask it, in the app's repository, to build with source maps and upload them: the `upload_sourcemaps` tool returns a `curl` command with upload URLs that work for 10 minutes. Any project member can use it.
+
 ## Privacy: data attributes
 
 | Attribute | Effect |

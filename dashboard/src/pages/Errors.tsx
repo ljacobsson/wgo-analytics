@@ -16,6 +16,7 @@ import { eventTitle } from '../lib/events';
 import { FilterBar } from '../ui/FilterBar';
 import { RowActions } from '../ui/RowActions';
 import { errorGroupConditions } from '../lib/rowFilters';
+import { SourcemapsMissing } from './SourcemapsMissing';
 const COLS = 'grid-cols-[minmax(260px,3fr)_90px_70px_80px_130px_110px_110px]';
 
 export function Stack({ stack }: { stack: string }) {
@@ -70,6 +71,7 @@ function StackSection({ g }: { g: ErrorGroup }) {
         {g.minifiedStack && <Button size="sm" variant="ghost" onClick={() => setMinified(!minified)}>{minified ? 'Show original' : 'Show minified'}</Button>}
       </div>
       <Stack stack={minified && g.minifiedStack ? g.minifiedStack : g.sampleStack} />
+      {g.missingSourcemaps && <SourcemapsMissing missing={g.missingSourcemaps} />}
       {code.map((f, i) => <CodeContext key={i} frame={f} />)}
     </div>
   );

@@ -75,7 +75,7 @@ export function errors(from: number, to: number, limit: number): ErrorGroup[] {
   return ERRORS.map((e, i) => {
     const count = Math.max(1, Math.round(total * e.w / tw));
     const series = Array.from({ length: 24 }, (_, k) => Math.round((count / 24) * (0.3 + rnd(i, k, Math.floor(from / 6e5)) * 1.5) * (i === 0 && k > 18 ? 3 : 1)));
-    return { fingerprint: e.fp, message: e.msg, kind: e.kind, count, sessions: Math.max(1, Math.round(count * 0.6)), firstSeen: iso(from + len * (0.02 + rnd(i, 1) * 0.3)), lastSeen: iso(to - Math.floor(rnd(i, 2) * Math.min(len, 1800_000))), sampleStack: e.mapped?.stack ?? e.stack, minifiedStack: e.mapped ? e.stack : null, ...(e.mapped ? { stackFrames: e.mapped.frames } : {}), sampleUrl: 'https://shop.acme.dev' + e.url, source: e.source, series };
+    return { fingerprint: e.fp, message: e.msg, kind: e.kind, count, sessions: Math.max(1, Math.round(count * 0.6)), firstSeen: iso(from + len * (0.02 + rnd(i, 1) * 0.3)), lastSeen: iso(to - Math.floor(rnd(i, 2) * Math.min(len, 1800_000))), sampleStack: e.mapped?.stack ?? e.stack, minifiedStack: e.mapped ? e.stack : null, ...(e.mapped ? { stackFrames: e.mapped.frames } : {}), ...('missing' in e && e.missing ? { missingSourcemaps: e.missing } : {}), sampleUrl: 'https://shop.acme.dev' + e.url, source: e.source, series };
   }).sort((a, b) => b.count - a.count).slice(0, limit);
 }
 export function httpErrors(from: number, to: number, limit: number): HttpErrorGroup[] {
@@ -129,7 +129,7 @@ export function eventAt(s: number, k = 0): AnalyticsEvent | null {
   if (rnd(block, sk, 27) < 0.95) { const pl = weighted(PLACES, block, sk, 28); Object.assign(e, { country: pl.c, region: pl.r, city: pl.city, lat: pl.lat, lon: pl.lon }); }
   e.referrer = rnd(block, sk, 20) > 0.5 ? 'https://' + weighted(REFERRERS, block, sk, 21).k : null;
   if (type === 'click') { const c = weighted(CLICKS, s, k, 22); e.selector = c.selector; e.elementText = c.text; e.elementTag = c.tag; e.trackName = c.track; e.path = c.path; e.url = 'https://shop.acme.dev' + c.path; e.props = { x: Math.round(rnd(s, 1) * 1400), y: Math.round(rnd(s, 2) * 800), rage: rnd(s, k, 23) < c.rage }; }
-  else if (type === 'error') { const x = weighted(ERRORS, s, k, 24); e.errorMessage = x.msg; e.errorStack = x.stack; e.errorSource = x.source; e.fingerprint = x.fp; e.props = { kind: x.kind }; }
+  else if (type === 'error') { const x = weighted(ERRORS, s, k, 24); e.errorMessage = x.msg; e.errorStack = x.mapped?.stack ?? x.stack; e.errorSource = x.source; e.fingerprint = x.fp; e.props = { kind: x.kind }; if ('missing' in x && x.missing) e.missingSourcemaps = x.missing; }
   else if (type === 'http_error') { const h = weighted(HTTP_ERRORS, s, k, 25); e.httpMethod = h.method; e.httpUrl = h.url; e.httpRoute = h.route; e.httpStatus = h.status; e.durationMs = Math.round(h.ms * (0.7 + rnd(s, 3) * 0.6)); e.props = { status: h.status, ...(h.route.startsWith('/') ? { trace: browserTraceId(s, k), span: hex(16, s, 98) } : {}) }; }
   else if (type === 'custom') { e.name = pick(CUSTOM, s, k, 26); e.props = { plan: pick(['free', 'pro', 'team'], s, 1), value: Math.round(rnd(s, 2) * 90) }; }
   else if (type === 'vitals') { e.name = pick(['LCP', 'FCP', 'CLS', 'INP', 'TTFB'], s, 5); e.props = { name: e.name, value: Math.round(rnd(s, 6) * 3000) / (e.name === 'CLS' ? 10000 : 1) }; }
@@ -333,30 +333,43 @@ export function logs(p: { from: number; to: number; before?: number; severity?: 
 }
 
 // ---------- metrics ----------
-const METRICS: Array<MetricInfo & { base: number; amp: number }> = [
-  { name: 'http.server.request.duration', type: 'histogram', unit: 'ms', description: 'Duration of inbound HTTP requests (mean per interval).', service: 'api-gateway', points: 48210, lastSeen: '', base: 118, amp: 40 },
-  { name: 'process.cpu.utilization', type: 'gauge', unit: '1', description: 'Fraction of CPU used by the process.', service: 'catalog-service', points: 31002, lastSeen: '', base: 0.38, amp: 0.18 },
-  { name: 'process.runtime.memory.rss', type: 'gauge', unit: 'MB', description: 'Resident set size.', service: 'cart-service', points: 30211, lastSeen: '', base: 412, amp: 60 },
-  { name: 'db.client.connections.usage', type: 'gauge', unit: 'conns', description: 'Open connections in the pool.', service: 'postgres', points: 29980, lastSeen: '', base: 22, amp: 9 },
-  { name: 'http.server.active_requests', type: 'sum', unit: 'req', description: 'In-flight HTTP requests.', service: 'api-gateway', points: 41002, lastSeen: '', base: 14, amp: 8 },
-  { name: 'cart.items.added', type: 'sum', unit: 'items', description: 'Items added to carts.', service: 'cart-service', points: 8120, lastSeen: '', base: 36, amp: 24 },
-  { name: 'payment.charge.latency', type: 'histogram', unit: 'ms', description: 'Latency of payment provider calls.', service: 'payment-service', points: 6901, lastSeen: '', base: 310, amp: 90 },
+const METRICS: Array<MetricInfo & { base: number; amp: number; keys: string[] }> = [
+  { name: 'http.server.request.duration', type: 'histogram', unit: 'ms', description: 'Duration of inbound HTTP requests (mean per interval).', service: 'api-gateway', points: 48210, lastSeen: '', base: 118, amp: 40, keys: ['http.request.method', 'http.response.status_code', 'http.route'] },
+  { name: 'http.server.request.duration', type: 'histogram', unit: 'ms', description: 'Duration of inbound HTTP requests (mean per interval).', service: 'catalog-service', points: 22140, lastSeen: '', base: 46, amp: 18, keys: ['http.request.method', 'http.response.status_code', 'http.route'] },
+  { name: 'http.server.request.duration', type: 'histogram', unit: 'ms', description: 'Duration of inbound HTTP requests (mean per interval).', service: 'cart-service', points: 19876, lastSeen: '', base: 74, amp: 30, keys: ['http.request.method', 'http.response.status_code', 'http.route'] },
+  { name: 'process.cpu.utilization', type: 'gauge', unit: '1', description: 'Fraction of CPU used by the process.', service: 'catalog-service', points: 31002, lastSeen: '', base: 0.38, amp: 0.18, keys: ['host.name'] },
+  { name: 'process.cpu.utilization', type: 'gauge', unit: '1', description: 'Fraction of CPU used by the process.', service: 'payment-service', points: 30544, lastSeen: '', base: 0.12, amp: 0.06, keys: ['host.name'] },
+  { name: 'process.runtime.memory.rss', type: 'gauge', unit: 'MB', description: 'Resident set size.', service: 'cart-service', points: 30211, lastSeen: '', base: 412, amp: 60, keys: ['host.name'] },
+  { name: 'db.client.connections.usage', type: 'gauge', unit: 'conns', description: 'Open connections in the pool.', service: 'postgres', points: 29980, lastSeen: '', base: 22, amp: 9, keys: ['db.client.connections.state', 'pool.name'] },
+  { name: 'http.server.active_requests', type: 'sum', unit: 'req', description: 'In-flight HTTP requests.', service: 'api-gateway', points: 41002, lastSeen: '', base: 14, amp: 8, keys: ['http.request.method'] },
+  { name: 'cart.items.added', type: 'sum', unit: 'items', description: 'Items added to carts.', service: 'cart-service', points: 8120, lastSeen: '', base: 36, amp: 24, keys: ['product.category'] },
+  { name: 'payment.charge.latency', type: 'histogram', unit: 'ms', description: 'Latency of payment provider calls.', service: 'payment-service', points: 6901, lastSeen: '', base: 310, amp: 90, keys: ['payment.provider'] },
 ];
-export function metricList(to: number): MetricInfo[] { return METRICS.map(({ base: _b, amp: _a, ...m }) => ({ ...m, lastSeen: iso(to - 12_000) })); }
-export function metricSeries(from: number, to: number, name: string, agg: string, groupBy?: string): MetricSeriesResponse {
-  const m = METRICS.find((x) => x.name === name) ?? METRICS[0];
+export function metricList(to: number): MetricInfo[] { return METRICS.map(({ base: _b, amp: _a, keys: _k, ...m }) => ({ ...m, lastSeen: iso(to - 12_000) })); }
+const MOCK_GROUPS: Record<string, string[]> = {
+  'host.name': ['web-1', 'web-2', 'web-3'], 'http.route': ['/api/products', '/api/cart', '/api/checkout'], 'http.request.method': ['GET', 'POST'],
+  'http.response.status_code': ['200', '304', '500'], 'payment.provider': ['stripe', 'adyen'], 'product.category': ['shoes', 'shirts', 'bags'],
+  'db.client.connections.state': ['used', 'idle'], 'pool.name': ['primary', 'replica'],
+};
+export function metricSeries(from: number, to: number, name: string, service: string | undefined, agg: string, groupBy?: string): MetricSeriesResponse {
+  const all = METRICS.filter((x) => x.name === name);
+  const scoped = (service ? all.filter((x) => x.service === service) : all);
+  const ms = scoped.length ? scoped : [METRICS[0]];
   const bs = NICE.find((b) => b * SEC * 60 >= to - from) ?? 86400;
   const start = Math.ceil(from / (bs * SEC)) * bs * SEC;
-  const keys = groupBy ? (groupBy.includes('host') ? ['web-1', 'web-2', 'web-3'] : groupBy.includes('route') ? ['/api/products', '/api/cart', '/api/checkout'] : ['a', 'b', 'c']) : [''];
-  const mul = agg === 'sum' ? 12 : agg === 'max' ? 1.6 : agg === 'min' ? 0.55 : agg === 'p95' ? 1.9 : 1;
-  const series = keys.map((key, gi) => {
+  const mul = agg === 'sum' ? 12 * ms.length : agg === 'max' ? 1.6 : agg === 'min' ? 0.55 : agg === 'p95' ? 1.9 : 1;
+  const gen = (m: (typeof METRICS)[number], gi: number, k: number) => {
     const points: Array<{ t: string; value: number }> = [];
     for (let t = start; t < to; t += bs * SEC) {
       const wave = Math.sin(t / 3.6e6 / 2.2 + gi) * 0.5 + Math.sin(t / 3.6e5 + gi * 2) * 0.15;
-      const v = (m.base * (1 + gi * 0.18) + m.amp * wave + m.amp * 0.3 * (rnd(t / 1000, gi, 81) - 0.5)) * mul;
+      const v = (m.base * k + m.amp * wave + m.amp * 0.3 * (rnd(t / 1000, gi, 81) - 0.5)) * mul;
       points.push({ t: iso(t), value: Math.max(0, Math.round(v * 1000) / 1000) });
     }
-    return { key, points };
-  });
-  return { bucketSeconds: bs, series };
+    return points;
+  };
+  const avgBase = { ...ms[0], base: ms.reduce((a, m) => a + m.base, 0) / ms.length };
+  const series = groupBy === 'service.name'
+    ? ms.map((m, gi) => ({ key: m.service, points: gen(m, gi, 1) }))
+    : (groupBy ? (MOCK_GROUPS[groupBy] ?? ['(none)']) : ['']).map((key, gi) => ({ key, points: gen(avgBase, gi + ms.length, 1 + gi * 0.18) }));
+  return { bucketSeconds: bs, series, attributeKeys: [...new Set(ms.flatMap((m) => m.keys))].sort() };
 }

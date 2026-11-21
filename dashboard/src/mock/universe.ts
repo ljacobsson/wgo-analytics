@@ -32,12 +32,15 @@ export const ERRORS = [
         { fn: 'renderWithHooks', file: 'https://shop.acme.dev/node_modules/react-dom/cjs/react-dom.production.js', line: 14985, col: 18, mapped: false },
         { fn: 'updateFunctionComponent', file: 'https://shop.acme.dev/node_modules/react-dom/cjs/react-dom.production.js', line: 17356, col: 20, mapped: false },
       ] as Array<{ fn: string | null; file: string; line: number; col: number; mapped: boolean; context?: { start: number; lines: string[] } }> } as { stack: string; frames: Array<{ fn: string | null; file: string; line: number; col: number; mapped: boolean; context?: { start: number; lines: string[] } }> } | undefined },
-  { fp: '7bd20e41c9a8', msg: 'Unhandled promise rejection: NetworkError when attempting to fetch resource', kind: 'rejection', source: '/assets/app-3f9a1c.js', url: '/checkout', w: 18,
-    stack: 'Error: NetworkError when attempting to fetch resource\n    at fetchJson (https://shop.acme.dev/assets/app-3f9a1c.js:455:11)\n    at async submitOrder (https://shop.acme.dev/assets/app-3f9a1c.js:932:20)' },
+  // from the newest build, whose source maps were never uploaded: the API reports them as missing
+  { fp: '7bd20e41c9a8', msg: 'Unhandled promise rejection: NetworkError when attempting to fetch resource', kind: 'rejection', source: '/assets/app-8c21d0.js', url: '/checkout', w: 18,
+    stack: 'Error: NetworkError when attempting to fetch resource\n    at fetchJson (https://shop.acme.dev/assets/app-8c21d0.js:455:11)\n    at async submitOrder (https://shop.acme.dev/assets/app-8c21d0.js:932:20)',
+    missing: { release: '2.8.1', files: ['app-8c21d0.js'] } },
   { fp: '3c55d9a2e610', msg: 'ResizeObserver loop completed with undelivered notifications.', kind: 'error', source: null, url: '/products', w: 14, stack: null },
   { fp: 'a04f7712bb3e', msg: 'Failed to load resource: https://cdn.acme.dev/img/hero@2x.webp', kind: 'resource', source: 'https://cdn.acme.dev/img/hero@2x.webp', url: '/', w: 9, stack: null },
   { fp: '5e8d13c0f9a7', msg: "ReferenceError: gtag is not defined", kind: 'error', source: '/assets/vendor-91ac.js', url: '/blog/launch-week', w: 6,
-    stack: 'ReferenceError: gtag is not defined\n    at trackConversion (https://shop.acme.dev/assets/vendor-91ac.js:88:5)\n    at HTMLButtonElement.onClick (https://shop.acme.dev/assets/app-3f9a1c.js:2210:7)' },
+    stack: 'ReferenceError: gtag is not defined\n    at trackConversion (https://shop.acme.dev/assets/vendor-91ac.js:88:5)\n    at HTMLButtonElement.onClick (https://shop.acme.dev/assets/app-8c21d0.js:2210:7)',
+    missing: { release: '2.8.1', files: ['vendor-91ac.js', 'app-8c21d0.js'] } },
   { fp: 'd912ab04e377', msg: 'checkout_failed: card declined (manual)', kind: 'manual', source: '/assets/app-3f9a1c.js', url: '/checkout', w: 4, stack: null },
 ];
 export const HTTP_ERRORS = [

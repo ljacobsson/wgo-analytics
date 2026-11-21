@@ -17,6 +17,7 @@ import { matches, matchesEventSearch } from '../lib/filterMatch';
 import { FEED_CAP, LiveCtx, useFirehose } from '../live/store';
 import { RowsSkeleton } from './common';
 import { Stack } from './Errors';
+import { SourcemapsMissing } from './SourcemapsMissing';
 import { eventTitle } from '../lib/events';
 import { fmtDateTime, fmtTime, shortId } from '../lib/format';
 
@@ -47,7 +48,7 @@ function EventDetails({ e, onSession }: { e: AnalyticsEvent; onSession: (s: stri
           <Target size={12} />Make this a goal
         </button>
       </div>
-      {e.errorStack && <Stack stack={e.errorStack} />}
+      {e.errorStack && <div className="space-y-2"><Stack stack={e.errorStack} />{e.missingSourcemaps && <SourcemapsMissing missing={e.missingSourcemaps} />}</div>}
       <AttributeTable rows={rows} scope="events" />
     </div>
   );

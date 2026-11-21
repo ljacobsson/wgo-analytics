@@ -970,6 +970,10 @@ Resources:
             - Effect: Allow
               Action: cognito-idp:AdminGetUser
               Resource: !GetAtt UserPool.Arn
+            # upload_sourcemaps presigns PUTs of source maps, which run with this role's permissions
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub 'arn:${AWS::Partition}:s3:::${DataBucket}/sourcemaps/*'
       Events:
         McpPost:
           Type: HttpApi

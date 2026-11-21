@@ -1,5 +1,5 @@
 import { TraceMap, originalPositionFor, sourceContentFor } from '@jridgewell/trace-mapping';
-import type { AnalyticsEvent, StackFrame } from '../contract';
+import type { AnalyticsEvent, MissingSourcemaps, StackFrame } from '../contract';
 import { stackReleases } from './errorStacks';
 import { location } from './store/files';
 
@@ -31,6 +31,19 @@ export function normalizeRelease(release: unknown): string | null {
 
 export function mapKey(projectId: string, release: string, file: string): string {
   return `sourcemaps/project_id=${projectId}/release=${release}/${file}.map`;
+}
+
+/** How long an upload URL works. */
+export const UPLOAD_URL_TTL_SECONDS = 600;
+
+/**
+ * Where to PUT one map: a presigned S3 URL, or without S3 (local dev server) `<fallbackOrigin>/sourcemaps/put/<key>`,
+ * which the dev server accepts itself. Null when there is neither.
+ */
+export async function uploadUrl(projectId: string, release: string, file: string, fallbackOrigin: string | undefined): Promise<{ url: string; key: string } | null> {
+  const key = mapKey(projectId, release, file);
+  const url = (await location().presignPut(key, UPLOAD_URL_TTL_SECONDS)) ?? (fallbackOrigin ? `${fallbackOrigin}/sourcemaps/put/${key}` : null);
+  return url ? { url, key } : null;
 }
 
 // ---------------- stack parsing ----------------
@@ -86,6 +99,24 @@ export function scriptName(url: string): string | null {
     /* keep */
   }
   return normalizeMapFile(path);
+}
+
+const LOCAL_HOST = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$|\.localhost$/i;
+
+/**
+ * Name of a script a source map could fix: a .js/.mjs/.cjs file served over http(s). Not dev servers on localhost
+ * (their scripts carry inline maps already), dependencies under node_modules, extensions or eval'd code.
+ */
+export function appScriptName(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if ((u.protocol !== 'https:' && u.protocol !== 'http:') || LOCAL_HOST.test(u.hostname) || /\/node_modules\//.test(u.pathname)) return null;
+  const name = scriptName(url);
+  return name && /\.[mc]?js$/i.test(name) ? name : null;
 }
 
 // ---------------- map cache ----------------
@@ -181,9 +212,12 @@ export interface Symbolicated {
   minified: string | null;
   /** parsed frames of `stack`; only when mapping changed something */
   frames?: StackFrame[];
+  /** when frames are in the app's own scripts but none was mapped: the files that need a map */
+  missing?: MissingSourcemaps;
 }
 
 const CONTEXT = 3;
+const MAX_MISSING_FILES = 10;
 const MAX_LINE = 300;
 // short generated names like `t` or `Ab`: the only ones worth replacing with the name from the map
 const MINIFIED_NAME = /^[A-Za-z_$]{1,2}$/;
@@ -201,6 +235,7 @@ export async function symbolicate(pid: string, release: string | null | undefine
   if (!parsed.length) return { stack, minified: null };
   const lines = stack.split('\n');
   const frames: StackFrame[] = [];
+  const unmapped = new Set<string>();
   let changed = false;
   for (const f of parsed) {
     const name = scriptName(f.url);
@@ -215,9 +250,16 @@ export async function symbolicate(pid: string, release: string | null | undefine
       frames.push({ fn, file, line: pos.line, col, mapped: true, context: context(sourceContentFor(map, pos.source), pos.line) });
     } else {
       frames.push({ fn: f.fn, file: f.url, line: f.line, col: f.col, mapped: false });
+      const app = appScriptName(f.url);
+      if (app && unmapped.size < MAX_MISSING_FILES) unmapped.add(app);
     }
   }
-  return changed ? { stack: lines.join('\n'), minified: stack, frames } : { stack, minified: null };
+  if (changed) return { stack: lines.join('\n'), minified: stack, frames };
+  // a stack where some frames mapped has maps; one where none did, but some point at the app's scripts, lacks them
+  const rel = normalizeRelease(release);
+  return unmapped.size
+    ? { stack, minified: null, missing: { release: rel && rel !== NO_RELEASE ? rel : null, files: [...unmapped] } }
+    : { stack, minified: null };
 }
 
 /** Symbolicated sample stacks of error groups, by fingerprint. */
@@ -235,6 +277,8 @@ export async function symbolicateEvents(events: AnalyticsEvent[], pid: string): 
     if (e.type !== 'error' || !e.errorStack) continue;
     const ctx = (e.props as { $ctx?: { release?: unknown } } | null)?.$ctx;
     const release = typeof ctx?.release === 'string' ? ctx.release : null;
-    e.errorStack = (await symbolicate(pid, release, e.errorStack)).stack;
+    const r = await symbolicate(pid, release, e.errorStack);
+    e.errorStack = r.stack;
+    if (r.missing) e.missingSourcemaps = r.missing;
   }
 }

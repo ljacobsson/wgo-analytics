@@ -378,7 +378,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       return D.traces({ from, to, service: qp('service'), minDurationMs: qp('minDurationMs') ? Number(qp('minDurationMs')) : undefined, errorsOnly: qp('errorsOnly') === '1', q: qp('q'), limit });
     case 'logs': return D.logs({ from, to, before: qp('before') ? Date.parse(qp('before')!) : undefined, severity: qp('severity') ? Number(qp('severity')) : undefined, service: qp('service'), traceId: qp('traceId'), q: qp('q'), filters: F.parse(qp('filters')), limit });
     case 'metrics':
-      if (parts[3] === 'series') return D.metricSeries(from, to, qp('name') ?? '', qp('agg') ?? 'avg', qp('groupBy'));
+      if (parts[3] === 'series') return D.metricSeries(from, to, qp('name') ?? '', qp('service'), qp('agg') ?? 'avg', qp('groupBy'));
       return D.metricList(to);
   }
   throw new MockHttpError(404, 'Not found');

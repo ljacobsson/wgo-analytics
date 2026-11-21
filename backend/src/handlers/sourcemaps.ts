@@ -1,8 +1,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { handleError, header, HttpError, json, jsonBody } from '../lib/http';
 import { projectIdForUploadKey } from '../lib/projects';
-import { mapKey, normalizeMapFile, normalizeRelease } from '../lib/sourcemaps';
-import { location } from '../lib/store/files';
+import { normalizeMapFile, normalizeRelease, uploadUrl } from '../lib/sourcemaps';
 
 /**
  * Source map uploads from CI, authenticated by the project's upload key instead of Cognito (see the Settings
@@ -13,8 +12,6 @@ import { location } from '../lib/store/files';
  *
  * Without S3 (local dev server) the url points at the dev server, which accepts the PUT itself.
  */
-const URL_TTL_SECONDS = 600;
-
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
   try {
     if (event.rawPath !== '/sourcemaps/upload-url') throw new HttpError(404, 'Not found');
@@ -28,13 +25,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     const file = normalizeMapFile(body.file);
     if (!file) throw new HttpError(400, 'file must be the name of a script or source map, e.g. index-abc123.js.map');
 
-    const key = mapKey(projectId, release, file);
-    let url = await location().presignPut(key, URL_TTL_SECONDS);
-    if (!url) {
-      const host = header(event, 'x-forwarded-host') ?? header(event, 'host') ?? 'localhost';
-      url = `${header(event, 'x-forwarded-proto') ?? 'http'}://${host}/sourcemaps/put/${key}`;
-    }
-    return json(200, { url, key }, { 'cache-control': 'no-store' });
+    const host = header(event, 'x-forwarded-host') ?? header(event, 'host') ?? 'localhost';
+    const target = (await uploadUrl(projectId, release, file, `${header(event, 'x-forwarded-proto') ?? 'http'}://${host}`))!;
+    return json(200, target, { 'cache-control': 'no-store' });
   } catch (err) {
     return handleError(err);
   }

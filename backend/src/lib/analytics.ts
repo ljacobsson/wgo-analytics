@@ -306,6 +306,7 @@ export async function errors(pid: string, p: Params): Promise<ErrorGroup[]> {
     fingerprint: g.fingerprint, message: g.message, kind: g.kind, count: g.count, sessions: g.sessions,
     firstSeen: iso(g.first_seen)!, lastSeen: iso(g.last_seen)!, sampleStack: mapped.get(g.fingerprint)?.stack ?? null, sampleUrl: g.sample_url,
     minifiedStack: mapped.get(g.fingerprint)?.minified ?? null, ...(mapped.get(g.fingerprint)?.frames ? { stackFrames: mapped.get(g.fingerprint)!.frames } : {}),
+    ...(mapped.get(g.fingerprint)?.missing ? { missingSourcemaps: mapped.get(g.fingerprint)!.missing } : {}),
     source: g.source, series: series.get(g.fingerprint)!,
   })));
 }
@@ -667,6 +668,8 @@ const AGGS: Record<string, string> = {
   p95: 'percentile_cont(0.95) WITHIN GROUP (ORDER BY value)',
 };
 const MAX_SERIES = 10;
+/** groupBy value that splits by the reporting service (a column) rather than a data point attribute. */
+const METRIC_SERVICE_KEY = 'service.name';
 
 export async function metricSeries(pid: string, p: Params): Promise<MetricSeriesResponse> {
   if (!p.name) throw new HttpError(400, 'name is required');
@@ -675,17 +678,38 @@ export async function metricSeries(pid: string, p: Params): Promise<MetricSeries
   if (!agg) throw new HttpError(400, 'agg must be avg, sum, min, max or p95');
   const bucket = pickBucket(r);
   const groupBy = p.groupBy?.trim();
-  const keyExpr = groupBy ? `COALESCE(json_extract_string(attributes, $5), '(none)')` : '$2::text';
   const params: unknown[] = [pid, p.name, r.from, r.to];
-  if (groupBy) params.push(jsonPath([groupBy]));
+  let where = 'project_id = $1 AND name = $2 AND ts >= $3 AND ts < $4';
+  if (p.service) {
+    params.push(p.service);
+    where += ` AND service = $${params.length}`;
+  }
+  const keyParams = [...params];
+  let keyExpr = '$2::text';
+  if (groupBy === METRIC_SERVICE_KEY) keyExpr = 'service';
+  else if (groupBy) {
+    params.push(jsonPath([groupBy]));
+    keyExpr = `COALESCE(json_extract_string(attributes, $${params.length}), '(none)')`;
+  }
   params.push(bucket);
   const bucketParam = `$${params.length}`;
-  const rows = await rawQuery<{ key: string; t: Date; value: number }>(pid, r,
-    `SELECT ${keyExpr} AS key, ${BUCKET_SQL('ts', bucketParam)} AS t, (${agg})::float8 AS value
-       FROM metric_points WHERE project_id = $1 AND name = $2 AND ts >= $3 AND ts < $4
-      GROUP BY 1, 2 ORDER BY 2`,
-    params,
-  );
+  const [rows, keys] = await Promise.all([
+    rawQuery<{ key: string; t: Date; value: number }>(pid, r,
+      `SELECT ${keyExpr} AS key, ${BUCKET_SQL('ts', bucketParam)} AS t, (${agg})::float8 AS value
+         FROM metric_points WHERE ${where}
+        GROUP BY 1, 2 ORDER BY 2`,
+      params,
+    ),
+    // attribute keys on the most recent points, offered as group-by choices
+    rawQuery<{ k: string }>(pid, r,
+      `SELECT DISTINCT k FROM (
+         SELECT unnest(json_keys(attributes)) AS k FROM (
+           SELECT attributes FROM metric_points WHERE ${where} AND json_type(attributes) = 'OBJECT' ORDER BY ts DESC LIMIT 2000
+         ) s
+       ) t ORDER BY k LIMIT 100`,
+      keyParams,
+    ),
+  ]);
   const byKey = new Map<string, Array<{ t: string; value: number }>>();
   for (const row of rows) {
     if (!byKey.has(row.key)) byKey.set(row.key, []);
@@ -695,7 +719,7 @@ export async function metricSeries(pid: string, p: Params): Promise<MetricSeries
     .map(([key, points]) => ({ key, points }))
     .sort((a, b) => b.points.length - a.points.length)
     .slice(0, MAX_SERIES);
-  return { bucketSeconds: bucket, series };
+  return { bucketSeconds: bucket, series, attributeKeys: keys.map((x) => x.k) };
 }
 
 // ---------------- filter field discovery ----------------

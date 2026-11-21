@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
-import { Lru, clearSourcemapCache, mapKey, normalizeMapFile, normalizeRelease, parseStack, scriptName, symbolicate } from '../src/lib/sourcemaps';
+import type { AnalyticsEvent } from '../src/contract';
+import { Lru, appScriptName, clearSourcemapCache, mapKey, normalizeMapFile, normalizeRelease, parseStack, scriptName, symbolicate, symbolicateEvents } from '../src/lib/sourcemaps';
+import { sourcemapUploads } from '../src/lib/mcp/tools';
 import { location } from '../src/lib/store/files';
 
 vi.mock('../src/lib/errorStacks', () => ({ stackReleases: async () => new Map() }));
@@ -39,6 +41,16 @@ describe('stack parsing', () => {
     expect(normalizeRelease('v1.2.3')).toBe('v1.2.3');
     expect(normalizeRelease('a/b')).toBeNull();
     expect(mapKey(PID, '_', 'a.js')).toBe(`sourcemaps/project_id=${PID}/release=_/a.js.map`);
+  });
+  it('tells the app\'s own scripts from ones a map cannot fix', () => {
+    expect(appScriptName('https://a.test/assets/index-abc.js?v=1')).toBe('index-abc.js');
+    expect(appScriptName('https://a.test/chunk.mjs')).toBe('chunk.mjs');
+    expect(appScriptName('http://localhost:5173/node_modules/.vite/deps/react.js')).toBeNull();
+    expect(appScriptName('http://127.0.0.1:8080/app.js')).toBeNull();
+    expect(appScriptName('https://a.test/node_modules/react-dom/cjs/react-dom.production.js')).toBeNull();
+    expect(appScriptName('chrome-extension://abc/content.js')).toBeNull();
+    expect(appScriptName('https://a.test/src/App.tsx')).toBeNull();
+    expect(appScriptName('<anonymous>')).toBeNull();
   });
 });
 
@@ -79,7 +91,56 @@ describe('symbolicate', () => {
     const r = await symbolicate(PID, 'v1', `at o (https://x.test/app-abc123.js:1:1)`);
     expect(r.stack).toContain('rel.ts:1:1');
     const miss = await symbolicate(PID, null, 'at o (https://x.test/nomap.js:1:1)');
-    expect(miss).toEqual({ stack: 'at o (https://x.test/nomap.js:1:1)', minified: null });
+    expect(miss).toEqual({ stack: 'at o (https://x.test/nomap.js:1:1)', minified: null, missing: { release: null, files: ['nomap.js'] } });
+  });
+
+  it('reports missing maps only when none of the app\'s frames mapped', async () => {
+    const s = 'TypeError: x\n    at a (https://x.test/assets/main-1.js:1:1)\n    at b (https://x.test/assets/vendor-2.js:1:1)\n    at c (https://x.test/assets/main-1.js:2:2)';
+    expect((await symbolicate(PID, 'v7', s)).missing).toEqual({ release: 'v7', files: ['main-1.js', 'vendor-2.js'] });
+    expect((await symbolicate(PID, 'bad/release', s)).missing?.release).toBeNull();
+    // nothing a map could fix: dev server, dependencies, native code
+    expect((await symbolicate(PID, null, 'E\n    at a (http://localhost:5173/src/main.js:1:1)\n    at b (<anonymous>)')).missing).toBeUndefined();
+    expect((await symbolicate(PID, null, 'E\n    at a (https://x.test/node_modules/lib/index.js:1:1)')).missing).toBeUndefined();
+    expect((await symbolicate(PID, null, 'no frames here')).missing).toBeUndefined();
+    // one mapped frame: maps are uploaded, the rest is third-party code
+    await location().put(mapKey(PID, '_', 'app-abc123.js'), map);
+    expect((await symbolicate(PID, null, stack())).missing).toBeUndefined();
+  });
+
+  it('marks error events whose stacks lack maps', async () => {
+    const ev = (stack: string, release?: string) => ({ type: 'error', errorStack: stack, props: release ? { $ctx: { release } } : {} }) as unknown as AnalyticsEvent;
+    const events = [ev('E\n    at a (https://x.test/nomap-9.js:1:1)', 'r2'), ev('E\n    at a (http://localhost:3000/a.js:1:1)')];
+    await symbolicateEvents(events, PID);
+    expect(events[0].missingSourcemaps).toEqual({ release: 'r2', files: ['nomap-9.js'] });
+    expect(events[1].missingSourcemaps).toBeUndefined();
+  });
+});
+
+describe('upload_sourcemaps (MCP)', () => {
+  it('returns one curl PUT per map, quoted for the shell', async () => {
+    const r = await sourcemapUploads(PID, { release: 'v1.2.3', files: ['dist/assets/index-abc.js.map', "Bob's app/out/main-1.mjs.map"] }, 'http://localhost:8787');
+    expect(r.release).toBe('v1.2.3');
+    expect(r.files).toEqual([{ path: 'dist/assets/index-abc.js.map', script: 'index-abc.js' }, { path: "Bob's app/out/main-1.mjs.map", script: 'main-1.mjs' }]);
+    const lines = r.command.split(' &&\n');
+    expect(lines[0]).toBe(`curl -fsS -T 'dist/assets/index-abc.js.map' 'http://localhost:8787/sourcemaps/put/sourcemaps/project_id=${PID}/release=v1.2.3/index-abc.js.map'`);
+    expect(lines[1]).toMatch(/^curl -fsS -T 'Bob'\\''s app\/out\/main-1\.mjs\.map' '.*\/release=v1\.2\.3\/main-1\.mjs\.map'$/);
+    expect(lines.at(-1)).toBe("echo 'Uploaded 2 source maps'");
+    expect(new Date(r.expiresAt).getTime()).toBeGreaterThan(Date.now() + 9 * 60_000);
+  });
+  it('uploads without a release as the fallback for every release', async () => {
+    const r = await sourcemapUploads(PID, { files: ['main.js.map'] }, 'http://localhost:8787');
+    expect(r.release).toBeNull();
+    expect(r.command).toContain('/release=_/main.js.map');
+    expect(r.command).toContain("echo 'Uploaded 1 source map'");
+  });
+  it('rejects paths that are not uniquely named source maps', async () => {
+    await expect(sourcemapUploads(PID, { files: ['dist/main.js'] }, 'http://x')).rejects.toThrow(/Not a source map/);
+    await expect(sourcemapUploads(PID, { files: ['dist/a b.js.map'] }, 'http://x')).rejects.toThrow(/Not a source map/);
+    await expect(sourcemapUploads(PID, { files: ['a/main.js.map', 'b/main.js.map'] }, 'http://x')).rejects.toThrow(/same file name/);
+    await expect(sourcemapUploads(PID, { release: 'a/b', files: ['main.js.map'] }, 'http://x')).rejects.toThrow(/release must be/);
+  });
+  it('needs S3 or a public origin to upload to', async () => {
+    await expect(sourcemapUploads(PID, { files: ['main.js.map'] }, undefined)).rejects.toThrow(/cannot sign uploads/);
   });
 });
 
