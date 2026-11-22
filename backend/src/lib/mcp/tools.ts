@@ -11,6 +11,7 @@ import * as GF from '../funnel';
 import { TRIGGER_WINDOWS, type Project, type Trigger } from '../../contract';
 import { OPS } from '../filters';
 import * as M from '../monitor';
+import * as DST from '../destinations';
 import * as S from '../slack';
 import * as T from '../triggers';
 import { HttpError } from '../http';
@@ -133,7 +134,8 @@ const triggerShape = {
   destination: z.union([
     z.object({ type: z.literal('webhook'), url: z.string().url().describe('Public https URL. hooks.slack.com URLs get a Slack-formatted message; others get JSON signed with X-WGO-Signature (HMAC-SHA256 with signingSecret)') }),
     z.object({ type: z.literal('slack'), integrationId: z.string().describe('A Slack channel id from list_triggers.slackChannels') }),
-  ]),
+    z.object({ type: z.literal('saved'), destinationId: z.string().describe('A saved destination id from list_triggers.destinations (or use its `ref`)') }),
+  ]).describe('Prefer a saved destination from list_triggers.destinations (pass its `ref`); a one-off webhook URL otherwise'),
   cooldownSeconds: z.number().int().min(0).max(86400).optional().describe('Least time between notifications (default 300). Matches in between are counted and reported with the next one'),
   enabled: z.boolean().optional().describe('Default true; false pauses it'),
   metric: z.object({
@@ -149,7 +151,7 @@ const triggerShape = {
 const triggerScope = z.enum(['events', 'logs', 'spans']).optional().describe('What it watches (default events): product events, OpenTelemetry logs or spans');
 const triggerKind = z.enum(['match', 'threshold', 'anomaly']).optional().describe('Default match');
 
-/** Slack-bound triggers never need the webhook signing secret, so only webhook ones show it. */
+/** Only one-off webhook triggers sign with their own secret (saved webhooks use the destination's), so only they show it. */
 const publicTrigger = ({ signingSecret, ...t }: Trigger) => (t.destination.type === 'webhook' ? { ...t, signingSecret } : t);
 const goalFilters = z.array(eventFilter).min(1).max(20);
 const goalSteps = z.array(z.object({ name: z.string().min(1).max(80), filters: goalFilters })).max(G.MAX_STEPS);
@@ -450,11 +452,15 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
   projectTool(
     'list_triggers',
     'Triggers (alerts)',
-    'The project\'s triggers with their kind, scope, filters, destination, cooldown, whether enabled, when they last fired and the last delivery status (threshold/anomaly also their current state and usual range), plus `slackChannels`: the Slack channels connected to the project that a trigger can notify (connecting a new one is done in the dashboard, Settings → Triggers).',
+    'The project\'s triggers with their kind, scope, filters, destination, cooldown, whether enabled, when they last fired and the last delivery status (threshold/anomaly also their current state and usual range), plus `destinations`: the saved destinations a trigger can notify, first the project\'s (level "project", shared with its members), then the user\'s own (level "account", usable in all their projects). Put a destination\'s `ref` in a trigger\'s destination. `slackChannels` lists just the project\'s Slack channels. Connecting a Slack channel is done in the dashboard (Triggers page); webhooks can be saved with create_destination.',
     {},
     async (pid) => {
-      const [triggers, slackChannels] = await Promise.all([T.listTriggers(pid), S.listIntegrations(pid)]);
-      return { triggers: triggers.map(publicTrigger), slackChannels: slackChannels.map(({ id, channel, teamName }) => ({ id, channel, teamName })) };
+      const [triggers, slackChannels, destinations] = await Promise.all([T.listTriggers(pid), S.listIntegrations(pid), DST.listProjectDestinations(pid, email)]);
+      return {
+        triggers: triggers.map(publicTrigger),
+        destinations: destinations.map(({ id, level, type, name, detail, owner, ref }) => ({ id, level, type, name, detail, owner, ref })),
+        slackChannels: slackChannels.map(({ id, channel, teamName }) => ({ id, channel, teamName })),
+      };
     },
   );
 
@@ -476,7 +482,7 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
   projectTool(
     'create_trigger',
     'Create a trigger (alert)',
-    `Saves a trigger shared with all project members. Kinds: "match" notifies on every new row matching all \`filters\` (checked as data arrives), e.g. errors on /checkout: scope events, filters [{field: "type", op: "eq", value: "error"}, {field: "path", op: "starts_with", value: "/checkout"}]. "threshold" notifies when \`metric\` over the last \`windowMinutes\` crosses \`condition\` and again when it resolves (checked every minute), e.g. no pageviews in 30 minutes: filters [{field: "type", op: "eq", value: "pageview"}], metric {agg: "count"}, condition {op: "below", value: 1}, windowMinutes 30. "anomaly" notifies when the metric is unusual for the time of day compared with the previous 7 days (needs 3 days of data). Scope and kind can't be changed later. Notifications go to a public https webhook or a Slack channel from list_triggers.slackChannels. Check list_triggers first: calling this twice creates two triggers. A webhook trigger's result has signingSecret for verifying X-WGO-Signature. test_trigger sends a sample notification.`,
+    `Saves a trigger shared with all project members. Kinds: "match" notifies on every new row matching all \`filters\` (checked as data arrives), e.g. errors on /checkout: scope events, filters [{field: "type", op: "eq", value: "error"}, {field: "path", op: "starts_with", value: "/checkout"}]. "threshold" notifies when \`metric\` over the last \`windowMinutes\` crosses \`condition\` and again when it resolves (checked every minute), e.g. no pageviews in 30 minutes: filters [{field: "type", op: "eq", value: "pageview"}], metric {agg: "count"}, condition {op: "below", value: 1}, windowMinutes 30. "anomaly" notifies when the metric is unusual for the time of day compared with the previous 7 days (needs 3 days of data). Scope and kind can't be changed later. Notifications go to a saved destination from list_triggers.destinations (pass its \`ref\`), or a one-off public https webhook URL. Check list_triggers first: calling this twice creates two triggers. A one-off webhook trigger's result has signingSecret for verifying X-WGO-Signature; saved webhooks sign with the destination's secret. test_trigger sends a sample notification.`,
     { scope: triggerScope, kind: triggerKind, ...triggerShape },
     async (pid, a) => publicTrigger(await T.createTrigger(pid, email, a as never, origin)),
     TRIGGER_CREATE,
@@ -497,7 +503,7 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
       condition: triggerShape.condition,
       windowMinutes: triggerShape.windowMinutes,
     },
-    async (pid, { triggerId, ...body }) => publicTrigger(await T.updateTrigger(pid, triggerId, body as never, origin)),
+    async (pid, { triggerId, ...body }) => publicTrigger(await T.updateTrigger(pid, email, triggerId, body as never, origin)),
     TRIGGER_WRITE,
   );
 
@@ -520,6 +526,36 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
     { triggerId: z.string().describe('Trigger id from list_triggers') },
     (pid, a) => T.testTrigger(pid, a.triggerId),
     SEND,
+  );
+
+  const destinationOwner = (pid: string, level: 'project' | 'account' | undefined) =>
+    level === 'account' ? ({ level: 'account', email } as const) : ({ level: 'project', pid } as const);
+  const destinationLevel = z.enum(['project', 'account']).optional()
+    .describe('project (default): shared with the project\'s members. account: the user\'s own, usable by triggers in every project they\'re a member of');
+
+  projectTool(
+    'create_destination',
+    'Save a webhook destination',
+    'Saves a webhook that triggers can notify, so several triggers (and, at account level, several projects) share one URL and one signing secret. Returns it with `signingSecret` (requests carry X-WGO-Signature, HMAC-SHA256 of the body with it, and X-WGO-Destination) and `ref` to put in create_trigger\'s destination. hooks.slack.com URLs get a Slack message instead. Check list_triggers.destinations first: calling this twice saves two.',
+    {
+      name: z.string().min(1).max(120).describe('A name to recognise it by, e.g. "PagerDuty" or "Ops webhook"'),
+      url: z.string().url().describe('Public https URL'),
+      level: destinationLevel,
+    },
+    (pid, a) => DST.createDestination(destinationOwner(pid, a.level), email, { name: a.name, url: a.url }),
+    TRIGGER_CREATE,
+  );
+
+  projectTool(
+    'delete_destination',
+    'Delete a saved destination',
+    'Removes a saved destination (id from list_triggers.destinations; the project\'s, or the user\'s own with level "account"). Refused while a trigger uses it: point those triggers elsewhere first.',
+    { destinationId: z.string(), level: destinationLevel },
+    async (pid, a) => {
+      await DST.deleteDestination(destinationOwner(pid, a.level), a.destinationId);
+      return { deleted: a.destinationId };
+    },
+    DELETE,
   );
 
   projectTool(

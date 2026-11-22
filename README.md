@@ -137,15 +137,26 @@ all its attributes, and click one to filter by it.
 
 **Triggers** notify you when new events match a filter. Create one from the current filters (**Create
 trigger** in the filter bar), from any event (**Create trigger from this event**), or on the Triggers page.
-- **Slack:** click **Add to Slack**, pick the workspace and channel on Slack, done. Slack ties every
+- **Slack:** click **Slack channel**, connect your workspace once (Slack asks which one), then pick channels
+  from a list, as many as you like, without going back to Slack. Private channels show up once you
+  `/invite @WGO` there. A workspace is connected for the project (any member adds its channels) or for
+  yourself (your own channels, usable in all your projects). Slack ties every
   "Add to Slack" button to a Slack app, so a self-hosted WGO needs its own, created once. The Triggers
-  page walks a project owner through it in about a minute: **Create the WGO Slack app** opens Slack
-  pre-filled (you only pick the workspace), then paste the Client ID and Secret, and WGO checks them with
-  Slack. To set it up once for every project instead, put `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` in
-  `deploy.env`.
+  page walks you through it in about a minute: **Create the WGO Slack app** opens Slack pre-filled (you only
+  pick the workspace), then paste the Client ID and Secret, and WGO checks them with Slack. One app works for
+  every project. Save it **for yourself**, and it works in all your projects. A project owner can save it
+  **for the project** instead, so every member there can use it. To set it up for everyone at once, put
+  `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` in `deploy.env`. WGO uses the project's app first, then yours,
+  then the one in `deploy.env`. The app needs the bot token scopes `chat:write`, `chat:write.public`,
+  `channels:read` and `groups:read` (the pre-filled app has them). An app created before WGO used a bot only
+  has `incoming-webhook`: add those scopes under **OAuth & Permissions**, then connect the workspace. Channels
+  connected the old way keep working.
 - **Webhooks:** an HTTPS POST of JSON with `trigger`, `project`, `matches`, `events` and `url`. It's signed
-  with `X-WGO-Signature: sha256=<HMAC-SHA256 of the body>` using the trigger's signing secret. Private
-  and internal addresses are refused.
+  with `X-WGO-Signature: sha256=<HMAC-SHA256 of the body>` using the saved webhook's signing secret (named in
+  `X-WGO-Destination`), or the trigger's own for a one-off URL. Private and internal addresses are refused.
+- **Destinations:** save Slack channels and webhooks once and pick them in any trigger. A project's are shared
+  with its members. Your own can be used in every project you're a member of, and only you can change them;
+  other members see their name, and a project's triggers stop sending to them when you leave it.
 - **Cooldown:** at most one notification per period you choose. Matches in between are counted and
   reported with the next one. **Test** sends a sample notification immediately.
 
@@ -267,6 +278,7 @@ change them later by re-running the deploy.
 | `CERTIFICATE_ARN` | created for you | ACM certificate in **us-east-1**; only needed when your DNS is not in Route 53 |
 | `ALLOWED_EMAIL_DOMAINS` | anyone | Comma-separated, e.g. `example.com,*.example.org`; only these emails can sign up and use the dashboard |
 | `ALLOW_SELF_SIGNUP` | `true` | `false` = only users you create in Cognito can sign in |
+| `ADMIN_EMAILS` | owners of the first project | Comma-separated emails that can see the Costs page and manage budgets (which can stop every project collecting data) |
 | `DELETION_PROTECTION` | `false` | DSQL cluster deletion protection; turn on for production |
 | `MCP_ENABLED` | `true` | The [MCP server](#ai-assistants-mcp) at `/mcp`, with Cognito MCP auth (open client registration) |
 | `MAX_RETENTION_DAYS` | `400` | Longest raw-data retention a project owner can choose (the default is 90 days); see [Cost awareness](#cost-awareness) |
@@ -274,7 +286,7 @@ change them later by re-running the deploy.
 | `CLUSTER_METRICS_PROJECT_ID` | none | Project that receives hourly Aurora DSQL storage and DPU numbers, as metrics and as a `wgo.cluster` event you can create triggers on |
 | `BUILD_ANDROID` | `false` | `true` = rebuild the Android app (needs JDK 17 and the Android SDK) instead of deploying the prebuilt APK from the repo |
 | `UPDATE_CHECK` | `true` | The dashboard checks GitHub every few hours and shows a dismissable note with the update command when `main` has commits newer than your install. The request goes from the signed-in user's browser to `api.github.com`; `false` turns it off |
-| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` | none | One Slack app for "Add to Slack" in every project's [triggers](#filters-and-triggers); otherwise each project sets it up from its Triggers page |
+| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` | none | One Slack app for "Add to Slack" in every project's [triggers](#filters-and-triggers), for everyone; otherwise people set up their own (for all their projects) or a project's on the Triggers page |
 | `PARAMS` | none | Extra raw `sam deploy --parameter-overrides` |
 
 **Custom domain.** With `CUSTOM_DOMAIN=wgo.example.com`:
@@ -318,7 +330,8 @@ To ship only dashboard or SDK changes to an existing stack (no SAM, about 30 s):
 
 The dashboard's **Costs** page shows what the install costs (from Cost Explorer, once the
 `aws:cloudformation:stack-name` cost allocation tag is activated). **Budgets** there alert at a monthly limit for the
-whole install or a single project, and can stop WGO collecting data when the limit is reached.
+whole install or a single project, and can stop WGO collecting data when the limit is reached. Both are for admins
+only: the emails in `ADMIN_EMAILS`, or, when that's empty, the owners of the first project created.
 
 Everything is billed per request and per GB, so an idle install costs close to nothing and the bill follows
 your traffic. Raw telemetry is stored as compressed Parquet files in S3 and queried by DuckDB inside the API
@@ -494,7 +507,7 @@ It then sees exactly the projects you're a member of. The tools are:
 - **Product analytics:** `list_projects`, `get_overview`, `top_clicks`, `top_pages`, `goal_conversions`, `goal_funnel`, `get_retention`, `list_frustration`, `list_errors`, `list_failed_requests`, `explain_change`, `list_releases`, `breakdown`, `web_vitals`, `visitor_locations`, `search_events`, `find_recordings`, `list_uptime_checks`
 - **Click aliases:** `list_click_aliases`, and `set_click_alias`, which gives an autocaptured selector a readable name.
 - **Goals:** `list_goals`, `create_goal`, `update_goal`, `delete_goal` define conversion goals (event filters, optional funnel steps). Goals count from raw events, so a new one has numbers right away.
-- **Triggers (alerts):** `list_triggers` (with the project's connected Slack channels), `preview_trigger`, `create_trigger`, `update_trigger`, `delete_trigger`, and `test_trigger`, which sends a sample notification. Connecting a Slack channel still happens in the dashboard.
+- **Triggers (alerts):** `list_triggers` (with the saved destinations a trigger can use: the project's and your own), `preview_trigger`, `create_trigger`, `update_trigger`, `delete_trigger`, and `test_trigger`, which sends a sample notification. `create_destination` and `delete_destination` save and remove webhooks for the project or for yourself. Connecting a Slack channel still happens in the dashboard.
 
 The tools that change anything (`create_project`, `set_click_alias` and the goal and trigger tools) only do what any project member can also do in the dashboard, and never touch recorded data.
 - **OpenTelemetry:** `list_services`, `list_traces`, `get_trace`, `search_logs`, `list_metrics`, `get_metric_series`

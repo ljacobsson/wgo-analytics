@@ -5,7 +5,7 @@ import { Logo, LogoMark } from '../ui/Logo';
 import { PAGES, useProject } from '../lib/project';
 import { navigate, pageHref, useRoute } from '../lib/router';
 import { resolveRange, TimeCtx, type TimeRange } from '../lib/time';
-import { prefetchPage, useCollection } from '../api/hooks';
+import { prefetchPage, useCollection, useMe } from '../api/hooks';
 import { CollectionPausedBanner } from '../pages/Budgets';
 import { PageIcon } from './icons';
 import { TimePicker } from './TimePicker';
@@ -69,6 +69,7 @@ function LiveDot() {
 
 export function Shell({ page, children }: { page: string; children: ReactNode }) {
   const { project, email } = useProject();
+  const me = useMe(); // Costs is for admins only
   const route = useRoute();
   const qc = useQueryClient();
   const collection = useCollection(project.id);
@@ -156,7 +157,7 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
             {navItem('kiosks', 'Kiosks')}
             {navItem('widget', 'Mobile widget')}
             {navItem('mcp', 'AI assistants (MCP)')}
-            {navItem('costs', 'Costs')}
+            {me.data?.admin && navItem('costs', 'Costs')}
             {navItem('settings', 'Settings')}
             <div className={cn('flex items-center gap-2 rounded-lg px-2 py-1.5', collapsed && 'justify-center px-0')}>
               {collapsed ? (

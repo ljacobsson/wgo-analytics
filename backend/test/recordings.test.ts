@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecordingSummary } from '../src/contract';
-import { MAX_CHUNK_CHARS, matchesFilters, normalizeReplays, parseFilters, validateSettings } from '../src/lib/recordings';
+import { MAX_CHUNK_CHARS, interactedSessions, matchesFilters, normalizeReplays, parseFilters, validateSettings } from '../src/lib/recordings';
 import { chunkJson, eventsFromMessages, rowsFromMessages } from '../src/lib/store/queue';
 
 const ok = { enabled: true, samplePercent: 5, triggers: [], maxPerHour: 10, maxPerDay: null, maskAllText: false };
@@ -72,7 +72,7 @@ describe('the events queue', () => {
 describe('recording filters', () => {
   const rec = (over: Partial<RecordingSummary> = {}): RecordingSummary => ({
     sessionId: 's', startedAt: '2026-11-18T10:00:00Z', endedAt: '2026-11-18T10:01:00Z', durationMs: 60_000, reason: 'sample',
-    anonId: 'anon-1', userId: null, entryPath: '/', pages: 2, clicks: 4, rageClicks: 0, errors: 0, paths: ['/', '/checkout/pay'],
+    anonId: 'anon-1', userId: null, entryPath: '/', pages: 2, clicks: 4, rageClicks: 0, errors: 0, events: 4, active: true, paths: ['/', '/checkout/pay'],
     browser: 'Chrome', os: 'macOS', device: 'desktop', country: 'SE', city: 'Stockholm', ...over,
   });
   const ok = (q: Record<string, string>, over: Partial<RecordingSummary> = {}) => matchesFilters(rec(over), parseFilters(q));
@@ -81,6 +81,19 @@ describe('recording filters', () => {
     expect(ok({}, { durationMs: 2999 })).toBe(false);
     expect(ok({}, { durationMs: 3000 })).toBe(true);
     expect(ok({}, { endedAt: null, durationMs: 0 })).toBe(false);
+  });
+
+  it('hides recordings in which the visitor did nothing, unless asked for or looking for errors', () => {
+    const idle = { active: false, durationMs: 30 * 60_000 };
+    expect(ok({}, idle)).toBe(false);
+    expect(ok({ inactive: '1' }, idle)).toBe(true);
+    expect(ok({ errors: '1' }, { ...idle, errors: 1 })).toBe(true);
+  });
+
+  it('tells which sessions of a batch interacted', () => {
+    const c = (s: string, r: unknown[][]) => ({ id: 'x', t: 'replay', s, ts: 0, d: { r } });
+    const batch = { k: 'k', e: [c('a', [[1, 0, 5, 5], [6, 10, 1], [4, 20, 800, 600]]), c('e', [[7, 0, 'button.buy', 400]]), c('b', [[1, 0, 5, 5], [3, 40, 0, 300]]), c('c', [[2, 0, 1, 1]]), c('d', [[5, 0, '#q', 0, 3]])] };
+    expect([...interactedSessions(batch as never)].sort()).toEqual(['b', 'c', 'd', 'e']);
   });
 
   it('filters by length in seconds', () => {

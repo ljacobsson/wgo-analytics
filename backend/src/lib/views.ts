@@ -7,7 +7,7 @@ import { HttpError } from './http';
 
 const MAX_VIEWS = 200;
 // time range params are left out on purpose: a saved view follows the range you're looking at
-const DROP_PARAMS = ['range', 'from', 'to', 'new', 'pf', 'scope', 'slack'];
+const DROP_PARAMS = ['range', 'from', 'to', 'new', 'pf', 'scope', 'slack', 'slack_level'];
 
 interface ViewRow { project_id: string; id: string; name: string; page: string; params: string; created_by: string; created_at: Date }
 

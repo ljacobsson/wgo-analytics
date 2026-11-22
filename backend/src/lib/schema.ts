@@ -299,6 +299,8 @@ export const SCHEMA_STATEMENTS: string[] = [
      PRIMARY KEY (project_id, session_id)
    )`,
   `CREATE INDEX ASYNC IF NOT EXISTS recordings_started_idx ON recordings (project_id, started_at)`,
+  // whether the visitor clicked, tapped, scrolled, typed or hovered (lib/recordings.ts); null = recorded before it was tracked
+  `ALTER TABLE recordings ADD COLUMN IF NOT EXISTS active boolean`,
 
   // projects deleted by their owner (lib/projects.ts deleteProject): the project row is gone at once, and the
   // maintenance job removes the rest of its data (lib/purge.ts), then this row
@@ -415,4 +417,44 @@ export const SCHEMA_STATEMENTS: string[] = [
    )`,
   // the site's icon (favicon) as a data URL, refreshed with the screenshot
   `ALTER TABLE project_sites ADD COLUMN IF NOT EXISTS icon text`,
+
+  // saved trigger destinations (lib/destinations.ts): a project's (project_id set) or an account's (owner_email set),
+  // reusable by triggers. Project Slack channels connected before this live in `integrations` and are merged in.
+  `CREATE TABLE IF NOT EXISTS destinations (
+     id uuid PRIMARY KEY,
+     project_id uuid,
+     owner_email text,
+     name text NOT NULL,
+     type text NOT NULL,
+     config jsonb NOT NULL,
+     signing_secret text NOT NULL,
+     created_by text NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX ASYNC IF NOT EXISTS destinations_project_idx ON destinations (project_id)`,
+  `CREATE INDEX ASYNC IF NOT EXISTS destinations_owner_idx ON destinations (owner_email)`,
+
+  // a person's own Slack app (lib/slack.ts): "Add to Slack" in every project they're a member of that has none
+  `CREATE TABLE IF NOT EXISTS slack_apps (
+     owner_email text PRIMARY KEY,
+     client_id text NOT NULL,
+     client_secret text NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+
+  // Slack workspaces connected with a bot token (lib/slack.ts): a project's (project_id set) or a person's own
+  // (owner_email set). Channels picked from them are stored like other Slack channels, with config.workspaceId.
+  `CREATE TABLE IF NOT EXISTS slack_workspaces (
+     id uuid PRIMARY KEY,
+     project_id uuid,
+     owner_email text,
+     team_id text NOT NULL,
+     team_name text,
+     bot_token text NOT NULL,
+     bot_user_id text,
+     created_by text NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX ASYNC IF NOT EXISTS slack_workspaces_project_idx ON slack_workspaces (project_id)`,
+  `CREATE INDEX ASYNC IF NOT EXISTS slack_workspaces_owner_idx ON slack_workspaces (owner_email)`,
 ];

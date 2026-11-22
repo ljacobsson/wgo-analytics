@@ -84,6 +84,7 @@ export interface Member {
 export interface Me {
   email: string;
   projects: Project[];
+  admin: boolean; // can see what the install costs and manage budgets (ADMIN_EMAILS; unset: the first project's owners)
 }
 
 // ---------- product analytics ----------
@@ -192,11 +193,53 @@ export interface FieldValuesResponse {
 // POST   /api/projects/{pid}/triggers/{id}/test       -> TriggerTestResult   (sends a sample notification now)
 //
 // Webhook payload (POST, JSON): TriggerWebhookPayload, signed with
-//   X-WGO-Signature: sha256=<hex HMAC-SHA256 of the raw body, keyed with the trigger's signingSecret>
+//   X-WGO-Signature: sha256=<hex HMAC-SHA256 of the raw body, keyed with the signing secret>
+// The secret is the trigger's signingSecret for a one-off webhook URL, and the destination's signingSecret for a saved
+// webhook destination (then X-WGO-Destination carries its id), so one receiver can verify every trigger that uses it.
 // Webhook URLs on hooks.slack.com receive a Slack-formatted message instead.
 export type TriggerDestination =
-  | { type: 'webhook'; url: string } // https only; private/internal addresses are rejected
-  | { type: 'slack'; integrationId: string }; // a channel connected with "Add to Slack"
+  | { type: 'webhook'; url: string } // one-off URL: https only; private/internal addresses are rejected
+  | { type: 'slack'; integrationId: string } // a Slack channel of the project (see SlackSetup)
+  | { type: 'saved'; destinationId: string }; // a saved destination: the project's, or an account's (see Destination)
+
+// ---------- saved destinations ----------
+// Reusable places a trigger can notify, at two levels:
+//   project: usable by every trigger in the project; any member manages them (like triggers)
+//   account: yours, usable by triggers in every project you're a member of; only you manage them. Other members of a
+//            project where a trigger uses yours see its name, type and host, never the URL or secret. When you leave
+//            a project, its triggers stop sending to your destinations.
+// Slack channels are added from a connected Slack workspace (see SlackSetup); webhooks are saved here.
+//
+// GET    /api/destinations                          -> Destination[]   your account destinations
+// POST   /api/destinations          DestinationInput -> Destination     (a webhook)
+// PATCH  /api/destinations/{id}     Partial<DestinationInput> -> Destination
+// DELETE /api/destinations/{id}                     -> { ok: true }    409 while a trigger uses it
+// POST   /api/destinations/{id}/test                -> TriggerTestResult
+// GET    /api/projects/{pid}/destinations           -> Destination[]   the project's, then yours: everything a trigger
+//                                                                      you save in this project can pick
+// POST   /api/projects/{pid}/destinations  DestinationInput -> Destination   (a project webhook)
+// PATCH  /api/projects/{pid}/destinations/{id}  Partial<DestinationInput> -> Destination
+// DELETE /api/projects/{pid}/destinations/{id}      -> { ok: true }    409 while a trigger uses it
+// POST   /api/projects/{pid}/destinations/{id}/test -> TriggerTestResult
+export type DestinationLevel = 'project' | 'account';
+export interface Destination {
+  id: string;
+  level: DestinationLevel;
+  type: 'webhook' | 'slack';
+  name: string; // webhooks: the name given; Slack: the channel, e.g. "#alerts"
+  detail: string | null; // webhooks: the URL's host; Slack: the workspace
+  url?: string; // webhooks you can edit
+  signingSecret?: string; // webhooks you can edit
+  owner: string | null; // account destinations: the owner's email
+  editable: boolean;
+  ref: TriggerDestination; // put this in a trigger's `destination` to use it
+  createdBy: string;
+  createdAt: string;
+}
+export interface DestinationInput {
+  name: string; // 1-120 characters
+  url: string; // https; hooks.slack.com URLs get a Slack message
+}
 
 // Kinds of trigger:
 //   match:     every new row matching `filters` (checked as data arrives)
@@ -253,13 +296,14 @@ export interface Trigger extends Required<Omit<TriggerInput, 'metric' | 'conditi
   condition: TriggerCondition | null;
   windowMinutes: number | null;
   id: string;
-  signingSecret: string; // for verifying webhook signatures
+  signingSecret: string; // for verifying one-off webhook signatures (saved webhooks use the destination's)
   createdBy: string;
   createdAt: string;
   lastFiredAt: string | null;
   fireCount: number;
   lastStatus: string | null; // e.g. "200", "slack: channel_not_found", "timeout"
   status: TriggerStatus | null; // threshold/anomaly only
+  destinationLabel: { name: string; detail: string | null; owner: string | null; type: 'webhook' | 'slack' } | null; // saved destinations
 }
 
 export interface TriggerTestResult {
@@ -289,24 +333,50 @@ export interface TriggerWebhookPayload {
   explanation?: string; // events count metrics: what the change comes from (see GET /explain)
 }
 
-// Slack channels connected to a project ("Add to Slack": pick workspace + channel on Slack, one click).
-// GET    /api/projects/{pid}/integrations              -> SlackIntegration[]
+// Slack. "Add to Slack" connects a workspace (WGO's bot joins it); channels are then picked from a list, as often as
+// you like, without going back to Slack. A workspace and its channels are a project's (any member uses and manages
+// them) or your own (only you; your channels are your account destinations, usable in all your projects).
+// Channels connected before workspaces existed post through an incoming webhook and keep working.
+// GET    /api/projects/{pid}/integrations              -> SlackIntegration[]   the project's channels
 // DELETE /api/projects/{pid}/integrations/{id}         -> { ok: true }
-// GET    /api/projects/{pid}/slack/install             -> { url }  open it: Slack asks for workspace and channel,
-//        then redirects back to the dashboard (#/p/{pid}/triggers?slack=connected|cancelled|error).
-//        409 until a Slack app is set up (see SlackSetup).
+// GET    /api/projects/{pid}/slack/install?level=project|account -> { url }  open it: Slack asks for the workspace,
+//        then redirects back to the dashboard (#/p/{pid}/triggers?slack=connected|cancelled|scopes|error&slack_level=…).
+//        `scopes`: the Slack app lacks bot scopes (see SLACK_BOT_SCOPES). 409 until a Slack app is set up.
+// GET    /api/projects/{pid}/slack/workspaces/{wid}/channels -> SlackChannel[]   public channels, and private ones
+//        WGO's bot was invited to
+// POST   /api/projects/{pid}/slack/workspaces/{wid}/channels {channelId} -> Destination   at the workspace's level
+// DELETE /api/projects/{pid}/slack/workspaces/{wid}    -> SlackSetup   409 while channels use it
 //
-// Slack ties "Add to Slack" to a Slack app. Self-hosted WGO creates one once: from the dashboard
-// (per project, owners only) or instance-wide with SLACK_CLIENT_ID/SECRET at deploy time.
-// GET    /api/projects/{pid}/slack                     -> SlackSetup
-// POST   /api/projects/{pid}/slack/app  {clientId, clientSecret} -> SlackSetup   (owner; checked with Slack)
-// DELETE /api/projects/{pid}/slack/app                 -> SlackSetup   (owner)
+// Slack ties "Add to Slack" to a Slack app. One app works for every project of an install, so it's created once:
+// from the dashboard for a project (owners; everyone in the project uses it) or for yourself (used in every project
+// you're a member of that has none), or instance-wide with SLACK_CLIENT_ID/SECRET at deploy time.
+// Order: the project's, then yours, then the instance's.
+// GET    /api/projects/{pid}/slack                     -> SlackSetup   (for the caller)
+// POST   /api/projects/{pid}/slack/app  {clientId, clientSecret, level?: 'project'|'account'} -> SlackSetup
+//        (checked with Slack; project: owners only; account: your own app)
+// DELETE /api/projects/{pid}/slack/app?level=project|account -> SlackSetup   (project: owner)
+export const SLACK_BOT_SCOPES = ['chat:write', 'chat:write.public', 'channels:read', 'groups:read'] as const;
 export interface SlackSetup {
-  configured: boolean;
-  source: 'project' | 'instance' | null;
-  clientId: string | null; // project-level app only; the secret is never returned
+  configured: boolean; // "Add to Slack" works for you in this project
+  source: 'project' | 'account' | 'instance' | null; // whose app it uses: the project's, your own or the instance's
+  clientId: string | null; // the app in use, unless it's the instance's; the secret is never returned
+  accountClientId: string | null; // your own app, if you set one up (used where a project has none)
   redirectUrl: string; // the app's OAuth redirect URL (already in the manifest behind createAppUrl)
   createAppUrl: string; // opens Slack's "create app" with everything pre-filled; you only pick the workspace
+  workspaces: SlackWorkspace[]; // the project's, then your own
+}
+export interface SlackWorkspace {
+  id: string;
+  level: DestinationLevel;
+  teamName: string | null;
+  channels: number; // channels added from it
+  createdBy: string;
+  createdAt: string;
+}
+export interface SlackChannel {
+  id: string; // e.g. C0123456789
+  name: string; // "#alerts"
+  private: boolean;
 }
 export interface SlackIntegration {
   id: string;
@@ -926,6 +996,10 @@ export interface RecordingSummary {
   /** clicks that were part of a rage-click burst (3+ quick clicks on one element) */
   rageClicks: number;
   errors: number;
+  /** events other than page views and web vitals (clicks, custom events, errors, identify calls) */
+  events: number;
+  /** the visitor clicked, tapped, scrolled, typed or hovered something clickable (for older recordings: viewed 2+ pages or caused other events) */
+  active: boolean;
   /** distinct pages viewed, in the order first seen (at most 20) */
   paths: string[];
   browser: string | null;
@@ -941,6 +1015,8 @@ export interface RecordingSummary {
  * - page: a page viewed in the session; `*` is a wildcard, otherwise any path containing the text
  * - device: desktop | mobile | tablet; reason: sample | trigger
  * - errors=1, rage=1, identified=1: only sessions with errors / rage clicks / a known user
+ * - inactive=1: also list recordings in which the visitor did nothing (see RecordingSummary.active), which are
+ *   hidden otherwise (mostly tabs left open); errors=1 lists them too
  * - q: text in the user, visitor id, pages, location, browser, OS or reason
  */
 export interface RecordingFilters {
@@ -952,6 +1028,7 @@ export interface RecordingFilters {
   errors?: boolean;
   rage?: boolean;
   identified?: boolean;
+  inactive?: boolean;
   q?: string;
 }
 
@@ -1136,7 +1213,7 @@ export interface UptimeResults {
 
 // ---------- what the install costs ----------
 // GET /api/costs?pid={pid}  -> CostsResponse
-// Signed-in users who own at least one project (others get 403). Amounts come from AWS Cost Explorer for the
+// Admins only (Me.admin; others get 403). `pid` must be one of the admin's projects. Amounts come from AWS Cost Explorer for the
 // resources of this stack (tag aws:cloudformation:stack-name, which must be activated as a cost allocation tag),
 // cached for 12 hours: Cost Explorer charges $0.01 per request. `setup: true` means no numbers are available yet.
 // Categories: storage (S3, DSQL, DynamoDB and log storage), ingestion (taking events in and writing them), querying
@@ -1221,8 +1298,9 @@ export interface ErrorSuppression extends ErrorSuppressionInput {
 
 // ---------- Cost budgets ----------
 // GET    /api/projects/{pid}/collection     -> { paused: boolean }   any member: is a budget stopping collection?
+// Budgets are for admins only (Me.admin; others get 403).
 // GET    /api/costs/budgets                 -> Budget[]   install budgets, and project budgets of projects you own
-// POST   /api/costs/budgets  BudgetInput    -> Budget     install: you own at least one project; project: you own it
+// POST   /api/costs/budgets  BudgetInput    -> Budget     install: any admin; project: an admin who owns it
 // PATCH  /api/costs/budgets/{id} Partial<BudgetInput> -> Budget
 // DELETE /api/costs/budgets/{id}            -> { ok: true }
 // POST   /api/costs/budgets/{id}/resume     -> Budget     collect data again for the rest of the month

@@ -77,7 +77,10 @@ describe('Slack install state', () => {
   it('round-trips and rejects tampering, expiry and other apps’ secrets', () => {
     const state = signState('secret-1', 'pid-1', 'me@example.com', 'https://wgo.example.com', 1_000);
     expect(peekStateProject(state)).toBe('pid-1');
-    expect(verifyState('secret-1', state, 2_000)).toEqual({ pid: 'pid-1', email: 'me@example.com', returnTo: 'https://wgo.example.com' });
+    expect(verifyState('secret-1', state, 2_000)).toEqual({ pid: 'pid-1', email: 'me@example.com', returnTo: 'https://wgo.example.com', level: 'project' });
+    // "Add to Slack" for your own destinations carries the level through Slack and back
+    const mine = signState('secret-1', 'pid-1', 'me@example.com', null, 1_000, 'account');
+    expect(verifyState('secret-1', mine, 2_000)).toMatchObject({ pid: 'pid-1', level: 'account' });
     const [data, sig] = state.split('.');
     const forged = Buffer.from(JSON.stringify({ p: 'other', e: 'x', r: null, x: 9e15 })).toString('base64url');
     expect(() => verifyState('secret-1', `${forged}.${sig}`, 2_000)).toThrow(/signature/);
@@ -91,7 +94,12 @@ describe('Slack install state', () => {
     expect(url.origin + url.pathname).toBe('https://api.slack.com/apps');
     expect(url.searchParams.get('new_app')).toBe('1');
     const manifest = JSON.parse(url.searchParams.get('manifest_json')!);
-    expect(manifest.oauth_config).toEqual({ redirect_urls: ['https://abc.execute-api.eu-west-1.amazonaws.com/slack/callback'], scopes: { bot: ['incoming-webhook'] } });
+    expect(manifest.oauth_config).toEqual({
+      redirect_urls: ['https://abc.execute-api.eu-west-1.amazonaws.com/slack/callback'],
+      scopes: { bot: ['chat:write', 'chat:write.public', 'channels:read', 'groups:read'] },
+    });
+    // the bot token must not expire
+    expect(manifest.settings.token_rotation_enabled).toBe(false);
     expect(manifest.display_information.name).toBe('WGO');
     // Slack refuses bot scopes without a bot user
     expect(manifest.features.bot_user.display_name).toBe('WGO');

@@ -126,6 +126,8 @@ function summary(block: number, sk: number, evs: AnalyticsEvent[]): RecordingSum
     reason: errors && rnd(block, sk, 78) < 0.6 ? 'trigger:error' : checkout && rnd(block, sk, 79) < 0.5 ? 'trigger:page:/checkout*' : 'sample',
     anonId: e.anonId, userId: evs.find((x) => x.userId)?.userId ?? null, entryPath: evs.find((x) => x.type === 'pageview')?.path ?? e.path,
     pages: evs.filter((x) => x.type === 'pageview').length, clicks: evs.filter((x) => x.type === 'click').length, errors,
+    events: evs.filter((x) => x.type !== 'pageview').length,
+    active: evs.some((x) => x.type === 'click') || evs.filter((x) => x.type === 'pageview').length > 1,
     rageClicks: evs.filter((x) => x.type === 'click' && x.props?.rage).length * 3,
     paths: [...new Set(evs.map((x) => x.path).filter((p): p is string => !!p))].slice(0, 20),
     browser: e.browser, os: e.os, device: e.device, country: e.country, city: e.city,
@@ -135,6 +137,7 @@ function summary(block: number, sk: number, evs: AnalyticsEvent[]): RecordingSum
 /** The backend's filter rules (backend/src/lib/recordings.ts matchesFilters), for mock mode. */
 function matches(r: RecordingSummary, f: RecordingFilters): boolean {
   if (!r.endedAt || r.durationMs < 3000) return false;
+  if (!r.active && !f.inactive && !f.errors) return false;
   if (f.minDuration && r.durationMs < f.minDuration * 1000) return false;
   if (f.errors && !r.errors) return false;
   if (f.rage && !r.rageClicks) return false;

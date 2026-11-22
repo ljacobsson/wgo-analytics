@@ -155,7 +155,7 @@ export async function rotateKey(email: string, projectId: string): Promise<Proje
  */
 export const PROJECT_CONFIG_TABLES = [
   'project_members', 'kiosks', 'triggers', 'integrations', 'saved_views', 'goals', 'click_aliases', 'recording_settings',
-  'error_suppressions', 'budgets',
+  'error_suppressions', 'budgets', 'destinations', 'slack_workspaces',
 ] as const;
 
 /**

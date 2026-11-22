@@ -2,6 +2,8 @@ import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 }
 import { allowlistMessage, emailAllowed } from '../lib/allowlist';
 import { handleError, HttpError, json, jsonBody } from '../lib/http';
 import * as CA from '../lib/clickAliases';
+import { isAdmin, requireAdmin } from '../lib/admins';
+import * as DST from '../lib/destinations';
 import * as B from '../lib/budgets';
 import * as C from '../lib/costs';
 import * as U from '../lib/uptime';
@@ -31,7 +33,21 @@ async function route(method: string, parts: string[], q: Q, email: string, event
   // parts: ['api', ...]; for /api/devices/{id}, `pid` holds the device id
   const [, resource, pid, sub, ...rest] = parts;
 
-  if (resource === 'me' && method === 'GET') return { email, projects: await P.listProjects(email) };
+  if (resource === 'me' && method === 'GET') {
+    const [projects, admin] = await Promise.all([P.listProjects(email), isAdmin(email)]);
+    return { email, projects, admin };
+  }
+  // your own trigger destinations (`pid` holds the destination id)
+  if (resource === 'destinations') {
+    const [id, action] = [pid, sub];
+    const me = { level: 'account', email } as const;
+    if (!id && method === 'GET') return DST.listAccountDestinations(email);
+    if (!id && method === 'POST') return DST.createDestination(me, email, jsonBody(event));
+    if (id && action === 'test' && method === 'POST') return DST.testDestination(me, id, null);
+    if (id && !action && method === 'PATCH') return DST.updateDestination(me, email, id, jsonBody(event));
+    if (id && !action && method === 'DELETE') { await DST.deleteDestination(me, id); return { ok: true }; }
+    throw new HttpError(405, 'Method not allowed');
+  }
   if (resource === 'devices') {
     if (!pid && method === 'GET') return D.listDevices(email);
     if (!pid && method === 'POST') return D.createDevice(email, jsonBody<{ name?: unknown }>(event).name);
@@ -41,7 +57,7 @@ async function route(method: string, parts: string[], q: Q, email: string, event
     }
     throw new HttpError(405, 'Method not allowed');
   }
-  if (resource === 'costs' && pid === 'budgets') {
+  if (resource === 'costs' && pid === 'budgets') { // admins only, checked in lib/budgets.ts
     const [id, action] = [sub, rest[0]];
     if (!id && method === 'GET') return B.listBudgets(email);
     if (!id && method === 'POST') return B.createBudget(email, jsonBody(event));
@@ -52,8 +68,8 @@ async function route(method: string, parts: string[], q: Q, email: string, event
   }
   if (resource === 'costs') {
     if (method !== 'GET') throw new HttpError(405, 'Method not allowed');
+    await requireAdmin(email);
     const projects = await P.listProjects(email);
-    if (!projects.some((p) => p.role === 'owner')) throw new HttpError(403, 'Only project owners can see what the install costs');
     // `pid` only adds that project's share; it must be one of the caller's own projects
     const own = q.pid;
     if (own && !projects.some((p) => p.id === own)) throw new HttpError(404, 'Project not found');
@@ -172,16 +188,24 @@ async function route(method: string, parts: string[], q: Q, email: string, event
     throw new HttpError(405, 'Method not allowed');
   }
 
-  if (sub === 'triggers' || sub === 'integrations' || sub === 'slack') {
-    await P.getProject(email, pid); // authorization: caller must be a member
+  if (sub === 'triggers' || sub === 'integrations' || sub === 'slack' || sub === 'destinations') {
+    const project = await P.getProject(email, pid); // authorization: caller must be a member
     const [id, action] = rest;
     if (sub === 'triggers') {
       if (!id && method === 'GET') return T.listTriggers(pid);
       if (!id && method === 'POST') return T.createTrigger(pid, email, jsonBody(event), event.headers?.origin);
       if (id === 'preview' && !action && method === 'POST') return M.previewTrigger(pid, jsonBody(event));
       if (id && action === 'test' && method === 'POST') return T.testTrigger(pid, id);
-      if (id && !action && method === 'PATCH') return T.updateTrigger(pid, id, jsonBody(event), event.headers?.origin);
+      if (id && !action && method === 'PATCH') return T.updateTrigger(pid, email, id, jsonBody(event), event.headers?.origin);
       if (id && !action && method === 'DELETE') { await T.deleteTrigger(pid, id); return { ok: true }; }
+    }
+    if (sub === 'destinations') {
+      const here = { level: 'project', pid } as const;
+      if (!id && method === 'GET') return DST.listProjectDestinations(pid, email);
+      if (!id && method === 'POST') return DST.createDestination(here, email, jsonBody(event));
+      if (id && action === 'test' && method === 'POST') return DST.testDestination(here, id, project.name);
+      if (id && !action && method === 'PATCH') return DST.updateDestination(here, email, id, jsonBody(event));
+      if (id && !action && method === 'DELETE') { await DST.deleteDestination(here, id); return { ok: true }; }
     }
     if (sub === 'integrations') {
       if (!id && method === 'GET') return S.listIntegrations(pid);
@@ -189,18 +213,28 @@ async function route(method: string, parts: string[], q: Q, email: string, event
     }
     if (sub === 'slack') {
       const domain = event.requestContext.domainName;
-      if (!id && method === 'GET') return S.setupStatus(pid, domain);
-      if (id === 'install' && method === 'GET') return { url: await S.installUrl(pid, email, domain, T.dashboardOrigin(event.headers?.origin)) };
+      if (!id && method === 'GET') return S.setupStatus(pid, domain, email);
+      // workspaces/{wid}[/channels]: the project's or your own
+      if (id === 'workspaces' && action) {
+        const more = rest[2];
+        if (more === 'channels' && method === 'GET') return S.listChannels(pid, email, action);
+        if (more === 'channels' && method === 'POST') return S.addChannel(pid, email, action, jsonBody<{ channelId?: unknown }>(event).channelId);
+        if (!more && method === 'DELETE') { await S.disconnectWorkspace(pid, email, action); return S.setupStatus(pid, domain, email); }
+      }
+      if (id === 'install' && method === 'GET') return { url: await S.installUrl(pid, email, domain, T.dashboardOrigin(event.headers?.origin), q.level === 'account' ? 'account' : 'project') };
+      // the project's app (owners) or your own (anyone, used in all your projects)
       if (id === 'app' && method === 'POST') {
-        await P.requireOwner(email, pid);
-        const b = jsonBody<{ clientId?: unknown; clientSecret?: unknown }>(event);
-        await S.saveApp(pid, email, b.clientId, b.clientSecret);
-        return S.setupStatus(pid, domain);
+        const b = jsonBody<{ clientId?: unknown; clientSecret?: unknown; level?: unknown }>(event);
+        const level = b.level === 'account' ? 'account' : 'project';
+        if (level === 'project') await P.requireOwner(email, pid);
+        await S.saveApp(pid, email, b.clientId, b.clientSecret, level);
+        return S.setupStatus(pid, domain, email);
       }
       if (id === 'app' && method === 'DELETE') {
-        await P.requireOwner(email, pid);
-        await S.removeApp(pid);
-        return S.setupStatus(pid, domain);
+        const level = q.level === 'account' ? 'account' : 'project';
+        if (level === 'project') await P.requireOwner(email, pid);
+        await S.removeApp(pid, email, level);
+        return S.setupStatus(pid, domain, email);
       }
     }
     throw new HttpError(405, 'Method not allowed');

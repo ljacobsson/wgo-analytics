@@ -143,7 +143,7 @@ function SettingsDialog({ open, onClose, data }: { open: boolean; onClose: () =>
 // ---------------------------------------------------------------- filters
 
 /** URL parameter of each filter (the page's own; time range and project filters are separate). */
-const P = { len: 'len', page: 'page', device: 'device', why: 'why', errors: 'errors', rage: 'rage', users: 'users', q: 'q' } as const;
+const P = { len: 'len', page: 'page', device: 'device', why: 'why', errors: 'errors', rage: 'rage', users: 'users', inactive: 'inactive', q: 'q' } as const;
 const LENGTHS = [['', 'Any length'], ['10', '10 s or longer'], ['30', '30 s or longer'], ['60', '1 min or longer'], ['300', '5 min or longer']] as const;
 
 function filtersFrom(params: Route['params']): RecordingFilters {
@@ -157,6 +157,7 @@ function filtersFrom(params: Route['params']): RecordingFilters {
     errors: get(P.errors) === '1' || undefined,
     rage: get(P.rage) === '1' || undefined,
     identified: get(P.users) === '1' || undefined,
+    inactive: get(P.inactive) === '1' || undefined,
     q: get(P.q),
   };
 }
@@ -198,6 +199,7 @@ function FilterBar({ params }: { params: Route['params'] }) {
         {toggle(P.errors, 'With errors')}
         {toggle(P.rage, 'With rage clicks')}
         {toggle(P.users, 'Logged-in users')}
+        <span title="Recordings in which the visitor never clicked, tapped, scrolled, typed or hovered anything: mostly tabs left open">{toggle(P.inactive, 'Include inactive')}</span>
       </div>
       {active && (
         <button onClick={() => set(Object.fromEntries(Object.values(P).map((k) => [k, null])))} className="ml-auto inline-flex items-center gap-1 text-[12px] text-muted hover:text-fg cursor-pointer">
@@ -260,7 +262,7 @@ export function RecordingsPage() {
             <TableHead className={COLS} cols={['Started', ['Length', 'text-right'], 'Visitor', 'Entry page', ['Pages', 'text-right'], ['Clicks', 'text-right'], ['Errors', 'text-right'], 'Device', 'Recorded because']} />
             {list.isLoading ? <RowsSkeleton n={6} /> : list.isError ? <ErrorState error={list.error} retry={() => list.refetch()} /> : !rows.length ? (
               <EmptyState pinned icon={<MonitorPlay size={22} />} title={filtered ? 'No recordings match these filters' : 'No recordings in this time range'}>
-                {filtered ? (list.hasNextPage ? 'None among the newest recordings; load older ones below, or widen the filters.' : 'Try other filters or a longer time range.') : s?.settings.enabled ? 'Recordings show up here within a minute of a recorded session starting.' : 'Turn on session recording to start collecting them.'}
+                {filtered ? (list.hasNextPage ? 'None among the newest recordings; load older ones below, or widen the filters.' : 'Try other filters or a longer time range.') : s?.settings.enabled ? 'Recordings show up here within a minute of a recorded session starting. Recordings in which the visitor did nothing are hidden unless you include inactive ones.' : 'Turn on session recording to start collecting them.'}
               </EmptyState>
             ) : rows.map((r) => (
               <button key={r.sessionId} onClick={() => watch(r.sessionId)}

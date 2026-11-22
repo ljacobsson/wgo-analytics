@@ -174,10 +174,11 @@ describe('MCP bearer auth', () => {
     const find = msg.result.tools.find((t: { name: string }) => t.name === 'find_recordings');
     expect(find.inputSchema.properties.did.items.properties.action.enum).toEqual(['hover', 'click', 'rage_click', 'pageview', 'event', 'error']);
     expect(find.inputSchema.properties.did.items.properties).toHaveProperty('notClicked');
-    // the only tools that write create a project, name a click target, define goals and triggers or upload source maps, and they're marked as such
+    // the only tools that write create a project, name a click target, define goals, triggers and destinations or upload source maps, and they're marked as such
     const writes = msg.result.tools.filter((t: { annotations?: { readOnlyHint?: boolean } }) => !t.annotations?.readOnlyHint);
     expect(writes.map((t: { name: string }) => t.name).sort()).toEqual([
-      'create_goal', 'create_project', 'create_trigger', 'delete_goal', 'delete_trigger', 'set_click_alias', 'test_trigger', 'update_goal', 'update_trigger', 'upload_sourcemaps',
+      'create_destination', 'create_goal', 'create_project', 'create_trigger', 'delete_destination', 'delete_goal', 'delete_trigger', 'set_click_alias', 'test_trigger',
+      'update_goal', 'update_trigger', 'upload_sourcemaps',
     ]);
     const hints = (name: string) => writes.find((t: { name: string }) => t.name === name).annotations;
     expect(hints('set_click_alias')).toMatchObject({ destructiveHint: false, idempotentHint: true });

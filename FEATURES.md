@@ -87,7 +87,8 @@ The dashboard has a setup guide for Node.js and Python, on servers and AWS Lambd
 - 🤔 When a number on the Overview moves, **Why?** says which page, browser, country or release accounts for it,
   when it started and which release went out just before.
 - 🚨 Alert on each matching event, on a threshold ("no pageviews in 30 minutes", "p95 above 1 s") or on anything
-  unusual for the time of day, in Slack or by webhook.
+  unusual for the time of day, in Slack or by webhook. Save destinations once, for a project or for yourself
+  across all your projects, and reuse them in any trigger.
 - 💓 Uptime checks fetch your URLs every 1, 5 or 15 minutes. A check goes down after two failures in a row.
 
 ---
@@ -97,7 +98,7 @@ The dashboard has a setup guide for Node.js and Python, on servers and AWS Lambd
 WGO runs in your AWS account, so the bill is yours, and so is the view of it.
 
 - 💰 The Costs page shows what the install costs this month, per day and per AWS service, and about how much that
-  is per million events.
+  is per million events. Only admins see it.
 - 🧮 Budgets set a monthly limit for the whole install or one project. They alert as spend passes the percentages you
   choose, or when the month's forecast passes the limit, in Slack or by webhook.
 - ✋ A budget can also stop collecting data when it's reached, until the month ends or you raise the limit.

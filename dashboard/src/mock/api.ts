@@ -1,4 +1,4 @@
-import type { RecordingSettings } from '../api/contract';
+import type { Destination, DestinationInput, DestinationLevel, RecordingSettings, TriggerDestination } from '../api/contract';
 import type { ClickAlias, ClickAliasInput, Device, Goal, GoalInput, Kiosk, KioskConfig, KioskState, Member, Project, SavedView, SavedViewInput, SlackIntegration, Trigger, TriggerInput, UptimeCheckInput } from '../api/contract';
 import * as D from './data';
 import { funnel } from './funnel';
@@ -15,7 +15,16 @@ interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppressio
 import * as UP from './uptime';
 import { mockSite, mockSiteImage } from './site';
 
-interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; uptime?: Record<string, UP.MockCheck[]>; recordingSettings?: Record<string, RecordingSettings> }
+interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; uptime?: Record<string, UP.MockCheck[]>; recordingSettings?: Record<string, RecordingSettings>; destinations?: MockDestination[]; accountSlackApps?: Record<string, string> }
+/** A saved destination: a project's (projectId) or an account's (owner). Slack channels note their workspace. */
+type MockDestination = Destination & { projectId: string | null; workspaceId?: string };
+/** A connected Slack workspace: a project's (projectId) or someone's own (owner). */
+interface MockWorkspace { id: string; projectId: string | null; owner: string | null; teamName: string; createdBy: string; createdAt: string }
+interface Db { slackWorkspaces?: MockWorkspace[] }
+const MOCK_CHANNELS = [
+  { id: 'C01ALERTS', name: '#alerts', private: false }, { id: 'C02CHECK', name: '#checkout', private: false }, { id: 'C03GROW', name: '#growth', private: false },
+  { id: 'G04ONCALL', name: '#oncall', private: true }, { id: 'C05RANDOM', name: '#random', private: false },
+];
 const KEY = 'wgo.mock.db';
 const newKey = () => 'ak_' + hex(28, Date.now(), Math.floor(Math.random() * 1e9));
 
@@ -34,6 +43,57 @@ const save = (db: Db) => localStorage.setItem(KEY, JSON.stringify(db));
 
 export class MockHttpError extends Error { constructor(public status: number, m: string) { super(m); } }
 
+/** What a trigger in `pid` can pick, as the API lists it: the project's Slack channels and webhooks, then the user's own. */
+function projectDestinations(db: Db, pid: string, email: string): Destination[] {
+  const channels: Destination[] = (db.integrations?.[pid] ?? []).map((i) => ({
+    id: i.id, level: 'project', type: 'slack', name: i.channel, detail: i.teamName, owner: null, editable: true, ref: { type: 'slack', integrationId: i.id }, createdBy: i.createdBy, createdAt: i.createdAt,
+  }));
+  const saved = db.destinations ?? [];
+  return [...channels, ...saved.filter((d) => d.projectId === pid)].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .concat(saved.filter((d) => !d.projectId && d.owner === email));
+}
+const labelOf = (db: Db, d: TriggerDestination): Trigger['destinationLabel'] => {
+  if (d.type !== 'saved') return null;
+  const x = db.destinations?.find((y) => y.id === d.destinationId);
+  return x ? { name: x.name, detail: x.detail, owner: x.owner, type: x.type } : null;
+};
+/** Saved destinations: `projectId` null for the user's own. */
+function destinationsApi(db: Db, projectId: string | null, email: string, method: string, id: string | undefined, action: string | undefined, body: unknown): unknown {
+  const list = (db.destinations ??= []);
+  const mine = (d: MockDestination) => (projectId ? d.projectId === projectId : !d.projectId && d.owner === email);
+  if (!id && method === 'GET') return projectId ? projectDestinations(db, projectId, email) : list.filter(mine);
+  const input = (body ?? {}) as Partial<DestinationInput>;
+  if (input.name !== undefined && (!input.name.trim() || input.name.trim().length > 120)) throw new MockHttpError(400, 'Destination name must be 1-120 characters');
+  if (input.url !== undefined && !/^https:\/\/[^/]+\.[^/]+/i.test(input.url)) throw new MockHttpError(400, 'Webhook URL must use https');
+  if (!id && method === 'POST') {
+    const did = crypto.randomUUID();
+    const url = String(input.url);
+    const d: MockDestination = {
+      id: did, projectId, level: projectId ? 'project' : 'account', type: 'webhook', name: String(input.name).trim(), detail: new URL(url).host, url, signingSecret: 'whsec_' + hex(24, Date.now(), 11),
+      owner: projectId ? null : email, editable: true, ref: { type: 'saved', destinationId: did }, createdBy: email, createdAt: new Date().toISOString(),
+    };
+    list.push(d); save(db); return d;
+  }
+  if (projectId && method === 'DELETE' && db.integrations?.[projectId]?.some((i) => i.id === id)) {
+    db.integrations[projectId] = db.integrations[projectId].filter((i) => i.id !== id); save(db); return { ok: true };
+  }
+  if (projectId && action === 'test' && db.integrations?.[projectId]?.some((i) => i.id === id)) return { ok: true, status: '200' };
+  const d = list.find((x) => x.id === id && mine(x));
+  if (!d) throw new MockHttpError(404, 'Destination not found');
+  if (action === 'test') return { ok: true, status: '200' };
+  if (method === 'PATCH') {
+    if (input.name !== undefined) d.name = input.name.trim();
+    if (input.url !== undefined) { d.url = input.url; d.detail = new URL(input.url).host; }
+    save(db); return d;
+  }
+  if (method === 'DELETE') {
+    const used = Object.values(db.triggers ?? {}).flat().filter((t) => t.destination.type === 'saved' && t.destination.destinationId === id);
+    if (used.length) throw new MockHttpError(409, `Still used by trigger${used.length > 1 ? 's' : ''}: ${used.map((t) => t.name).join(', ')}`);
+    db.destinations = list.filter((x) => x !== d); save(db); return { ok: true };
+  }
+  return d;
+}
+
 export function handleApi(method: string, url: URL, body: unknown, email: string): unknown {
   const db = load(email);
   const parts = url.pathname.replace(/^\/api\//, '').split('/').filter(Boolean);
@@ -42,7 +102,9 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
   const from = Date.parse(qp('from') ?? '') || now - 86400e3, to = Date.parse(qp('to') ?? '') || now;
   const limit = Number(qp('limit') ?? 100);
 
-  if (parts[0] === 'me') return { email, projects: db.projects };
+  // ?mock_nonadmin: sign in as someone who isn't an admin (no Costs page)
+  if (parts[0] === 'me') return { email, projects: db.projects, admin: !new URLSearchParams(location.search).has('mock_nonadmin') };
+  if (parts[0] === 'destinations') return destinationsApi(db, null, email, method, parts[1], parts[2], body);
   if (parts[0] === 'devices') {
     const list = (db.devices ??= []);
     if (method === 'POST') {
@@ -150,7 +212,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       const list = ((db.views ??= {})[pid] ??= []);
       const id = parts[3];
       const input = (body ?? {}) as Partial<SavedViewInput>;
-      const clean = (p: string) => { const u = new URLSearchParams(p.replace(/^\?/, '')); for (const k of ['range', 'from', 'to', 'new', 'pf', 'scope', 'slack']) u.delete(k); return u.toString(); };
+      const clean = (p: string) => { const u = new URLSearchParams(p.replace(/^\?/, '')); for (const k of ['range', 'from', 'to', 'new', 'pf', 'scope', 'slack', 'slack_level']) u.delete(k); return u.toString(); };
       if (input.name !== undefined && (!input.name.trim() || input.name.trim().length > 120)) throw new MockHttpError(400, 'View name must be 1-120 characters');
       if (!id && method === 'POST') {
         const v: SavedView = { id: crypto.randomUUID(), name: input.name!.trim(), page: input.page ?? 'events', params: clean(input.params ?? ''), createdBy: email, createdAt: new Date().toISOString() };
@@ -220,6 +282,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
           createdBy: email, createdAt: new Date().toISOString(), lastFiredAt: null, fireCount: 0, lastStatus: null,
           kind: input.kind ?? 'match', metric: input.metric ?? null, condition: input.condition ?? null, windowMinutes: input.windowMinutes ?? null,
           status: input.kind && input.kind !== 'match' ? { state: 'ok', since: new Date().toISOString(), lastValue: 3, lastEvaluatedAt: new Date().toISOString(), baseline: input.kind === 'anomaly' ? { median: 4, low: 0, high: 10, days: 7 } : null } : null,
+          destinationLabel: labelOf(db, input.destination!),
         };
         list.push(t); save(db); return t;
       }
@@ -232,9 +295,9 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       const t = list.find((x) => x.id === id);
       if (id && !t) throw new Error('Trigger not found');
       if (t && action === 'test') { t.lastStatus = 'test: 200'; save(db); return { ok: true, status: '200' }; }
-      if (t && method === 'PATCH') { Object.assign(t, input); save(db); return t; }
+      if (t && method === 'PATCH') { Object.assign(t, input); t.destinationLabel = labelOf(db, t.destination); save(db); return t; }
       if (t && method === 'DELETE') { db.triggers![pid] = list.filter((x) => x.id !== id); save(db); return { ok: true }; }
-      return list;
+      return list.map((x) => ({ ...x, destinationLabel: labelOf(db, x.destination) }));
     }
     case 'uptime': {
       if (!db.uptime) db.uptime = {};
@@ -261,6 +324,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       if (method === 'DELETE') { db.uptime[pid] = list.filter((x) => x.id !== id); save(db); return { ok: true }; }
       return UP.present(c, from, to, now);
     }
+    case 'destinations': return destinationsApi(db, pid, email, method, parts[3], parts[4], body);
     case 'integrations': {
       const list = ((db.integrations ??= {})[pid] ??= []);
       if (method === 'DELETE') { db.integrations![pid] = list.filter((i) => i.id !== parts[3]); save(db); return { ok: true }; }
@@ -268,25 +332,64 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     }
     case 'slack': {
       const apps = (db.slackApps ??= {});
+      const own = (db.accountSlackApps ??= {});
+      // like the API: the project's app, then the user's own
       const status = () => ({
-        configured: !!apps[pid], source: apps[pid] ? 'project' : null, clientId: apps[pid] ?? null,
+        configured: !!(apps[pid] ?? own[email]), source: apps[pid] ? 'project' : own[email] ? 'account' : null, clientId: apps[pid] ?? own[email] ?? null,
+        accountClientId: own[email] ?? null,
         redirectUrl: 'https://abc123.execute-api.eu-west-1.amazonaws.com/slack/callback', createAppUrl: 'https://api.slack.com/apps?new_app=1',
+        workspaces: (db.slackWorkspaces ?? []).filter((w) => w.projectId === pid || (!w.projectId && w.owner === email))
+          .sort((a, b) => Number(!a.projectId) - Number(!b.projectId) || a.createdAt.localeCompare(b.createdAt))
+          .map((w) => ({
+            id: w.id, level: (w.projectId ? 'project' : 'account') as DestinationLevel, teamName: w.teamName, createdBy: w.createdBy, createdAt: w.createdAt,
+            channels: [...Object.values(db.integrations ?? {}).flat() as Array<{ workspaceId?: string }>, ...(db.destinations ?? [])].filter((c) => c.workspaceId === w.id).length,
+          })),
       });
       if (!parts[3]) return status();
       if (parts[3] === 'app') {
-        if (method === 'DELETE') { delete apps[pid]; save(db); return status(); }
+        const level = method === 'DELETE' ? url.searchParams.get('level') : (body as { level?: string } | null)?.level;
+        const target = level === 'account' ? own : apps;
+        const key = level === 'account' ? email : pid;
+        if (method === 'DELETE') { delete target[key]; save(db); return status(); }
         const { clientId = '', clientSecret = '' } = (body ?? {}) as { clientId?: string; clientSecret?: string };
         if (!/^\d+\.\d+$/.test(clientId.trim())) throw new Error('That doesn’t look like a Slack Client ID (digits.digits, under Basic Information)');
         if (!/^[0-9a-f]{32}$/i.test(clientSecret.trim())) throw new Error('That doesn’t look like a Slack Client Secret (32 hex characters; click Show next to it)');
-        apps[pid] = clientId.trim(); save(db); return status();
+        target[key] = clientId.trim(); save(db); return status();
       }
-      if (!apps[pid]) throw new Error('Set up the Slack app for this project first');
-      // mock "Add to Slack": connect a channel right away and bounce back like Slack would
-      const list = ((db.integrations ??= {})[pid] ??= []);
-      const names = ['#alerts', '#checkout', '#growth', '#oncall'];
-      list.push({ id: 'int_' + hex(8, Date.now()), type: 'slack', channel: names[list.length % names.length], teamName: 'Acme', createdBy: email, createdAt: new Date().toISOString() });
+      const wss = (db.slackWorkspaces ??= []);
+      const ints = ((db.integrations ??= {})[pid] ??= []) as Array<SlackIntegration & { workspaceId?: string }>;
+      if (parts[3] === 'workspaces') {
+        const w = wss.find((x) => x.id === parts[4] && (x.projectId === pid || (!x.projectId && x.owner === email)));
+        if (!w) throw new MockHttpError(404, 'Slack workspace not found');
+        const used = [...Object.values(db.integrations ?? {}).flat() as Array<SlackIntegration & { workspaceId?: string }>, ...(db.destinations ?? [])]
+          .filter((c) => c.workspaceId === w.id).map((c) => ('channel' in c ? c.channel : c.name));
+        if (!parts[5] && method === 'DELETE') {
+          if (used.length) throw new MockHttpError(409, `Remove its channel${used.length > 1 ? 's' : ''} first: ${used.join(', ')}`);
+          db.slackWorkspaces = wss.filter((x) => x !== w); save(db); return status();
+        }
+        if (method === 'GET') return MOCK_CHANNELS;
+        const c = MOCK_CHANNELS.find((x) => x.id === (body as { channelId?: string } | null)?.channelId);
+        if (!c) throw new MockHttpError(400, 'WGO can’t see that channel. For a private channel, invite WGO there first (/invite @WGO).');
+        const at = new Date().toISOString();
+        if (!w.projectId) {
+          if ((db.destinations ??= []).some((d) => d.owner === email && !d.projectId && d.name === c.name)) throw new MockHttpError(409, `${c.name} is already one of your destinations`);
+          const did = crypto.randomUUID();
+          const d: MockDestination = { id: did, projectId: null, level: 'account', type: 'slack', name: c.name, detail: w.teamName, owner: email, editable: true,
+            ref: { type: 'saved', destinationId: did }, createdBy: email, createdAt: at, workspaceId: w.id };
+          db.destinations.push(d); save(db); return d;
+        }
+        if (ints.some((i) => i.channel === c.name)) throw new MockHttpError(409, `${c.name} is already a destination of this project`);
+        const i = { id: 'int_' + hex(8, Date.now()), type: 'slack' as const, channel: c.name, teamName: w.teamName, createdBy: email, createdAt: at, workspaceId: w.id };
+        ints.push(i); save(db);
+        return { id: i.id, level: 'project', type: 'slack', name: i.channel, detail: i.teamName, owner: null, editable: true, ref: { type: 'slack', integrationId: i.id }, createdBy: email, createdAt: at };
+      }
+      if (!apps[pid] && !own[email]) throw new Error('Set up a Slack app first: for this project, or your own for all your projects');
+      // mock "Add to Slack": connect the workspace right away and bounce back like Slack would
+      const level = url.searchParams.get('level') === 'account' ? 'account' : 'project';
+      const mine = (x: MockWorkspace) => (level === 'account' ? !x.projectId && x.owner === email : x.projectId === pid);
+      if (!wss.some(mine)) wss.push({ id: crypto.randomUUID(), projectId: level === 'project' ? pid : null, owner: level === 'account' ? email : null, teamName: 'Acme', createdBy: email, createdAt: new Date().toISOString() });
       save(db);
-      return { url: `${location.pathname}${location.search}#/p/${pid}/triggers?slack=connected` };
+      return { url: `${location.pathname}${location.search}#/p/${pid}/triggers?slack=connected&slack_level=${level}` };
     }
     case 'members': {
       const list = (db.members[pid] ??= []);
@@ -368,7 +471,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       const flag = (k: string) => qp(k) === '1' || qp(k) === 'true' || undefined;
       return REC.listRecordings(from, to, qp('before') ? Date.parse(qp('before')!) : undefined, limit, {
         minDuration: qp('minDuration') ? Number(qp('minDuration')) : undefined, page: qp('page'), device: qp('device'), q: qp('q'),
-        reason: qp('reason') as 'sample' | 'trigger' | undefined, errors: flag('errors'), rage: flag('rage'), identified: flag('identified'),
+        reason: qp('reason') as 'sample' | 'trigger' | undefined, errors: flag('errors'), rage: flag('rage'), identified: flag('identified'), inactive: flag('inactive'),
       });
     }
     case 'events': return D.events({ from, to, before: qp('before') ? Date.parse(qp('before')!) : undefined, type: qp('type'), q: qp('q'), sessionId: qp('sessionId'), fingerprint: qp('fingerprint'), filters: F.parse(qp('filters')), located: qp('located') === '1', lat: qp('lat') ? Number(qp('lat')) : undefined, lon: qp('lon') ? Number(qp('lon')) : undefined, limit });

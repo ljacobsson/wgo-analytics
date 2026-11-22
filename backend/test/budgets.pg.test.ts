@@ -63,6 +63,27 @@ d('budgets (PostgreSQL)', async () => {
     expect((await call('GET', '/api/costs/budgets', undefined, 'stranger@example.com')).status).toBe(403);
   });
 
+  it('is for admins only: a new account that creates a project sees neither costs nor budgets', async () => {
+    const NEWCOMER = 'newcomer@example.com';
+    expect((await call('POST', '/api/projects', { name: 'Mine' }, NEWCOMER)).status).toBe(200);
+    // no ADMIN_EMAILS: the owners of the oldest project are the admins
+    expect((await call('GET', '/api/me')).body.admin).toBe(true);
+    expect((await call('GET', '/api/me', undefined, NEWCOMER)).body.admin).toBe(false);
+    expect((await call('GET', '/api/costs', undefined, NEWCOMER)).status).toBe(403);
+    expect((await call('GET', '/api/costs/budgets', undefined, NEWCOMER)).status).toBe(403);
+    expect((await call('POST', '/api/costs/budgets', { scope: 'install', monthlyLimit: 1, alertAt: [], alertOnForecast: false, pauseAtLimit: true, destination: null, acknowledged: true }, NEWCOMER)).status).toBe(403);
+    // ADMIN_EMAILS decides when set, even for someone who owns no project
+    process.env.ADMIN_EMAILS = ' Ops@Example.com , newcomer@example.com';
+    try {
+      expect((await call('GET', '/api/me')).body.admin).toBe(false);
+      expect((await call('GET', '/api/costs/budgets')).status).toBe(403);
+      expect((await call('GET', '/api/costs/budgets', undefined, 'ops@example.com')).status).toBe(200);
+      expect((await call('GET', '/api/me', undefined, NEWCOMER)).body.admin).toBe(true);
+    } finally {
+      delete process.env.ADMIN_EMAILS;
+    }
+  });
+
   it('estimates a project’s share, alerts, pauses collection and resumes', async () => {
     const created = await call('POST', '/api/costs/budgets', { scope: 'project', projectId: pid, monthlyLimit: 30, alertAt: [50, 100], alertOnForecast: true, pauseAtLimit: true, destination: null, acknowledged: true });
     expect(created.status).toBe(200);

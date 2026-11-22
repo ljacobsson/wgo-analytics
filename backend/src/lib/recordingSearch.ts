@@ -1,8 +1,7 @@
 import type { RecordingSummary } from '../contract';
 import { aliasMap } from './clickAliases';
-import { query } from './db';
 import { HttpError } from './http';
-import { matchesFilters, parseFilters, recordingsWindow, summarize, type RecordingRow } from './recordings';
+import { matchesFilters, parseFilters, recordingSlots, recordingsWindow, summarize } from './recordings';
 import { inList, rawQuery } from './store/duck';
 
 /**
@@ -213,6 +212,8 @@ export async function findRecordings(pid: string, s: RecordingSearch): Promise<R
   const from = date(s.from, 'from') ?? new Date(to.getTime() - 7 * DAY);
   const limit = Math.min(Math.max(Math.floor(s.limit ?? 20), 1), 100);
   const filters = parseFilters(s.filters ?? {});
+  // a recording where a `did` condition happened is what was asked for, even if nothing else did (a hover, one page)
+  if (did.length) filters.inactive = true;
   const aliases = did.length || didNot.length ? await aliasMap(pid) : new Map<string, string>();
   // event conditions first: they're cheaper than reading recordings and leave fewer sessions for the hovers
   const order = did.map((b, i) => ({ b, i })).sort((x, y) => Number(x.b.action === 'hover') - Number(y.b.action === 'hover'));
@@ -222,11 +223,7 @@ export async function findRecordings(pid: string, s: RecordingSearch): Promise<R
   let scanned = 0;
   let more = true;
   while (recordings.length < limit && more && scanned < MAX_SCAN) {
-    const rows = await query<RecordingRow>(
-      `SELECT session_id, started_at, anon_id, reason FROM recordings
-        WHERE project_id = $1 AND started_at >= $2 AND started_at < $3 ORDER BY started_at DESC LIMIT $4`,
-      [pid, from, before, SCAN_BATCH],
-    );
+    const rows = await recordingSlots(pid, from, before, filters, SCAN_BATCH);
     more = rows.length === SCAN_BATCH;
     if (!rows.length) break;
     const w = recordingsWindow(rows);

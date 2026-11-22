@@ -100,7 +100,7 @@ d('session recordings (PostgreSQL)', async () => {
     const list = await R.listRecordings(pid, { from: new Date(now - 3600_000).toISOString(), to: new Date(now + 60_000).toISOString() });
     expect(list.recordings.map((r) => r.sessionId)).toEqual(['s1']); // s2 got a slot but sent nothing: not listed
     const s1 = list.recordings.find((r) => r.sessionId === 's1')!;
-    expect(s1).toMatchObject({ reason: 'sample', anonId: 'anon-s1', entryPath: '/', pages: 1, clicks: 1, rageClicks: 0, errors: 1, paths: ['/'], browser: 'Chrome', durationMs: 30_000 + 500 });
+    expect(s1).toMatchObject({ reason: 'sample', anonId: 'anon-s1', entryPath: '/', pages: 1, clicks: 1, rageClicks: 0, errors: 1, events: 2, paths: ['/'], browser: 'Chrome', durationMs: 30_000 + 500 });
     const range = { from: new Date(now - 3600_000).toISOString(), to: new Date(now + 60_000).toISOString() };
     const ids = async (f: Record<string, string>) => (await R.listRecordings(pid, { ...range, ...f })).recordings.map((r) => r.sessionId);
     expect(await ids({ errors: '1', page: '/' })).toEqual(['s1']);
@@ -124,6 +124,27 @@ d('session recordings (PostgreSQL)', async () => {
     const rest = await R.getRecording(pid, 's2', { after: first.nextAfter! });
     expect([...first.chunks, ...rest.chunks].map((c) => c.seq)).toEqual(Array.from({ length: 25 }, (_, i) => i));
     expect(rest.nextAfter).toBeNull();
+  });
+
+  it('hides recordings in which the visitor did nothing unless asked for', async () => {
+    const active = async (sid: string) => (await query<{ active: boolean | null }>('SELECT active FROM recordings WHERE project_id = $1 AND session_id = $2', [pid, sid]))[0].active;
+    expect(await active('s1')).toBe(true); // its chunks hold a click
+    // s5: a tab left open on one page, its pointer moving now and then, no events at all
+    await query(`INSERT INTO recordings (project_id, session_id, started_at, reason, active) VALUES ($1, 's5', $2, 'sample', false)`, [pid, new Date(now - 50_000)]);
+    await post({ k: key, a: 'anon-s5', sentAt: now, e: [chunk('s5', 40_000, [[1, 0, 5, 5]]), chunk('s5', 10_000, [[1, 0, 6, 6]], 1)] });
+    // s6: the same, recorded before interactions were tracked; the events decide, and the list stores the outcome
+    await query(`INSERT INTO recordings (project_id, session_id, started_at, reason) VALUES ($1, 's6', $2, 'sample')`, [pid, new Date(now - 50_000)]);
+    await post({ k: key, a: 'anon-s6', sentAt: now, e: [chunk('s6', 40_000, [[1, 0, 5, 5]]), chunk('s6', 10_000, [[1, 0, 6, 6]], 1), ev('s6', 'pageview', 40_000)] });
+    const range = { from: new Date(now - 3600_000).toISOString(), to: new Date(now + 60_000).toISOString() };
+    const ids = async (f: Record<string, string> = {}) => (await R.listRecordings(pid, { ...range, ...f })).recordings.map((r) => r.sessionId).sort();
+    expect(await ids()).toEqual(['s1']);
+    expect(await active('s5')).toBe(false);
+    expect(await active('s6')).toBe(false);
+    expect(await ids({ inactive: '1' })).toEqual(['s1', 's5', 's6']);
+    // scrolling is something
+    await post({ k: key, a: 'anon-s5', sentAt: now, e: [chunk('s5', 5_000, [[3, 0, 0, 400]], 2)] });
+    expect(await active('s5')).toBe(true);
+    expect(await ids()).toEqual(['s1', 's5']);
   });
 
   it('stops storing as soon as recording is turned off', async () => {

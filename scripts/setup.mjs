@@ -41,7 +41,7 @@ const REGIONS = {
 // Keys this wizard owns in deploy.env. Anything else in the file is carried over untouched.
 const MANAGED = [
   'STACK_NAME', 'AWS_REGION', 'AWS_PROFILE', 'CUSTOM_DOMAIN', 'HOSTED_ZONE_ID', 'CERTIFICATE_ARN',
-  'ALLOWED_EMAIL_DOMAINS', 'ALLOW_SELF_SIGNUP', 'MCP_ENABLED', 'DELETION_PROTECTION', 'MAX_RETENTION_DAYS',
+  'ALLOWED_EMAIL_DOMAINS', 'ALLOW_SELF_SIGNUP', 'ADMIN_EMAILS', 'MCP_ENABLED', 'DELETION_PROTECTION', 'MAX_RETENTION_DAYS',
   'WRITE_BUFFER_SECONDS', 'SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET',
 ];
 
@@ -147,6 +147,7 @@ const cfg = {
   certificateArn: prev.CERTIFICATE_ARN || '',
   allowlist: parseAllowlist(prev.ALLOWED_EMAIL_DOMAINS),
   selfSignup: flag(prev.ALLOW_SELF_SIGNUP, true),
+  admins: parseAllowlist(prev.ADMIN_EMAILS),
   mcp: flag(prev.MCP_ENABLED, true),
   deletionProtection: flag(prev.DELETION_PROTECTION, false),
   maxRetentionDays: prev.MAX_RETENTION_DAYS || '',
@@ -309,6 +310,7 @@ function adoptStackParameters(params) {
   cfg.certificateArn = p.CertificateArn || cfg.certificateArn;
   if (p.AllowedEmailDomains !== undefined) cfg.allowlist = parseAllowlist(p.AllowedEmailDomains);
   if (p.AllowSelfSignup) cfg.selfSignup = p.AllowSelfSignup === 'true';
+  if (p.AdminEmails !== undefined) cfg.admins = parseAllowlist(p.AdminEmails);
   if (p.EnableMcp) cfg.mcp = p.EnableMcp === 'true';
   if (p.DeletionProtection) cfg.deletionProtection = p.DeletionProtection === 'true';
   if (p.MaxRetentionDays && p.MaxRetentionDays !== DEFAULT_RETENTION) cfg.maxRetentionDays = p.MaxRetentionDays;
@@ -495,6 +497,16 @@ async function stepAccess(n, total) {
       'aws cognito-idp admin-create-user --user-pool-id <UserPoolId stack output> --username alice@example.com',
       'Cognito emails them a temporary password.',
     ]);
+
+  const admins = await text({
+    message: 'Admin emails (optional)',
+    help: 'Admins see what the install costs and set budgets, which can stop every project collecting data. Separate them with commas. Leave empty to make the owners of the first project the admins.',
+    initial: cfg.admins.join(', '),
+    placeholder: 'you@example.com',
+    validate: (v) => parseAllowlist(v).find((e) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) && 'Enter email addresses, separated by commas',
+    display: (v) => parseAllowlist(v).join(', ') || 'the first project’s owners',
+  });
+  cfg.admins = [...new Set(parseAllowlist(admins))];
 }
 
 async function stepFeatures(n, total) {
@@ -587,6 +599,7 @@ function summary() {
     row('Stack', `${cfg.stackName}  ${c.dim(cfg.stackStatus ? `exists, will be updated` : 'new')}`),
     row('Address', address),
     row('Sign-in', `${cfg.allowlist.length ? `only ${cfg.allowlist.map(describePattern).join(', ')}` : 'anyone with a verified email'} · ${cfg.selfSignup ? 'self sign-up' : 'accounts created by you'}`),
+    row('Admins', cfg.admins.length ? cfg.admins.join(', ') : c.dim('the first project’s owners')),
     row('MCP', yes(cfg.mcp, 'on', 'off')),
     row('Database', cfg.deletionProtection ? c.green('deletion protection on') : 'deletion protection off'),
     row('Advanced', c.dim(advanced.join(' · '))),
@@ -605,7 +618,7 @@ function toEnvFile() {
   };
   group('', [['STACK_NAME', cfg.stackName], ['AWS_REGION', cfg.region], ['AWS_PROFILE', cfg.profile]]);
   group('Web address', [['CUSTOM_DOMAIN', cfg.domain], ['HOSTED_ZONE_ID', cfg.hostedZoneId], ['CERTIFICATE_ARN', cfg.certificateArn]]);
-  group('Who can sign in', [['ALLOWED_EMAIL_DOMAINS', cfg.allowlist.join(',')], ['ALLOW_SELF_SIGNUP', String(cfg.selfSignup)]]);
+  group('Who can sign in', [['ALLOWED_EMAIL_DOMAINS', cfg.allowlist.join(',')], ['ALLOW_SELF_SIGNUP', String(cfg.selfSignup)], ['ADMIN_EMAILS', cfg.admins.join(',')]]);
   group('Features', [
     ['MCP_ENABLED', String(cfg.mcp)],
     ['DELETION_PROTECTION', String(cfg.deletionProtection)],

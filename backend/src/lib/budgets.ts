@@ -1,10 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { requireAdmin } from './admins';
 import type { Budget, BudgetDestination, BudgetInput, BudgetStatus, CostsResponse } from '../contract';
 import { eventsThisMonth, getCosts } from './costs';
 import { query } from './db';
 import { HttpError } from './http';
 import * as P from './projects';
 import { assertPublicHttpsUrl, sign } from './triggers';
+import { channelTarget, postToSlack, type SlackChannelConfig } from './slack';
 
 /**
  * Monthly cost budgets for the whole install or one project. Spend comes from Cost Explorer (lib/costs.ts, cached
@@ -40,11 +42,11 @@ async function toBudget(r: Row, names: Map<string, string>): Promise<Budget> {
 
 // ---------------------------------------------------------------- access
 
-/** Owners only: install budgets need you to own a project, project budgets that project. */
+/** Admins only (lib/admins.ts); a project budget also needs you to own that project. */
 async function access(email: string) {
+  await requireAdmin(email);
   const projects = await P.listProjects(email);
   const owned = projects.filter((p) => p.role === 'owner');
-  if (!owned.length) throw new HttpError(403, 'Only project owners can manage budgets');
   return { owned: new Set(owned.map((p) => p.id)), names: new Map(projects.map((p) => [p.id, p.name])) };
 }
 
@@ -264,10 +266,14 @@ async function notify(r: Row, s: BudgetStatus, event: Event, percent: number | n
   let url: string, body: string;
   const headers: Record<string, string> = { 'content-type': 'application/json', 'user-agent': 'WGO-Webhook/1' };
   if (d.type === 'slack') {
-    const [row] = await query<{ config: { webhookUrl: string } }>('SELECT config FROM integrations WHERE project_id = $1 AND id = $2', [d.projectId, d.integrationId]);
+    const [row] = await query<{ config: SlackChannelConfig }>('SELECT config FROM integrations WHERE project_id = $1 AND id = $2', [d.projectId, d.integrationId]);
     if (!row) return 'slack: channel disconnected';
-    url = row.config.webhookUrl;
-    body = JSON.stringify({ text: `💰 ${text}`, blocks: [{ type: 'section', text: { type: 'mrkdwn', text: `💰 ${text}` } }] });
+    const target = await channelTarget(row.config, null);
+    if (typeof target === 'string') return target;
+    const message = { text: `💰 ${text}`, blocks: [{ type: 'section', text: { type: 'mrkdwn', text: `💰 ${text}` } }] };
+    if ('token' in target) return postToSlack(target, message);
+    url = target.url;
+    body = JSON.stringify(message);
   } else {
     url = assertPublicHttpsUrl(d.url).toString();
     body = JSON.stringify({ budget: { id: r.id, scope: r.scope, projectId: r.project_id, projectName: name || null, monthlyLimit: r.monthly_limit }, event, percent, status: s, text, sentAt: new Date().toISOString() });

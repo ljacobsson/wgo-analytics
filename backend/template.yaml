@@ -33,6 +33,10 @@ Parameters:
     Type: String
     Default: ''
     Description: Optional comma-separated email domains allowed to sign up and use the dashboard (e.g. example.com,*.example.org). Empty = anyone.
+  AdminEmails:
+    Type: String
+    Default: ''
+    Description: Optional comma-separated emails that can see what the install costs and manage budgets. Empty = the owners of the first project.
   SlackClientId:
     Type: String
     Default: ''
@@ -117,6 +121,7 @@ Globals:
         DUCKDB_EXTENSION_DIRECTORY: /opt/duckdb_extensions
         CONNECTIONS_TABLE: !Ref ConnectionsTable
         ALLOWED_EMAIL_DOMAINS: !Ref AllowedEmailDomains
+        ADMIN_EMAILS: !Ref AdminEmails
         NODE_OPTIONS: --enable-source-maps
 
 Resources:
@@ -1284,7 +1289,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt MigrateFunction.Arn
       SchemaVersion: !Ref SchemaVersion
-      SchemaHash: '2026-11-19-7' # bump when src/lib/schema.ts changes
+      SchemaHash: '2026-11-22-4' # bump when src/lib/schema.ts changes
 
   # ---------------------------------------------------------------- dashboard + SDK hosting
   WebBucket:

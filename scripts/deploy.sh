@@ -11,6 +11,7 @@
 #   CERTIFICATE_ARN        bring your own ACM certificate (us-east-1) when the DNS is not in Route 53
 #   ALLOWED_EMAIL_DOMAINS  comma-separated, e.g. "example.com,*.example.org": only these can sign up / sign in
 #   ALLOW_SELF_SIGNUP      true (default) | false
+#   ADMIN_EMAILS           comma-separated: who sees the Costs page and manages budgets (default: the first project's owners)
 #   UPDATE_CHECK           true (default) | false: the dashboard tells you when GitHub has a newer version
 #   DELETION_PROTECTION    false (default) | true  (DSQL cluster)
 #   MCP_ENABLED            true (default) | false: the MCP server at /mcp and Cognito MCP auth (open client registration)
@@ -98,6 +99,7 @@ if [ "$FRONTEND_ONLY" = false ]; then
   [ -n "$CUSTOM_DOMAIN" ] && [ -n "$HOSTED_ZONE_ID" ] && overrides+=("HostedZoneId=$HOSTED_ZONE_ID")
   [ -n "$ALLOWED_EMAIL_DOMAINS" ] && overrides+=("AllowedEmailDomains=${ALLOWED_EMAIL_DOMAINS// /}")
   [ -n "${ALLOW_SELF_SIGNUP:-}" ] && overrides+=("AllowSelfSignup=$ALLOW_SELF_SIGNUP")
+  [ -n "${ADMIN_EMAILS:-}" ] && overrides+=("AdminEmails=${ADMIN_EMAILS// /}")
   [ -n "${DELETION_PROTECTION:-}" ] && overrides+=("DeletionProtection=$DELETION_PROTECTION")
   [ -n "${MCP_ENABLED:-}" ] && overrides+=("EnableMcp=$MCP_ENABLED")
   [ -n "${MAX_RETENTION_DAYS:-}" ] && overrides+=("MaxRetentionDays=$MAX_RETENTION_DAYS")

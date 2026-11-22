@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { BellRing, Check, Copy, Hash, Pencil, Plus, Send, Slack, Trash2, Webhook } from 'lucide-react';
-import type { Filter, FilterScope, Trigger, TriggerAgg, TriggerCondition, TriggerDestination, TriggerInput, TriggerKind, TriggerMetric } from '../api/contract';
-import { startSlackInstall, useDeleteIntegration, useDeleteTrigger, useIntegrations, useSaveTrigger, useSlackSetup, useTestTrigger, useTriggerPreview, useTriggers } from '../api/hooks';
-import { SlackConnect } from './SlackConnect';
+import { SLACK_BOT_SCOPES } from '../api/contract';
+import type { Destination, DestinationLevel, Filter, FilterScope, Trigger, TriggerAgg, TriggerCondition, TriggerDestination, TriggerInput, TriggerKind, TriggerMetric } from '../api/contract';
+import { useDeleteDestination, useDeleteTrigger, useDestinations, useDisconnectSlackWorkspace, useRemoveSlackApp, useSaveDestination, useSaveTrigger, useSlackSetup, useTestDestination, useTestTrigger, useTriggerPreview, useTriggers } from '../api/hooks';
+import { SlackAppSetup, SlackChannelDialog } from './SlackConnect';
 import { cn, relTime } from '../lib/format';
 import { describeFilter, FILTER_PARAM, SCOPE_LABEL } from '../lib/filters';
 import { suggestName } from '../lib/naming';
@@ -32,6 +33,14 @@ function StatusPill({ status }: { status: string | null }) {
   const ok = /(^|: )2\d\d$/.test(status);
   return <span className={cn('rounded-md px-1.5 font-mono text-[11px]', ok ? 'bg-good/15 text-good' : 'bg-bad/15 text-bad')} title={status}>{status.length > 28 ? status.slice(0, 27) + '…' : status}</span>;
 }
+
+/** A destination as a <select> value: "url" (a one-off webhook URL), "slack:<id>" or "saved:<id>". */
+const keyOf = (d: TriggerDestination) => (d.type === 'webhook' ? 'url' : d.type === 'slack' ? `slack:${d.integrationId}` : `saved:${d.destinationId}`);
+const destinationOf = (key: string, url: string): TriggerDestination | null =>
+  key === 'url' ? (url.trim() ? { type: 'webhook', url: url.trim() } : null)
+    : key.startsWith('slack:') ? { type: 'slack', integrationId: key.slice(6) }
+    : { type: 'saved', destinationId: key.slice(6) };
+const optionLabel = (d: Pick<Destination, 'type' | 'name' | 'detail'>) => `${d.type === 'slack' ? 'Slack ' : ''}${d.name}${d.detail ? ` · ${d.detail}` : ''}`;
 
 interface Prefill { scope: FilterScope; filters: Filter[] }
 const NO_PREFILL: Prefill = { scope: 'events', filters: [] };
@@ -76,16 +85,14 @@ export function describeAggregate(t: Pick<Trigger, 'metric' | 'condition' | 'win
 
 function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; initial: Trigger | null; prefill: Prefill; onClose: () => void }) {
   const { project } = useProject();
-  const integrations = useIntegrations(project.id);
+  const destinations = useDestinations(project.id);
   const save = useSaveTrigger(project.id);
   const toast = useToast();
-  const slackReady = !!useSlackSetup(project.id).data?.configured;
   const [name, setName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
   const [scope, setScope] = useState<FilterScope>('events');
   const [filters, setFilters] = useState<Filter[]>([]);
-  const [destKind, setDestKind] = useState<'slack' | 'webhook'>('slack');
-  const [integrationId, setIntegrationId] = useState('');
+  const [destKey, setDestKey] = useState('url');
   const [url, setUrl] = useState('');
   const [cooldown, setCooldown] = useState(300);
   const [error, setError] = useState('');
@@ -106,8 +113,8 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
     setScope(initial?.scope ?? prefill.scope);
     setFilters(initial?.filters ?? prefill.filters);
     const d = initial?.destination;
-    setDestKind(d?.type ?? 'slack');
-    setIntegrationId(d?.type === 'slack' ? d.integrationId : integrations.data?.[0]?.id ?? '');
+    const first = destinations.data?.[0];
+    setDestKey(d ? keyOf(d) : first ? keyOf(first.ref) : 'url');
     setUrl(d?.type === 'webhook' ? d.url : '');
     setCooldown(initial?.cooldownSeconds ?? 300);
     setKind(initial?.kind ?? 'match');
@@ -118,7 +125,8 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
     if (c && 'op' in c) { setOp(c.op); setValue(String(initial?.metric?.agg === 'session_rate' ? +(c.value * 100).toFixed(4) : c.value)); } else { setOp('above'); setValue('10'); }
     if (c && 'direction' in c) { setDirection(c.direction); setSensitivity(c.sensitivity); } else { setDirection('up'); setSensitivity('medium'); }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!integrationId && integrations.data?.[0]) setIntegrationId(integrations.data[0].id); }, [integrations.data, integrationId]);
+  // a new trigger defaults to the first saved destination once they've loaded
+  useEffect(() => { if (open && !initial && destKey === 'url' && !url && destinations.data?.[0]) setDestKey(keyOf(destinations.data[0].ref)); }, [destinations.data]); // eslint-disable-line react-hooks/exhaustive-deps
   // the name follows the conditions until you type one yourself
   useEffect(() => { if (open && !nameTouched) setName(filters.length ? suggestName(scope, filters) : ''); }, [filters, scope]); // eslint-disable-line react-hooks/exhaustive-deps
   const changeScope = (s: FilterScope) => {
@@ -143,8 +151,12 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
   const aggregateValid = kind === 'match' || ((!needsField || !!field) && (kind === 'anomaly' || (value.trim() !== '' && Number.isFinite(numValue))));
   const preview = useTriggerPreview(project.id, open && kind !== 'match' && aggregateValid ? { kind, scope, filters, ...aggregate! } : null);
 
-  const destination: TriggerDestination | null =
-    destKind === 'slack' ? (integrationId ? { type: 'slack', integrationId } : null) : url.trim() ? { type: 'webhook', url: url.trim() } : null;
+  const destination = destinationOf(destKey, url);
+  const projectDests = destinations.data?.filter((d) => d.level === 'project') ?? [];
+  const myDests = destinations.data?.filter((d) => d.level === 'account') ?? [];
+  // editing a trigger that uses another member's destination: it isn't among the ones you can pick, but can be kept
+  const keptKey = initial?.destination.type === 'saved' && !destinations.data?.some((d) => keyOf(d.ref) === keyOf(initial.destination)) ? keyOf(initial.destination) : null;
+  const kept = keptKey ? initial?.destinationLabel ?? null : null;
   const valid = name.trim() && (filters.length || kind !== 'match') && destination && aggregateValid;
   const submit = async () => {
     if (!valid) return;
@@ -238,32 +250,23 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
         )}
         <div>
           <div className="mb-1.5 text-[12px] font-medium text-muted">Notify</div>
-          <div className="mb-2.5 inline-flex rounded-lg border border-line bg-[var(--hl)] p-0.5">
-            {(['slack', 'webhook'] as const).map((k) => (
-              <button key={k} onClick={() => setDestKind(k)} className={cn('inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-[12.5px] font-medium cursor-pointer', destKind === k ? 'bg-[var(--raised)] text-fg shadow-sm' : 'text-muted hover:text-fg')}>
-                {k === 'slack' ? <><Slack size={13} />Slack</> : <><Webhook size={13} />Webhook</>}
-              </button>))}
-          </div>
-          {destKind === 'slack' ? (
-            integrations.data?.length ? (
-              <div className="flex items-center gap-2">
-                <select className="field" value={integrationId} onChange={(e) => setIntegrationId(e.target.value)}>
-                  {integrations.data.map((i) => <option key={i.id} value={i.id}>{i.channel}{i.teamName ? ` · ${i.teamName}` : ''}</option>)}
-                </select>
-                {slackReady && <Button size="sm" onClick={() => void startSlackInstall(project.id)} title="Connect another channel"><Plus size={13} />Channel</Button>}
-              </div>
-            ) : slackReady ? (
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-line p-3">
-                <span className="text-[12.5px] text-muted">Slack asks which workspace and channel, then brings you back here.</span>
-                <SlackConnect compact />
-              </div>
-            ) : (
-              <SlackConnect compact />
-            )
-          ) : (
-            <Field label="HTTPS URL" hint="JSON POST, signed with X-WGO-Signature; hooks.slack.com URLs get a Slack message">
-              <input className="field font-mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/hooks/wgo" />
-            </Field>
+          <select className="field" value={destKey} onChange={(e) => setDestKey(e.target.value)}>
+            {projectDests.length > 0 && <optgroup label="This project">{projectDests.map((d) => <option key={d.id} value={keyOf(d.ref)}>{optionLabel(d)}</option>)}</optgroup>}
+            {myDests.length > 0 && <optgroup label="Yours, in all your projects">{myDests.map((d) => <option key={d.id} value={keyOf(d.ref)}>{optionLabel(d)}</option>)}</optgroup>}
+            {keptKey && <option value={keptKey}>{kept ? `${optionLabel(kept)}${kept.owner ? ` (${kept.owner}’s)` : ''}` : 'A deleted destination'}</option>}
+            <option value="url">One-off webhook URL…</option>
+          </select>
+          {destKey === 'url' ? (
+            <div className="mt-2.5">
+              <Field label="HTTPS URL" hint="JSON POST, signed with X-WGO-Signature using this trigger's secret; hooks.slack.com URLs get a Slack message">
+                <input className="field font-mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/hooks/wgo" />
+              </Field>
+            </div>
+          ) : destKey === keptKey && kept ? (
+            <p className="mt-1.5 text-[11.5px] text-faint">{kept.owner ?? 'Another member'} saved this destination. You can keep it, or pick another.</p>
+          ) : null}
+          {destinations.data && !destinations.data.length && (
+            <p className="mt-1.5 text-[11.5px] text-faint">Connect Slack channels and save webhooks under Destinations on this page to reuse them in any trigger.</p>
           )}
         </div>
         <Field label="At most once per" hint={kind === 'match' ? 'Matches in between are counted and reported with the next notification' : 'If it keeps flapping, it notifies about firing at most this often'}>
@@ -277,17 +280,36 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
   );
 }
 
+/** Where a trigger sends, for its row: a Slack channel, a saved destination's name or a one-off webhook's host. */
+function DestinationLabel({ t }: { t: Trigger }) {
+  const { project, email } = useProject();
+  const destinations = useDestinations(project.id);
+  const d = t.destination;
+  if (d.type === 'webhook') {
+    let host = d.url;
+    try { host = new URL(d.url).host; } catch { /* shown as typed */ }
+    return <span className="inline-flex items-center gap-1 font-mono text-[11.5px]"><Webhook size={12} />{host}</span>;
+  }
+  if (d.type === 'slack') {
+    return <span className="inline-flex items-center gap-1"><Slack size={12} />{destinations.data?.find((x) => x.id === d.integrationId)?.name ?? 'Slack'}</span>;
+  }
+  const l = t.destinationLabel;
+  if (!l) return <span className="text-bad">deleted destination</span>;
+  return (
+    <span className="inline-flex items-center gap-1" title={l.detail ?? undefined}>
+      {l.type === 'slack' ? <Slack size={12} /> : <Webhook size={12} />}{l.name}
+      {l.owner && l.owner !== email && <span className="text-faint">({l.owner}’s)</span>}
+    </span>
+  );
+}
+
 function TriggerRow({ t, onEdit }: { t: Trigger; onEdit: () => void }) {
   const { project } = useProject();
-  const integrations = useIntegrations(project.id);
   const save = useSaveTrigger(project.id);
   const del = useDeleteTrigger(project.id);
   const test = useTestTrigger(project.id);
   const toast = useToast();
   const [copied, setCopied] = useState(false);
-  const dest = t.destination.type === 'slack'
-    ? <span className="inline-flex items-center gap-1"><Slack size={12} />{integrations.data?.find((i) => i.id === (t.destination as { integrationId: string }).integrationId)?.channel ?? 'Slack'}</span>
-    : <span className="inline-flex items-center gap-1 font-mono text-[11.5px]"><Webhook size={12} />{(() => { try { return new URL(t.destination.url).host; } catch { return t.destination.url; } })()}</span>;
   const runTest = async () => {
     const r = await test.mutateAsync(t.id);
     toast({ title: r.ok ? 'Test notification sent' : 'Test notification failed', body: r.status, tone: r.ok ? 'good' : 'bad' });
@@ -299,7 +321,7 @@ function TriggerRow({ t, onEdit }: { t: Trigger; onEdit: () => void }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="text-[13.5px] font-semibold">{t.name}</span>
           {t.scope !== 'events' && <Badge tone="accent">{SCOPE_LABEL[t.scope]}</Badge>}
-          <span className="text-[12px] text-muted">{dest}</span>
+          <span className="text-[12px] text-muted"><DestinationLabel t={t} /></span>
           <span className="text-[11.5px] text-faint">at most every {cooldownLabel(t.cooldownSeconds).toLowerCase().replace('every match', 'match')}</span>
         </div>
         {t.kind !== 'match' && <div className="text-[12.5px] text-muted">{describeAggregate(t)}</div>}
@@ -332,29 +354,167 @@ function TriggerRow({ t, onEdit }: { t: Trigger; onEdit: () => void }) {
   );
 }
 
-function SlackChannels() {
+function DestinationDialog({ open, level, initial, onClose }: { open: boolean; level: DestinationLevel; initial: Destination | null; onClose: () => void }) {
   const { project } = useProject();
-  const integrations = useIntegrations(project.id);
-  const del = useDeleteIntegration(project.id);
+  const save = useSaveDestination(project.id);
   const toast = useToast();
+  const [name, setName] = useState('');
+  const [url, setUrl] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!open) return;
+    setName(initial?.name ?? ''); setUrl(initial?.url ?? ''); setError('');
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const valid = name.trim() && url.trim();
+  const submit = async () => {
+    if (!valid) return;
+    try {
+      await save.mutateAsync({ id: initial?.id, level, input: { name: name.trim(), url: url.trim() } });
+      toast({ title: initial ? 'Webhook updated' : 'Webhook saved', body: name.trim(), tone: 'good' });
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return (
+    <Dialog open={open} onClose={onClose} title={initial ? 'Edit webhook' : level === 'account' ? 'New webhook of your own' : 'New webhook for this project'}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!valid || save.isPending} onClick={submit}>{initial ? 'Save' : 'Save webhook'}</Button></>}>
+      <div className="space-y-4">
+        <p className="text-[12.5px] text-muted">
+          {level === 'account'
+            ? 'Only you can use and change it. You can pick it in triggers of every project you’re a member of; other members see its name.'
+            : 'Every member of this project can pick it in a trigger.'}
+        </p>
+        <Field label="Name"><input autoFocus className="field" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ops pager" /></Field>
+        <Field label="HTTPS URL" hint="JSON POST, signed with X-WGO-Signature using this webhook's own secret; hooks.slack.com URLs get a Slack message">
+          <input className="field font-mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/hooks/wgo" />
+        </Field>
+        {error && <p className="rounded-lg bg-bad/10 px-3 py-2 text-[12.5px] text-bad">{error}</p>}
+      </div>
+    </Dialog>
+  );
+}
+
+function DestinationRow({ d, onEdit }: { d: Destination; onEdit: () => void }) {
+  const { project } = useProject();
+  const del = useDeleteDestination(project.id);
+  const test = useTestDestination(project.id);
+  const toast = useToast();
+  const [copied, setCopied] = useState(false);
+  const runTest = async () => {
+    const r = await test.mutateAsync({ id: d.id, level: d.level });
+    toast({ title: r.ok ? 'Test notification sent' : 'Test notification failed', body: r.status, tone: r.ok ? 'good' : 'bad' });
+  };
+  const remove = async () => {
+    if (!confirm(`Remove “${d.name}”?`)) return;
+    try {
+      await del.mutateAsync({ id: d.id, level: d.level });
+    } catch (e) {
+      toast({ title: 'Cannot remove it', body: (e as Error).message, tone: 'bad' });
+    }
+  };
+  return (
+    <div className="group flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-line/60 py-2 text-[12.5px] first:border-t-0">
+      {d.type === 'slack' ? <Hash size={13} className="text-faint" /> : <Webhook size={13} className="text-faint" />}
+      <span className="font-medium">{d.type === 'slack' ? d.name.replace(/^#/, '') : d.name}</span>
+      {d.detail && <span className={cn('text-faint', d.type === 'webhook' && 'font-mono text-[11.5px]')}>· {d.detail}</span>}
+      <span className="ml-auto flex items-center gap-1">
+        {d.signingSecret && (
+          <button onClick={() => { void navigator.clipboard.writeText(d.signingSecret!); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+            className="inline-flex items-center gap-1 px-1 text-[11.5px] text-faint hover:text-fg cursor-pointer" title="Verify X-WGO-Signature (HMAC-SHA256 of the body) with this secret">
+            {copied ? <Check size={11} /> : <Copy size={11} />}signing secret
+          </button>)}
+        <Button size="sm" onClick={() => void runTest()} disabled={test.isPending} title="Send a sample notification now"><Send size={13} />Test</Button>
+        {d.type === 'webhook' && d.editable && <button onClick={onEdit} className="rounded-md p-1.5 text-muted hover:bg-[var(--hl)] hover:text-fg cursor-pointer" title="Edit"><Pencil size={13} /></button>}
+        <button onClick={() => void remove()} className="rounded-md p-1.5 text-muted hover:bg-bad/15 hover:text-bad cursor-pointer" title="Remove"><Trash2 size={13} /></button>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The project's destinations and the user's own, each with ways to add more. `slackDialog` is the level the Slack
+ * channel picker is open for (also opened by the page when the user comes back from connecting a workspace).
+ */
+function Destinations({ slackDialog, setSlackDialog }: { slackDialog: DestinationLevel | null; setSlackDialog: (l: DestinationLevel | null) => void }) {
+  const { project } = useProject();
+  const destinations = useDestinations(project.id);
   const setup = useSlackSetup(project.id);
-  const ready = !!setup.data?.configured;
+  const removeApp = useRemoveSlackApp(project.id);
+  const disconnect = useDisconnectSlackWorkspace(project.id);
+  const toast = useToast();
+  const slackReady = !!setup.data?.configured;
+  const workspacesAt = (level: DestinationLevel) => setup.data?.workspaces.filter((w) => w.level === level) ?? [];
+  const forgetWorkspace = async (id: string, name: string | null) => {
+    if (!confirm(`Disconnect ${name ?? 'this Slack workspace'}? WGO stays installed in Slack until you remove it there.`)) return;
+    try {
+      await disconnect.mutateAsync(id);
+      toast({ title: 'Slack workspace disconnected', tone: 'accent' });
+    } catch (e) {
+      toast({ title: 'Cannot disconnect it', body: (e as Error).message, tone: 'bad' });
+    }
+  };
+  const ownApp = setup.data?.accountClientId ?? null;
+  const [showSetup, setShowSetup] = useState(false);
+  const [dialog, setDialog] = useState<{ open: boolean; level: DestinationLevel; d: Destination | null }>({ open: false, level: 'project', d: null });
+  const hasSlack = !!destinations.data?.some((d) => d.type === 'slack');
+  const forgetApp = async () => {
+    if (!confirm('Remove your Slack app? Channels you connected keep working; you’ll need an app again to connect more.')) return;
+    await removeApp.mutateAsync('account');
+    toast({ title: 'Your Slack app was removed', tone: 'accent' });
+  };
+  const section = (level: DestinationLevel, title: string, sub: string, empty: string) => {
+    const list = destinations.data?.filter((d) => d.level === level) ?? [];
+    return (
+      <div className="px-4 pb-3 pt-1">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-1.5">
+          <div>
+            <div className="text-[12.5px] font-semibold">{title}</div>
+            <div className="text-[11.5px] text-faint">{sub}</div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" onClick={() => setDialog({ open: true, level, d: null })}><Plus size={13} />Webhook</Button>
+            {(slackReady || workspacesAt(level).length > 0) && <Button size="sm" onClick={() => setSlackDialog(level)}><Slack size={13} />Slack channel</Button>}
+          </div>
+        </div>
+        {destinations.isPending ? <Skeleton className="h-8" />
+          : list.length ? list.map((d) => <DestinationRow key={d.id} d={d} onEdit={() => setDialog({ open: true, level, d })} />)
+          : <p className="py-1 text-[12.5px] text-faint">{empty}</p>}
+        {workspacesAt(level).map((w) => (
+          <p key={w.id} className="pt-2 text-[11.5px] text-faint">
+            Slack workspace {w.teamName ?? ''}{level === 'project' ? `, connected by ${w.createdBy}` : ''}.{' '}
+            <button className="cursor-pointer text-muted underline-offset-2 hover:text-fg hover:underline" onClick={() => void forgetWorkspace(w.id, w.teamName)}>Disconnect</button>
+          </p>
+        ))}
+        {level === 'account' && (ownApp ? (
+          <p className="pt-2 text-[11.5px] text-faint">
+            Your Slack app (<span className="font-mono">{ownApp}</span>) connects channels in all your projects{setup.data?.source === 'project' ? '; this project uses its own' : ''}.{' '}
+            <button className="cursor-pointer text-muted underline-offset-2 hover:text-fg hover:underline" onClick={() => void forgetApp()}>Remove it</button>
+          </p>
+        ) : slackReady && (
+          <p className="pt-2 text-[11.5px] text-faint">
+            {setup.data?.source === 'instance' ? 'Slack uses the app set up for this whole WGO.' : `Slack uses ${project.name}’s app here.`}{' '}
+            <button className="cursor-pointer text-muted underline-offset-2 hover:text-fg hover:underline" onClick={() => setShowSetup((x) => !x)}>Set up your own for all your projects</button>
+          </p>
+        ))}
+      </div>
+    );
+  };
   return (
     <Card>
-      <CardHeader title="Slack channels" sub="Connected with “Add to Slack”, usable by every trigger in this project"
-        right={ready && <SlackConnect compact />} />
-      <div className="px-4 pb-3">
-        {integrations.isPending ? <Skeleton className="h-8" />
-          : integrations.data?.length ? integrations.data.map((i) => (
-            <div key={i.id} className="group flex items-center gap-2 border-t border-line/60 py-2 text-[12.5px] first:border-t-0">
-              <Hash size={13} className="text-faint" /><span className="font-medium">{i.channel.replace(/^#/, '')}</span>
-              {i.teamName && <span className="text-faint">· {i.teamName}</span>}
-              <span className="ml-auto text-[11.5px] text-faint">added by {i.createdBy} {relTime(i.createdAt)}</span>
-              <button onClick={async () => { try { await del.mutateAsync(i.id); } catch (e) { toast({ title: 'Cannot remove channel', body: (e as Error).message, tone: 'bad' }); } }}
-                className="rounded-md p-1 text-faint opacity-0 hover:bg-bad/15 hover:text-bad group-hover:opacity-100 cursor-pointer" title="Disconnect"><Trash2 size={13} /></button>
-            </div>))
-          : ready ? <p className="text-[12.5px] text-faint">No channels yet. Click Add to Slack to connect one.</p> : <SlackConnect />}
-      </div>
+      <CardHeader title="Destinations" sub="Slack channels and webhooks your triggers can notify. Save one once, pick it in any trigger." />
+      {section('project', 'This project', 'Every member can use them in this project’s triggers', 'None yet.')}
+      <div className="border-t border-line/60" />
+      {section('account', 'Yours', 'Only you manage them, and you can use them in every project you’re a member of', 'None yet. Save a webhook or Slack channel here to reuse it across your projects.')}
+      {!slackReady && !showSetup && hasSlack && (
+        <p className="px-4 pb-3 text-[11.5px] text-faint">
+          To connect more Slack channels, set up a Slack app.{' '}
+          <button className="cursor-pointer text-muted underline-offset-2 hover:text-fg hover:underline" onClick={() => setShowSetup(true)}>Set it up</button>
+        </p>
+      )}
+      {(showSetup || (!slackReady && !hasSlack)) && <div className="px-4 pb-4"><SlackAppSetup onDone={() => setShowSetup(false)} /></div>}
+      <SlackChannelDialog level={slackDialog} onClose={() => setSlackDialog(null)} />
+      <DestinationDialog open={dialog.open} level={dialog.level} initial={dialog.d} onClose={() => setDialog((x) => ({ ...x, open: false, d: null }))} />
     </Card>
   );
 }
@@ -381,15 +541,19 @@ export function TriggersPage() {
     set({ new: null, pf: null, scope: null });
   }, [wantsNew]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // back from Slack's consent screen
+  // back from Slack's consent screen: a workspace was connected, so pick a channel of it
+  const [slackDialog, setSlackDialog] = useState<DestinationLevel | null>(null);
   const slack = route.params.get('slack');
   useEffect(() => {
     if (!slack) return;
-    void qc.invalidateQueries({ queryKey: ['integrations', project.id] });
-    if (slack === 'connected') toast({ title: 'Slack channel connected', body: 'Pick it as the destination of any trigger.', tone: 'good' });
-    else if (slack === 'cancelled') toast({ title: 'Slack connection cancelled', tone: 'accent' });
+    void qc.invalidateQueries({ queryKey: ['slack-setup'] });
+    if (slack === 'connected') {
+      toast({ title: 'Slack workspace connected', body: 'Now pick a channel.', tone: 'good' });
+      setSlackDialog(route.params.get('slack_level') === 'account' ? 'account' : 'project');
+    } else if (slack === 'cancelled') toast({ title: 'Slack connection cancelled', tone: 'accent' });
+    else if (slack === 'scopes') toast({ title: 'The Slack app needs more permissions', body: `Open the WGO app at api.slack.com/apps, add the bot token scopes ${SLACK_BOT_SCOPES.join(', ')} under OAuth & Permissions, then connect again.`, tone: 'bad' });
     else toast({ title: 'Could not connect Slack', body: 'Please try again.', tone: 'bad' });
-    set({ slack: null });
+    set({ slack: null, slack_level: null });
   }, [slack]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (triggers.isError) return <ErrorState error={triggers.error} retry={() => triggers.refetch()} />;
@@ -408,10 +572,10 @@ export function TriggersPage() {
             </EmptyState>)
           : triggers.data.map((t) => <TriggerRow key={t.id} t={t} onEdit={() => setDialog({ open: true, t, prefill: NO_PREFILL })} />)}
       </Card>
-      <SlackChannels />
+      <Destinations slackDialog={slackDialog} setSlackDialog={setSlackDialog} />
       <p className="text-[11.5px] text-faint">
         Webhooks receive a JSON POST (<Mono>trigger</Mono>, <Mono>project</Mono>, <Mono>scope</Mono>, <Mono>matches</Mono>, <Mono>events</Mono> / <Mono>logs</Mono> / <Mono>spans</Mono>, <Mono>url</Mono>) with an
-        <Mono> X-WGO-Signature: sha256=…</Mono> header: the HMAC-SHA256 of the raw body keyed with the trigger's signing secret.
+        <Mono> X-WGO-Signature: sha256=…</Mono> header: the HMAC-SHA256 of the raw body keyed with the signing secret of the saved webhook (also named in <Mono>X-WGO-Destination</Mono>), or of the trigger for a one-off URL.
       </p>
       <TriggerDialog open={dialog.open} initial={dialog.t} prefill={dialog.prefill} onClose={() => setDialog({ open: false, t: null, prefill: NO_PREFILL })} />
     </div>

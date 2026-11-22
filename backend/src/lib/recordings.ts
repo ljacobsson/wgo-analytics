@@ -168,7 +168,7 @@ export async function startRecording(body: { k?: unknown; s?: unknown; a?: unkno
   }
   const reason = typeof body.r === 'string' && /^(sample|trigger:)/.test(body.r) ? body.r.slice(0, 200) : 'sample';
   await query(
-    `INSERT INTO recordings (project_id, session_id, started_at, anon_id, reason) VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO recordings (project_id, session_id, started_at, anon_id, reason, active) VALUES ($1, $2, $3, $4, $5, false)
      ON CONFLICT (project_id, session_id) DO NOTHING`,
     [pid, sid, new Date(now), typeof body.a === 'string' ? body.a.slice(0, 64) : null, reason],
   );
@@ -232,18 +232,55 @@ export function normalizeReplays(pid: string, batch: WireBatch, receivedAt = Dat
   return rows;
 }
 
-/** Replay rows of a batch worth storing: the project records and the session holds a slot. */
+/**
+ * Record kinds (sdk/src/replay/recorder.ts) that make a recording active: click or tap, scroll, form field, and the
+ * pointer resting on something clickable. Pointer moves alone don't: someone passing over the tab on the way elsewhere.
+ */
+const INTERACTIONS = new Set([2, 3, 5, 7]);
+
+/** Sessions of a batch whose replay chunks hold an interaction. */
+export function interactedSessions(batch: WireBatch): Set<string> {
+  const out = new Set<string>();
+  for (const e of (batch?.e ?? []) as unknown as Array<{ t?: string; s?: unknown; d?: { r?: unknown } }>) {
+    if (e?.t !== 'replay' || typeof e.s !== 'string' || !Array.isArray(e.d?.r)) continue;
+    if (e.d.r.some((r) => Array.isArray(r) && INTERACTIONS.has(r[0] as number))) out.add(e.s.slice(0, 64));
+  }
+  return out;
+}
+
+/** sessions already marked active, per container */
+const activeKnown = new Set<string>();
+
+/** Marks recordings active (the list hides the others unless asked for them). */
+async function markActive(pid: string, sids: string[]): Promise<void> {
+  const ask = sids.filter((s) => !activeKnown.has(grantKey(pid, s)));
+  if (!ask.length) return;
+  await query('UPDATE recordings SET active = true WHERE project_id = $1 AND session_id = ANY($2::text[]) AND active IS NOT TRUE', [pid, ask]);
+  for (const s of ask) activeKnown.add(grantKey(pid, s));
+  if (activeKnown.size > 20_000) activeKnown.delete(activeKnown.values().next().value!);
+}
+
+/**
+ * Replay rows of a batch worth storing: the project records and the session holds a slot. Recordings whose chunks
+ * show the visitor interacting are marked active on the way.
+ */
 export async function replayRows(pid: string, batch: WireBatch, receivedAt = Date.now()): Promise<ReplayRow[]> {
   if (!batch || !Array.isArray(batch.e) || !batch.e.some((e) => (e as { t?: string })?.t === 'replay')) return [];
   const rows = normalizeReplays(pid, batch, receivedAt);
   if (!rows.length || !(await settingsOf(pid)).enabled) return [];
   const ok = await grantedSessions(pid, [...new Set(rows.map((r) => r.session_id))]);
+  const interacted = [...interactedSessions(batch)].filter((s) => ok.has(s));
+  if (interacted.length) await markActive(pid, interacted);
   return rows.filter((r) => ok.has(r.session_id));
 }
 
 // ---------------------------------------------------------------- reading
 
-export interface RecordingRow { session_id: string; started_at: Date; anon_id: string | null; reason: string }
+/** `active`: null for recordings made before it was tracked (then the events decide, see `inactive`) */
+export interface RecordingRow { session_id: string; started_at: Date; anon_id: string | null; reason: string; active?: boolean | null }
+
+/** Columns of RecordingRow. */
+export const RECORDING_COLUMNS = 'session_id, started_at, anon_id, reason, active';
 
 /** A window covering the data of these recordings: up to 10 minutes of lead-up before each and a day after. */
 export function recordingsWindow(recs: RecordingRow[]): { from: Date; to: Date } {
@@ -261,13 +298,14 @@ export async function summarize(pid: string, recs: RecordingRow[]): Promise<Reco
     rawQuery<{ session_id: string; first: Date; last: Date }>(pid, w,
       `SELECT session_id, min(ts) AS first, max(ts + to_milliseconds(dur::BIGINT)) AS last
          FROM replays WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND session_id IN ${ids} GROUP BY session_id`, params),
-    rawQuery<{ session_id: string; pages: number; clicks: number; rage: number; errors: number; user_id: string | null; entry: string | null;
+    rawQuery<{ session_id: string; pages: number; clicks: number; rage: number; errors: number; other: number; user_id: string | null; entry: string | null;
       paths: string[] | null; browser: string | null; os: string | null; device: string | null; country: string | null; city: string | null }>(pid, w,
       `SELECT session_id,
               count(*) FILTER (WHERE type = 'pageview') AS pages,
               count(*) FILTER (WHERE type = 'click') AS clicks,
               count(*) FILTER (WHERE type = 'click' AND TRY_CAST(json_extract_string(props, '$.rage') AS INTEGER) >= 3) AS rage,
               count(*) FILTER (WHERE type IN ('error', 'http_error')) AS errors,
+              count(*) FILTER (WHERE type NOT IN ('pageview', 'vitals')) AS other,
               list(path ORDER BY ts) FILTER (WHERE type = 'pageview' AND path IS NOT NULL) AS paths,
               max(user_id) AS user_id,
               arg_min(path, ts) FILTER (WHERE type = 'pageview') AS entry,
@@ -277,7 +315,7 @@ export async function summarize(pid: string, recs: RecordingRow[]): Promise<Reco
   ]);
   const rep = new Map(replays.map((r) => [r.session_id, r]));
   const ev = new Map(events.map((r) => [r.session_id, r]));
-  return recs.map((r): RecordingSummary => {
+  const out = recs.map((r): RecordingSummary => {
     const x = rep.get(r.session_id);
     const e = ev.get(r.session_id);
     const first = x ? new Date(x.first) : null;
@@ -295,6 +333,8 @@ export async function summarize(pid: string, recs: RecordingRow[]): Promise<Reco
       clicks: e?.clicks ?? 0,
       rageClicks: e?.rage ?? 0,
       errors: e?.errors ?? 0,
+      events: e?.other ?? 0,
+      active: r.active ?? !inactive({ pages: e?.pages ?? 0, events: e?.other ?? 0 }),
       paths: [...new Set(e?.paths ?? [])].slice(0, 20),
       browser: e?.browser ?? null,
       os: e?.os ?? null,
@@ -303,6 +343,20 @@ export async function summarize(pid: string, recs: RecordingRow[]): Promise<Reco
       city: e?.city ?? null,
     };
   });
+  await backfillActive(pid, recs, out);
+  return out;
+}
+
+/**
+ * Stores what the events said about recordings made before interactions were tracked (`active` null), so the list
+ * can leave the inactive ones out without reading their data again.
+ */
+async function backfillActive(pid: string, recs: RecordingRow[], sums: RecordingSummary[]): Promise<void> {
+  const sids = (v: boolean) => sums.filter((x, i) => recs[i].active == null && x.endedAt && x.active === v).map((x) => x.sessionId);
+  for (const v of [true, false]) {
+    const ids = sids(v);
+    if (ids.length) await query('UPDATE recordings SET active = $3 WHERE project_id = $1 AND session_id = ANY($2::text[]) AND active IS NULL', [pid, ids, v]);
+  }
 }
 
 const date = (v: string | undefined): Date | null => {
@@ -327,6 +381,7 @@ export function parseFilters(q: Record<string, string | undefined>): RecordingFi
     errors: flag(q.errors),
     rage: flag(q.rage),
     identified: flag(q.identified),
+    inactive: flag(q.inactive),
     q: q.q?.trim().toLowerCase() || undefined,
   };
 }
@@ -341,9 +396,22 @@ function pageMatcher(pattern: string): (path: string) => boolean {
   return (p) => re.test(p);
 }
 
-/** Whether a recording is listed under the given filters (always: it has data and lasts at least 3 seconds). */
+/**
+ * Nothing happened in a recording made before interactions were tracked: at most one page view and no other events
+ * (mostly a tab left open).
+ */
+const inactive = (r: Pick<RecordingSummary, 'pages' | 'events'>) => r.pages <= 1 && !r.events;
+
+/** Whether the filters list inactive recordings too: when asked to, and when looking for errors. */
+export const showsInactive = (f: RecordingFilters) => !!(f.inactive || f.errors);
+
+/**
+ * Whether a recording is listed under the given filters (always: it has data and lasts at least 3 seconds; unless
+ * showsInactive, the visitor did something in it).
+ */
 export function matchesFilters(r: RecordingSummary, f: RecordingFilters): boolean {
   if (!r.endedAt || r.durationMs < MIN_RECORDING_MS) return false;
+  if (!r.active && !showsInactive(f)) return false;
   if (f.minDuration !== undefined && r.durationMs < f.minDuration * 1000) return false;
   if (f.maxDuration !== undefined && r.durationMs > f.maxDuration * 1000) return false;
   if (f.errors && !r.errors) return false;
@@ -368,6 +436,19 @@ const MAX_SCAN = 1000;
 const SCAN_BATCH = 200;
 
 /**
+ * Up to `n` recording slots that started in [from, before), newest first. Recordings known to be inactive are left
+ * out unless the filters show them: reading their data only to drop them made a list of mostly idle tabs slow.
+ */
+export function recordingSlots(pid: string, from: Date, before: Date, f: RecordingFilters, n: number): Promise<RecordingRow[]> {
+  return query<RecordingRow>(
+    `SELECT ${RECORDING_COLUMNS} FROM recordings
+      WHERE project_id = $1 AND started_at >= $2 AND started_at < $3${showsInactive(f) ? '' : ' AND active IS NOT FALSE'}
+      ORDER BY started_at DESC LIMIT $4`,
+    [pid, from, before, n],
+  );
+}
+
+/**
  * Recordings that started in [from, to), newest first, that match the filters (see RecordingFilters). Recording
  * slots are read from the newest down in batches, until `limit` match or MAX_SCAN were looked at; `nextBefore`
  * continues from the last one looked at.
@@ -382,11 +463,7 @@ export async function listRecordings(pid: string, q: Record<string, string | und
   let scanned = 0;
   let more = true;
   while (recordings.length < limit && more && scanned < MAX_SCAN) {
-    const rows = await query<RecordingRow>(
-      `SELECT session_id, started_at, anon_id, reason FROM recordings
-        WHERE project_id = $1 AND started_at >= $2 AND started_at < $3 ORDER BY started_at DESC LIMIT $4`,
-      [pid, from, before, SCAN_BATCH],
-    );
+    const rows = await recordingSlots(pid, from, before, f, SCAN_BATCH);
     more = rows.length === SCAN_BATCH;
     for (const [i, r] of (await summarize(pid, rows)).entries()) {
       scanned++;
@@ -402,7 +479,7 @@ export async function listRecordings(pid: string, q: Record<string, string | und
 const PAGE_CHARS = 3_000_000;
 
 export async function getRecording(pid: string, sid: string, q: Record<string, string | undefined>): Promise<RecordingResponse> {
-  const [row] = await query<RecordingRow>('SELECT session_id, started_at, anon_id, reason FROM recordings WHERE project_id = $1 AND session_id = $2', [pid, sid]);
+  const [row] = await query<RecordingRow>(`SELECT ${RECORDING_COLUMNS} FROM recordings WHERE project_id = $1 AND session_id = $2`, [pid, sid]);
   if (!row) throw new HttpError(404, 'No recording of that session');
   // the recorder sends up to a minute from before the slot was granted (what led up to a trigger)
   const w = { from: new Date(row.started_at.getTime() - 10 * 60_000), to: new Date(Math.min(Date.now() + 60_000, row.started_at.getTime() + DAY)) };

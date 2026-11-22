@@ -156,7 +156,7 @@ export function CostsPage() {
   if (costs.isPending) return <div className="space-y-4"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   if (costs.isError) {
     if (costs.error instanceof ApiError && costs.error.status === 403) {
-      return <div className="space-y-4"><CostDisclaimer /><EmptyState title="Only project owners can see costs">The cost of the install covers every project in it, so WGO shows it to people who own at least one project. Ask an owner to open this page.</EmptyState></div>;
+      return <div className="space-y-4"><CostDisclaimer /><EmptyState title="Only admins can see costs">The cost of the install covers every project in it, so WGO shows it only to admins: the emails in the ADMIN_EMAILS deploy setting, or, without it, the owners of the first project. Ask one of them to open this page.</EmptyState></div>;
     }
     return <ErrorState error={costs.error} retry={() => costs.refetch()} />;
   }
