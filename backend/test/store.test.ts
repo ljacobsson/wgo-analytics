@@ -3,10 +3,10 @@
  * files not merged yet, merging, whole-day deletion, and the event queue's message chunking.
  */
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { duckQuery, filesFor, rawQuery } from '../src/lib/store/duck';
 import { location } from '../src/lib/store/files';
-import { compactProject, deleteDaysBefore, firstDay, mergeFiles } from '../src/lib/store/maintain';
+import { compactProject, deleteDaysBefore, firstDay, mergeBatches, mergeFiles } from '../src/lib/store/maintain';
 import { chunkJson, eventsFromMessages } from '../src/lib/store/queue';
 import { projectPrefix } from '../src/lib/store/tables';
 import { writeRows } from '../src/lib/store/write';
@@ -64,7 +64,7 @@ describe('parquet store', () => {
     expect(before).toHaveLength(6);
 
     const res = await compactProject(pid, Date.now() + 60_000, now);
-    expect(res).toEqual({ done: true, merged: 6 });
+    expect(res).toEqual({ done: true, merged: 6, failed: 0 });
     const after = await location().list(projectPrefix('events', pid));
     expect(after).toHaveLength(1);
     expect(after[0].key).toMatch(/\/dt=2026-11-16\/c\d+-[0-9a-f]+\.parquet$/);
@@ -78,6 +78,30 @@ describe('parquet store', () => {
     await mergeFiles('events', pid, '2026-11-16', files);
     expect(await location().list(projectPrefix('events', pid))).toHaveLength(1);
     expect((await rawQuery<{ n: number }>(pid, all, `SELECT count(*)::int AS n FROM events`))[0].n).toBe(51);
+  });
+
+  it('splits a backlog into merges that each fit the function', () => {
+    const MB = 1024 * 1024;
+    const files = Array.from({ length: 10 }, (_, i) => ({ key: `f${i}`, size: 15 * MB }));
+    expect(mergeBatches(files).map((b) => b.length)).toEqual([4, 4, 2]);
+    expect(mergeBatches(Array.from({ length: 4500 }, (_, i) => ({ key: `f${i}`, size: 10 }))).map((b) => b.length)).toEqual([2000, 2000, 500]);
+    expect(mergeBatches([])).toEqual([]);
+  });
+
+  it('keeps merging other tables when one merge fails', async () => {
+    const pid = randomUUID();
+    // events merge first and fail on an unreadable file; the logs after them still merge
+    await writeRows('events', [event(pid, now)]);
+    await location().put(`${projectPrefix('events', pid)}dt=2026-11-16/1-broken.parquet`, new TextEncoder().encode('not parquet'));
+    for (let i = 0; i < 3; i++) {
+      await writeRows('logs', [{ project_id: pid, ts: new Date(now), id: randomUUID(), severity_number: 9, body: `x${i}`, service: 'api' }]);
+    }
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await compactProject(pid, Date.now() + 60_000, now);
+    errors.mockRestore();
+    expect(res).toEqual({ done: true, merged: 3, failed: 1 });
+    expect(await location().list(projectPrefix('events', pid))).toHaveLength(2);
+    expect(await location().list(projectPrefix('logs', pid))).toHaveLength(1);
   });
 
   it('deletes whole days and finds the first stored day', async () => {

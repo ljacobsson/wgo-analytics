@@ -1133,6 +1133,8 @@ Resources:
       CodeUri: ./
       Handler: maintenance.handler
       MemorySize: 3008
+      # merges spill sorted rows that don't fit DuckDB's memory to /tmp (store/maintain.ts); the default 512 MB filled up
+      EphemeralStorage: { Size: 2048 }
       Layers: [!Ref DuckDbLayer]
       Timeout: 840
       EventInvokeConfig:

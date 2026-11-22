@@ -172,17 +172,23 @@ export const isMerged = (key: string) => key.slice(key.lastIndexOf('/') + 1).sta
  * small ones, so this stays cheap.
  */
 export function relation(table: RawTable, files: StoredFile[]): string {
-  const loc = location();
-  const read = (list: StoredFile[]) =>
-    `read_parquet([${list.map((f) => sqlString(loc.url(f.key))).join(', ')}], hive_partitioning = true, hive_types = {'project_id': VARCHAR, 'dt': DATE}, union_by_name = true)`;
   const merged = files.filter((f) => isMerged(f.key));
   const fresh = files.filter((f) => !isMerged(f.key));
   const parts = [`SELECT * FROM empty_${table}`];
-  if (merged.length) parts.push(`SELECT * FROM ${read(merged)}`);
+  if (merged.length) parts.push(`SELECT * FROM ${readFiles(merged)}`);
   if (fresh.length) {
-    parts.push(`SELECT * FROM (SELECT * FROM ${read(fresh)} QUALIFY row_number() OVER (PARTITION BY ${TABLES[table].key.join(', ')}) = 1)`);
+    parts.push(`SELECT * FROM (SELECT * FROM ${readFiles(fresh)} QUALIFY row_number() OVER (PARTITION BY ${TABLES[table].key.join(', ')}) = 1)`);
   }
   return parts.join(' UNION ALL BY NAME ');
+}
+
+/** Relation over the given files as they are (duplicates kept), plus the typed empty table. */
+export const rawRelation = (table: RawTable, files: StoredFile[]) =>
+  `SELECT * FROM empty_${table}${files.length ? ` UNION ALL BY NAME SELECT * FROM ${readFiles(files)}` : ''}`;
+
+function readFiles(list: StoredFile[]): string {
+  const loc = location();
+  return `read_parquet([${list.map((f) => sqlString(loc.url(f.key))).join(', ')}], hive_partitioning = true, hive_types = {'project_id': VARCHAR, 'dt': DATE}, union_by_name = true)`;
 }
 
 // ---------------------------------------------------------------- identities

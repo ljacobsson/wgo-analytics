@@ -1,6 +1,6 @@
 import { execute, query } from '../db';
 import { getJobState, setJobState } from '../jobState';
-import { duckQuery, forgetFileLists, relation } from './duck';
+import { duckQuery, forgetFileLists, rawRelation } from './duck';
 import { location, type StoredFile } from './files';
 import { dayOf, dayOfKey, dayPrefix, projectPrefix, RAW_TABLES, TABLES, type RawTable } from './tables';
 import { newFileName, writeRows } from './write';
@@ -29,10 +29,16 @@ export async function deleteDaysBefore(table: RawTable, pid: string, day: string
 
 // ---------------------------------------------------------------- compaction
 
-/** Files below this are merged; bigger ones are left alone, so a busy day ends up as a few large files. */
-export const SMALL_FILE = 48 * 1024 * 1024;
-/** At most this much input per merge, so one merge fits the maintenance function's memory and time. */
-const MAX_MERGE_BYTES = 384 * 1024 * 1024;
+/**
+ * Sizes here are bytes on disk, and a merge needs the rows uncompressed: about 12x more for spans (JSON
+ * attributes; a sorted, ZSTD-compressed 50 MB merged file held 600 MB). A merge sorts all of it, spilling what
+ * doesn't fit DuckDB's memory to the function's /tmp, so both limits stay well below what that can hold.
+ * With a 48 MB SMALL_FILE a merged file of 47 MB was merged again with every run and no longer fit.
+ */
+/** Files below this are merged; bigger ones are left alone, so a busy day ends up as a handful of files. */
+export const SMALL_FILE = 16 * 1024 * 1024;
+/** At most this much input per merge, so one merge fits the maintenance function's memory, /tmp and time. */
+const MAX_MERGE_BYTES = 64 * 1024 * 1024;
 const MAX_MERGE_FILES = 2000;
 /** Days back that are checked for small files (late data for older days stays as it is). */
 const COMPACT_DAYS = 3;
@@ -48,9 +54,10 @@ export async function mergeFiles(table: RawTable, pid: string, day: string, file
   const cols = def.columns.map(([n]) => `"${n}"`).join(', ');
   const target = location().url(key).replace(/'/g, "''");
   if (!location().s3) await (await import('node:fs/promises')).mkdir((await import('node:path')).dirname(target), { recursive: true });
+  // one pass removes duplicates within and across files (relation() would dedupe the unmerged ones a second time)
   await duckQuery(
     `COPY (
-       SELECT ${cols} FROM (${relation(table, files)})
+       SELECT ${cols} FROM (${rawRelation(table, files)})
        QUALIFY row_number() OVER (PARTITION BY ${def.key.join(', ')} ORDER BY ${def.time}) = 1
        ORDER BY ${def.sort.join(', ')}
      ) TO '${target}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100000)`,
@@ -60,24 +67,55 @@ export async function mergeFiles(table: RawTable, pid: string, day: string, file
   return key;
 }
 
-/** Merge small files of the last few days for every project. Returns false when the deadline hit first. */
-export async function runCompaction(deadline: number, now = Date.now()): Promise<{ done: boolean; merged: number }> {
-  const projects = await query<{ id: string }>('SELECT id FROM projects');
-  let merged = 0;
-  for (const { id } of projects) {
-    const res = await compactProject(id, deadline, now);
-    merged += res.merged;
-    if (!res.done) return { done: false, merged };
-  }
-  return { done: true, merged };
+interface CompactionResult {
+  done: boolean;
+  /** files merged away */
+  merged: number;
+  /** merges that failed (logged); their files stay as they are and are tried again next run */
+  failed: number;
 }
 
-/** Merge one project's small files of the last few days. Returns the number of files merged away. */
-export async function compactProject(id: string, deadline: number, now = Date.now()): Promise<{ done: boolean; merged: number }> {
+/** Merge small files of the last few days for every project. Returns done: false when the deadline hit first. */
+export async function runCompaction(deadline: number, now = Date.now()): Promise<CompactionResult> {
+  const projects = await query<{ id: string }>('SELECT id FROM projects');
+  const total: CompactionResult = { done: true, merged: 0, failed: 0 };
+  for (const { id } of projects) {
+    const res = await compactProject(id, deadline, now);
+    total.merged += res.merged;
+    total.failed += res.failed;
+    if (!res.done) return { ...total, done: false };
+  }
+  return total;
+}
+
+/** Consecutive runs of files with at most MAX_MERGE_BYTES and MAX_MERGE_FILES each. */
+export function mergeBatches(files: StoredFile[]): StoredFile[][] {
+  const out: StoredFile[][] = [];
+  let cur: StoredFile[] = [];
+  let bytes = 0;
+  for (const f of files) {
+    if (cur.length && (bytes + f.size > MAX_MERGE_BYTES || cur.length >= MAX_MERGE_FILES)) {
+      out.push(cur);
+      cur = [];
+      bytes = 0;
+    }
+    cur.push(f);
+    bytes += f.size;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+/**
+ * Merge one project's small files of the last few days, in batches that each fit one merge. A failed merge is
+ * logged and skipped, so it can't hold up the other days, tables and projects.
+ */
+export async function compactProject(id: string, deadline: number, now = Date.now()): Promise<CompactionResult> {
   const since = dayOf(now - COMPACT_DAYS * DAY);
   let merged = 0;
+  let failed = 0;
   for (const table of RAW_TABLES) {
-    if (Date.now() > deadline) return { done: false, merged };
+    if (Date.now() > deadline) return { done: false, merged, failed };
     const prefix = projectPrefix(table, id);
     const files = await location().list(prefix, { startAfter: `${prefix}dt=${since}` });
     const byDay = new Map<string, StoredFile[]>();
@@ -86,15 +124,21 @@ export async function compactProject(id: string, deadline: number, now = Date.no
       if (day && f.size < SMALL_FILE) byDay.set(day, [...(byDay.get(day) ?? []), f]);
     }
     for (const [day, small] of byDay) {
-      if (small.length < 2) continue;
-      let bytes = 0;
-      const batch = small.filter((f) => (bytes += f.size) <= MAX_MERGE_BYTES).slice(0, MAX_MERGE_FILES);
-      if (batch.length < 2 || Date.now() > deadline) continue;
-      await mergeFiles(table, id, day, batch);
-      merged += batch.length;
+      for (const batch of mergeBatches(small)) {
+        if (batch.length < 2) continue;
+        if (Date.now() > deadline) return { done: false, merged, failed };
+        try {
+          await mergeFiles(table, id, day, batch);
+          merged += batch.length;
+        } catch (err) {
+          failed++;
+          const bytes = batch.reduce((n, f) => n + f.size, 0);
+          console.error(JSON.stringify({ msg: 'merge failed', table, project: id, day, files: batch.length, bytes, error: String((err as Error)?.message ?? err).slice(0, 500) }));
+        }
+      }
     }
   }
-  return { done: true, merged };
+  return { done: true, merged, failed };
 }
 
 // ---------------------------------------------------------------- retention
