@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Plus, Replace, Tv } from 'lucide-react';
 import type { FilterScope, Kiosk, KioskScreen } from '../api/contract';
-import { useCreateKiosk, useKiosks, useUpdateKiosk } from '../api/hooks';
+import { useCreateKiosk, useDashboard, useKiosks, useUpdateKiosk } from '../api/hooks';
 import { FILTER_PARAM } from '../lib/filters';
 import { isKioskPage, normParams, rangeLabel } from '../lib/kiosk';
 import { useProject } from '../lib/project';
@@ -16,7 +16,9 @@ const MAX_SCREENS = 12;
 /** Header button on pages a kiosk can show: sends the current view (page, range, filters, options) to a screen. */
 export function ShowOnKioskButton({ page }: { page: string }) {
   const [open, setOpen] = useState(false);
-  if (!isKioskPage(page)) return null;
+  const route = useRoute();
+  // a custom dashboard (#/p/…/dashboards/<id>) is a 'dashboard' screen
+  if (!isKioskPage(page) && !(page === 'dashboards' && route.segments[3])) return null;
   return (
     <>
       <button onClick={() => setOpen(true)} title="Show this view on a kiosk screen"
@@ -38,9 +40,14 @@ function ShowOnKioskDialog({ onClose }: { onClose: () => void }) {
   const create = useCreateKiosk(project.id);
   const [name, setName] = useState('');
 
-  const page = route.segments[2] ?? 'overview';
+  const seg = route.segments[2] ?? 'overview';
+  const dashboardId = seg === 'dashboards' ? route.segments[3] : undefined;
+  const page = dashboardId ? 'dashboard' : seg;
+  const dashboard = useDashboard(project.id, dashboardId ?? '', undefined, !!dashboardId);
   if (!isKioskPage(page)) return null;
-  const screen: KioskScreen = { page, params: normParams(route.params.toString()) };
+  const params = new URLSearchParams(route.params);
+  if (dashboardId) params.set('id', dashboardId);
+  const screen: KioskScreen = { page, params: normParams(params.toString()) };
   // the Live page counts this browser's watches; the kiosk gets a copy
   if (page === 'live' && live.watches.length) screen.watches = live.watches;
   const filters = (Object.keys(FILTER_PARAM) as FilterScope[]).flatMap((s) => {
@@ -63,7 +70,7 @@ function ShowOnKioskDialog({ onClose }: { onClose: () => void }) {
   return (
     <Dialog open onClose={onClose} width={560} title={<span className="inline-flex items-center gap-2"><Tv size={16} />Show on a kiosk</span>}>
       <div className="rounded-xl border border-line bg-[var(--hl)]/40 p-3">
-        <div className="text-[13.5px] font-semibold">{kioskPageLabel(page)} <span className="font-normal text-muted">· {rangeLabel(route.params)}</span></div>
+        <div className="text-[13.5px] font-semibold">{dashboard.data?.name ?? kioskPageLabel(page)} <span className="font-normal text-muted">· {rangeLabel(route.params)}</span></div>
         {filters.length > 0 && <ReadOnlyFilters filters={filters} className="mt-2" />}
         {screen.watches && <div className="mt-1.5 text-[12px] text-muted">With your {screen.watches.length} watch{screen.watches.length === 1 ? '' : 'es'}: {screen.watches.map((w) => w.label).join(', ')}</div>}
         <p className="mt-2 text-[11.5px] text-faint">The screen shows this page exactly as you see it now, and keeps it up to date.</p>

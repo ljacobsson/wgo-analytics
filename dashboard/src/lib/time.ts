@@ -24,7 +24,7 @@ export function resolveRange(params: URLSearchParams, now: number): TimeRange {
   const r = params.get('range') ?? '24h';
   if (r === 'custom' && params.get('from') && params.get('to')) {
     const from = params.get('from')!, to = params.get('to')!;
-    return { from, to, preset: 'custom', label: 'Custom', ms: Date.parse(to) - Date.parse(from) };
+    return { from, to, preset: 'custom', label: windowLabel(from, to), ms: Date.parse(to) - Date.parse(from) };
   }
   const preset = (PRESETS as readonly string[]).includes(r) ? (r as Preset) : '24h';
   const ms = PRESET_MS[preset];
@@ -37,3 +37,11 @@ export function resolveRange(params: URLSearchParams, now: number): TimeRange {
 export const TimeCtx = createContext<{ range: TimeRange; refresh: () => void; auto: boolean; setAuto: (b: boolean) => void }>(null as never);
 export const useTime = () => useContext(TimeCtx);
 export type { Route };
+
+/** "Nov 23, 14:05–14:35", or with both dates when the window spans days. */
+export function windowLabel(from: string, to: string): string {
+  const a = new Date(from), b = new Date(to);
+  const day = (d: Date) => d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const time = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return a.toDateString() === b.toDateString() ? `${day(a)}, ${time(a)}–${time(b)}` : `${day(a)} ${time(a)} – ${day(b)} ${time(b)}`;
+}

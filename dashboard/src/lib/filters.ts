@@ -2,6 +2,9 @@ import { useCallback } from 'react';
 import type { Filter, FilterOp, FilterScope } from '../api/contract';
 import { parseRoute, useRoute, useSetParams } from './router';
 
+/** Scopes with discoverable fields: the filterable ones, plus OpenTelemetry metric points and uptime check runs (dashboards). */
+export type FieldScope = FilterScope | 'metrics' | 'checks';
+
 /** URL param holding each scope's filters (JSON), so filtered views are shareable links. */
 export const FILTER_PARAM: Record<FilterScope, string> = { events: 'f', logs: 'lf', spans: 'tf' };
 
@@ -54,6 +57,7 @@ const LABELS: Record<string, string> = {
   region: 'Region', city: 'City', lat: 'Latitude', lon: 'Longitude', bot: 'Bot reason', body: 'Message', service: 'Service',
   severityText: 'Severity', severityNumber: 'Severity number', traceId: 'Trace ID', spanId: 'Span ID',
   statusCode: 'Status code', statusMessage: 'Status message', kind: 'Span kind',
+  checkId: 'Uptime check', ok: 'Succeeded (1/0)', status: 'HTTP status', error: 'Error', unit: 'Unit', value: 'Value',
 };
 
 /** Human label for a field: built-ins get names, JSON paths keep their path (that's what users recognise). */

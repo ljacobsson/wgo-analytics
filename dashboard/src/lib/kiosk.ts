@@ -9,7 +9,7 @@ export const KIOSK_TOKEN: string | null = window.location.hash.match(/^#\/kiosk\
 export const isKiosk = () => KIOSK_TOKEN !== null;
 
 /** Pages a kiosk can show (same list as the backend's KIOSK_PAGES). */
-export const KIOSK_PAGES: readonly KioskPage[] = ['overview', 'live', 'clicks', 'errors', 'network', 'events', 'traces', 'logs', 'metrics'];
+export const KIOSK_PAGES: readonly KioskPage[] = ['overview', 'live', 'clicks', 'errors', 'network', 'events', 'traces', 'logs', 'metrics', 'dashboard'];
 export const isKioskPage = (page: string): page is KioskPage => (KIOSK_PAGES as readonly string[]).includes(page);
 
 /** Where the dashboard is served from, without index.html or a trailing slash. */

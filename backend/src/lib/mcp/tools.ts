@@ -8,7 +8,7 @@ import * as FR from '../frustration';
 import * as C from '../cohorts';
 import * as G from '../goals';
 import * as GF from '../funnel';
-import { TRIGGER_WINDOWS, type Project, type Trigger } from '../../contract';
+import { TRIGGER_WINDOWS, type Dashboard, type Project, type Trigger } from '../../contract';
 import { OPS } from '../filters';
 import * as M from '../monitor';
 import * as DST from '../destinations';
@@ -18,6 +18,9 @@ import { HttpError } from '../http';
 import * as P from '../projects';
 import { BEHAVIOR_ACTIONS, findRecordings } from '../recordingSearch';
 import * as U from '../uptime';
+import * as QRY from '../query';
+import * as D from '../dashboards';
+import { randomUUID } from 'node:crypto';
 import { normalizeMapFile, normalizeRelease, UPLOAD_URL_TTL_SECONDS, uploadUrl } from '../sourcemaps';
 
 /**
@@ -58,7 +61,11 @@ a new goal immediately covers the project's retention. update_goal changes one, 
 Triggers (alerts) notify a webhook or a connected Slack channel: on every new matching event, log or span
 (kind "match"), when a number over a window crosses a value ("threshold"), or when it's unusual for the time of
 day ("anomaly"). list_triggers shows them and the Slack channels you can send to; preview_trigger shows what a
-threshold/anomaly trigger would see right now; create_trigger saves one; test_trigger sends a sample notification.`;
+threshold/anomaly trigger would see right now; create_trigger saves one; test_trigger sends a sample notification.
+Any number across all of it (web events, Web Vitals, goals, spans, logs, OpenTelemetry metrics, uptime checks), as a
+total, over time or split by a field: query_measures. To keep a set of them in view, build a custom dashboard:
+create_dashboard with tiles (each tile is a query_measures measure plus how to show it), add_dashboard_tile to an
+existing one (list_dashboards). Dashboards are shared with every project member.`;
 
 const RANGE_RE = /^(\d+)\s*(m|h|d)$/i;
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
@@ -155,6 +162,59 @@ const triggerKind = z.enum(['match', 'threshold', 'anomaly']).optional().describ
 const publicTrigger = ({ signingSecret, ...t }: Trigger) => (t.destination.type === 'webhook' ? { ...t, signingSecret } : t);
 const goalFilters = z.array(eventFilter).min(1).max(20);
 const goalSteps = z.array(z.object({ name: z.string().min(1).max(80), filters: goalFilters })).max(G.MAX_STEPS);
+
+const MAX_MEASURES = QRY.MAX_MEASURES;
+const sourceFilter = z.object({
+  field: z.string().min(1).max(200).describe('A field of the measure\'s source (see query_measures)'),
+  op: z.enum(OPS as [string, ...string[]]),
+  value: z.union([z.string().max(500), z.number()]).optional(),
+});
+const measureQuery = z.object({
+  source: z.enum(['events', 'logs', 'spans', 'metrics', 'checks']),
+  agg: z.enum(['count', 'sessions', 'users', 'session_rate', 'sum', 'avg', 'min', 'max', 'p50', 'p75', 'p95', 'p99', 'rate']),
+  field: z.string().max(200).optional().describe('Numeric field for sum/avg/min/max/p50-p99 and rate (metrics default to value, checks to durationMs / ok)'),
+  metric: z.string().max(200).optional().describe('Metrics source: the OpenTelemetry metric name (required), see list_measure_names'),
+  filters: z.array(sourceFilter).max(20).optional().describe('ANDed, in the fields of the source'),
+});
+const tileRange = z.enum(['15m', '1h', '24h', '7d', '30d']);
+const tileInput = z.object({
+  id: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).optional().describe('1-40 letters, digits, - or _ (default: generated)'),
+  viz: z.enum(['number', 'line', 'area', 'bars', 'top', 'table', 'text']).describe('number: one big total; line/area/bars: over time; top: biggest values of groupBy; table: one row per groupBy value, a column per measure; text: a note'),
+  measures: z.array(measureQuery.extend({
+    label: z.string().max(80).optional().describe('Legend / column name'),
+    unit: z.enum(['count', 'ms', 's', 'bytes', 'percent', 'score', 'none']).optional().describe('How values are shown; percent expects a 0..1 share'),
+    better: z.enum(['up', 'down']).optional().describe('Which way a change is good'),
+  })).max(MAX_MEASURES).optional().describe('1-4 measures (none for text)'),
+  groupBy: z.string().max(200).optional().describe('Field of the source to split by (top and table need it; one measure only)'),
+  limit: z.number().int().min(1).max(50).optional(),
+  title: z.string().max(120).optional(),
+  range: tileRange.optional().describe('The tile\'s own range; otherwise the dashboard\'s'),
+  text: z.string().max(2000).optional().describe('Content of a text tile'),
+  layout: z.object({
+    x: z.number().int().min(0).max(11), y: z.number().int().min(0), w: z.number().int().min(1).max(12), h: z.number().int().min(1).max(12),
+  }).optional().describe('Position on a 12-column grid; omitted: stacked below the others (6 wide, 4 high; 2 for number)'),
+});
+type TileIn = z.infer<typeof tileInput>;
+
+const QUERY_DOC = `Runs a generic query over a time range (from/to ISO-8601 or range; default last 24 hours, max 92 days) and returns per measure a total, and with shape series the points over time, with groupBy the groups (biggest first), with compare the previous window's total. The same queries power custom dashboards, so use it to try a tile before saving it.
+A measure is {source, agg, field?, metric?, filters?}. Sources: events (pageviews, clicks, errors, vitals, custom events; fields type, path, country, device, browser, trackName, name, durationMs, props.<path>...), logs (service, severityNumber, severityText, body, attributes.<key>), spans (service, name, durationMs, statusCode, attributes.<key>), metrics (OpenTelemetry points: service, name, value, attributes.<key>; \`metric\` = metric name is required, see list_measure_names), checks (uptime check runs: checkId, ok, status, durationMs, region).
+Aggs: count (rows), sessions / users / session_rate (events only; session_rate = share of sessions with a matching event, 0..1), sum/avg/min/max/p50/p75/p95/p99 over a numeric \`field\` (metrics default to value, checks to durationMs; other sources need field), rate = average of a 1/0 field (checks default ok, so uptime, 0..1).
+Filters: {field, op, value}, ops eq neq contains not_contains starts_with ends_with gt gte lt lte set not_set.
+Examples: pageviews = {source: events, agg: count, filters: [type eq pageview]}; LCP p75 = {source: events, agg: p75, field: props.lcp, filters: [type eq vitals]}; error logs = {source: logs, agg: count, filters: [severityNumber gte 17]}; span latency p95 by service = shape top (or series), groupBy service, {source: spans, agg: p95, field: durationMs}; uptime = {source: checks, agg: rate}; a metric = {source: metrics, agg: avg, metric: "process.cpu.utilization"}.
+Shapes: total (one number per measure), series (over time; groupBy gives up to 10 series), top (needs groupBy: the biggest values). groupBy works with one measure. Optional dashboard-wide \`filters\` (event filters) apply to events measures only.`;
+
+const TILE_DOC = `A tile is {viz, measures, groupBy?, limit?, title?, range?, layout?} (viz number|line|area|bars|top|table|text; measures as in query_measures plus optional label, unit count|ms|s|bytes|percent|score|none and better up|down; a text tile has \`text\` and no measures; top and table need groupBy). Tiles without layout are stacked below the others (6 columns wide, 4 rows high; 2 for number) on a 12-column grid, so w 6 at x 0 and x 6 puts two side by side. Put numbers on top, then charts, and set unit (ms for latencies, percent for rates).`;
+
+/** Gives tiles without an id or layout one (layouts stacked below the lowest tile so far). */
+function stackTiles<C extends { tiles: TileIn[] }>(config: C) {
+  let bottom = 0;
+  const tiles = config.tiles.map((t) => {
+    const layout = t.layout ?? { x: 0, y: bottom, w: 6, h: t.viz === 'number' ? 2 : 4 };
+    bottom = Math.max(bottom, layout.y + layout.h);
+    return { ...t, id: t.id ?? randomUUID().slice(0, 8), layout };
+  });
+  return { ...config, tiles };
+}
 
 const behavior = z.object({
   action: z.enum(BEHAVIOR_ACTIONS as [string, ...string[]]).describe(
@@ -785,6 +845,107 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
       const q = windowParams(a);
       return U.summary(pid, U.parseWindow({ from: q.from, to: q.to }));
     },
+  );
+
+  const dashboardUrl = (pid: string, id: string) => (origin ? { url: `${origin}/#/p/${pid}/dashboards/${id}` } : {});
+  const withUrl = (pid: string, d: Dashboard) => ({ ...d, ...dashboardUrl(pid, d.id) });
+
+  projectTool(
+    'query_measures',
+    'Query measures',
+    QUERY_DOC,
+    {
+      ...windowShape,
+      shape: z.enum(['total', 'series', 'top']).describe('total: one number per measure; series: values over time; top: the biggest values of groupBy (needs groupBy)'),
+      measures: z.array(measureQuery).min(1).max(MAX_MEASURES).describe('1-4 measures; with groupBy, exactly one'),
+      groupBy: z.string().min(1).max(200).optional().describe('A field of the measure\'s source to split by, e.g. path, country, service, name'),
+      limit: z.number().int().min(1).max(50).optional().describe('Groups to return (series: default 5, max 10; top: default 10, max 50)'),
+      compare: z.boolean().optional().describe('Also return the total of the same-length window just before `from`'),
+      filters: z.array(eventFilter).max(20).optional().describe('Dashboard-wide filters, applied to events measures only'),
+    },
+    (pid, a) => {
+      const spec = { shape: a.shape, measures: a.measures, groupBy: a.groupBy, limit: a.limit, compare: a.compare };
+      return QRY.query(pid, { ...windowParams(a), q: JSON.stringify(spec), filters: a.filters?.length ? JSON.stringify(a.filters) : undefined });
+    },
+  );
+
+  projectTool(
+    'list_measure_names',
+    'List measure names',
+    'Names to use in measures, seen in the last 7 days: tracked clicks (data-track names, for trackName filters), custom events (name filters) and OpenTelemetry metric names (the `metric` of a metrics measure) with type and unit.',
+    {},
+    (pid) => QRY.measureNames(pid),
+  );
+
+  projectTool(
+    'list_dashboards',
+    'List dashboards',
+    'The project\'s custom dashboards, most recently updated first, with tile counts. A dashboard belongs to the project: every member sees it.',
+    {},
+    async (pid) => (await D.listDashboards(pid)).map((d) => ({ ...d, ...dashboardUrl(pid, d.id) })),
+  );
+
+  projectTool(
+    'get_dashboard',
+    'Get a dashboard',
+    'A dashboard with all its tiles (viz, measures, layout) and default filters and range.',
+    { dashboardId: z.string().describe('Dashboard id from list_dashboards') },
+    async (pid, a) => withUrl(pid, await D.getDashboard(pid, a.dashboardId)),
+  );
+
+  projectTool(
+    'create_dashboard',
+    'Create a dashboard',
+    `Creates a custom dashboard shared with all project members (every member sees and edits it). ${TILE_DOC} Check list_dashboards first: calling this twice creates two dashboards (at most ${D.MAX_DASHBOARDS} per project). Try each tile's measures with query_measures first. Returns the dashboard with its \`url\` when known.`,
+    {
+      name: z.string().min(1).max(120).describe('Dashboard name, 1-120 characters'),
+      tiles: z.array(tileInput).max(D.MAX_TILES).optional(),
+      filters: z.array(eventFilter).max(20).optional().describe('Default dashboard filters (events measures)'),
+      range: tileRange.optional().describe('Default range for tiles without their own'),
+    },
+    async (pid, a) => {
+      const config = stackTiles({ tiles: a.tiles ?? [], filters: a.filters, range: a.range });
+      return withUrl(pid, await D.createDashboard(pid, email, { name: a.name, config: config as never }));
+    },
+    CREATE,
+  );
+
+  projectTool(
+    'add_dashboard_tile',
+    'Add a dashboard tile',
+    `Adds one tile below the others on a dashboard (id from list_dashboards). ${TILE_DOC}`,
+    { dashboardId: z.string().describe('Dashboard id from list_dashboards'), tile: tileInput },
+    async (pid, a) => withUrl(pid, await D.addTile(pid, a.dashboardId, a.tile as never)),
+    CREATE,
+  );
+
+  projectTool(
+    'update_dashboard',
+    'Change a dashboard',
+    'Renames a dashboard and/or replaces its whole config (tiles, filters, range); what you leave out stays. `config` replaces all tiles, so start from get_dashboard and keep the tiles you want. To add one tile use add_dashboard_tile.',
+    {
+      dashboardId: z.string().describe('Dashboard id from list_dashboards'),
+      name: z.string().min(1).max(120).optional(),
+      config: z.object({
+        tiles: z.array(tileInput).max(D.MAX_TILES),
+        filters: z.array(eventFilter).max(20).optional(),
+        range: tileRange.optional(),
+      }).optional().describe('Replaces the dashboard\'s config; tiles without a layout are stacked below the others'),
+    },
+    async (pid, a) => withUrl(pid, await D.updateDashboard(pid, a.dashboardId, { name: a.name, config: a.config ? (stackTiles(a.config) as never) : undefined })),
+    LABEL_WRITE,
+  );
+
+  projectTool(
+    'delete_dashboard',
+    'Delete a dashboard',
+    'Removes a dashboard (id from list_dashboards) for all project members. Recorded data stays.',
+    { dashboardId: z.string().describe('Dashboard id from list_dashboards') },
+    async (pid, a) => {
+      await D.deleteDashboard(pid, a.dashboardId);
+      return { deleted: a.dashboardId };
+    },
+    DELETE,
   );
 
   return server;

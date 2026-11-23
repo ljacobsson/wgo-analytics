@@ -21,6 +21,8 @@ import { EventsPage } from '../pages/Events';
 import { TracesPage } from '../pages/Traces';
 import { LogsPage } from '../pages/Logs';
 import { MetricsPage } from '../pages/Metrics';
+import { DashboardPage } from '../dashboards/DashboardPage';
+import { useDashboard } from '../api/hooks';
 
 /**
  * The dashboard as a wall display, at #/kiosk/<token>. No sign-in: the token in the URL authenticates every
@@ -45,8 +47,21 @@ const PAGE: Record<KioskPage, () => React.ReactNode> = {
   traces: () => <TracesPage traceId={null} />,
   logs: () => <LogsPage />,
   metrics: () => <MetricsPage />,
+  dashboard: () => <KioskDashboard />,
 };
-const pageLabel = (p: KioskPage) => PAGES.find((x) => x.id === p)?.label ?? p;
+const pageLabel = (p: KioskPage) => (p === 'dashboard' ? 'Dashboard' : PAGES.find((x) => x.id === p)?.label ?? p);
+
+/** A custom dashboard screen: its id is in the screen's params; members' edits show up within half a minute. */
+function KioskDashboard() {
+  const id = useRoute().params.get('id');
+  return id ? <DashboardPage id={id} readOnly pollMs={30_000} /> : null;
+}
+/** The screen's caption: its own, the dashboard's name, or the page's. */
+function ScreenTitle({ scr, pid }: { scr: { page: KioskPage; params: string; title?: string }; pid: string }) {
+  const id = scr.page === 'dashboard' ? new URLSearchParams(scr.params).get('id') : null;
+  const dash = useDashboard(pid, id ?? '', undefined, !!id && !scr.title);
+  return <>{scr.title || dash.data?.name || pageLabel(scr.page)}</>;
+}
 
 /** Reload only if the dashboard answers: reloading while offline would leave Chromium on its error page for good. */
 async function safeReload(): Promise<boolean> {
@@ -163,7 +178,7 @@ function Screens({ st, offline }: { st: KioskState; offline: boolean }) {
             <header className="flex h-14 shrink-0 items-center gap-4 border-b border-line bg-[color-mix(in_srgb,var(--bg)_70%,transparent)] px-6 backdrop-blur-xl">
               <LogoMark size={28} />
               <div className="min-w-0">
-                <div className="truncate text-[17px] font-semibold leading-tight tracking-tight">{scr.title || pageLabel(scr.page)}</div>
+                <div className="truncate text-[17px] font-semibold leading-tight tracking-tight"><ScreenTitle scr={scr} pid={project.id} /></div>
                 <div className="truncate text-[12px] text-muted">{project.name} · {range.preset === 'custom' ? 'Fixed dates' : range.label}</div>
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-5">

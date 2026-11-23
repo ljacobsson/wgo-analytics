@@ -9,6 +9,7 @@ import { suggestName } from '../lib/naming';
 import { useProject } from '../lib/project';
 import { navigate, pageHref, useRoute } from '../lib/router';
 import { useTime } from '../lib/time';
+import { AddToDashboard } from '../dashboards/AddToDashboard';
 import { FilterBar, FilterChips, useAddFilter } from '../ui/FilterBar';
 import { InfoTip } from '../ui/InfoTip';
 import { Badge, Button, Card, CardHeader, Delta, EmptyState, ErrorState, Segmented, Skeleton, useDebounced, useToast } from '../ui/kit';
@@ -370,6 +371,7 @@ export function GoalFunnelPage({ goalId }: { goalId: string }) {
         </div>
         <div className="flex shrink-0 gap-2">
           {goal && <Button onClick={() => navigate(goalEventsHref(project.id, route.params, goal.filters))}><ListTree size={14} />Show events</Button>}
+          {goal && <AddToDashboard tile={() => ({ viz: 'number', measures: [{ source: 'events', agg: 'session_rate', filters: goal.filters, label: `${goal.name} conversion`, unit: 'percent', better: 'up' }] })} />}
           {goal && !isKiosk() && !editing && <Button onClick={startEditing}><Workflow size={14} />{goal.steps?.length ? 'Edit steps' : 'Define steps'}</Button>}
         </div>
       </div>

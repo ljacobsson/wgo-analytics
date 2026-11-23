@@ -10,7 +10,7 @@ import { conversionRate, fmtRate, goalEventsHref, previousRate } from './Goals';
 import { countryName, flag } from '../lib/geo';
 import { clickLabel, eventTitle, userLabel } from '../lib/events';
 import { LiveCtx, useFirehose, type FeedItem } from '../live/store';
-import { botsParam, filtersParam } from '../lib/filters';
+import { botsParam, currentFilters, filtersParam } from '../lib/filters';
 
 const GeoMap = lazy(() => import('../charts/GeoMap'));
 import { useProject } from '../lib/project';
@@ -27,6 +27,7 @@ import type { AnalyticsEvent, EventsResponse, Totals } from '../api/contract';
 import type { TimeRange } from '../lib/time';
 
 import { FilterBar } from '../ui/FilterBar';
+import { AddToDashboard, withFilters } from '../dashboards/AddToDashboard';
 import { InfoTip } from '../ui/InfoTip';
 import { ExplainDrawer, worthExplaining, type ExplainSpec } from '../ui/ExplainDrawer';
 /** "Why?": opens the explanation of a change; only offered when the change is beyond noise. */
@@ -348,7 +349,7 @@ export function Overview() {
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
       <Card className="xl:col-span-2">
-        <CardHeader title="Events over time" sub={`${range.label} · ${s ? Math.round(s.bucketSeconds / 60) || 1 : '…'} min buckets`} right={totals && <span className="tnum text-[12px] text-muted">{fmtNum(totals.events)} events</span>} />
+        <CardHeader title="Events over time" sub={`${range.label} · ${s ? Math.round(s.bucketSeconds / 60) || 1 : '…'} min buckets`} right={<div className="flex items-center gap-3">{totals && <span className="tnum text-[12px] text-muted">{fmtNum(totals.events)} events</span>}<AddToDashboard label={false} tile={() => ({ viz: 'bars', measures: [withFilters({ source: 'events', agg: 'count', label: 'Events', unit: 'count' }, currentFilters('events'))], groupBy: 'type', limit: 5 })} /></div>} />
         <div className="px-3 pb-3">
           {!chart ? <Skeleton className="h-[280px]" /> : live ? <LiveLatest events={liveEvents} /> : empty ? (
             <EmptyState icon={<Download size={22} />} title="No events in this range" action={<Button variant="primary" onClick={() => navigate(pageHref(project.id, 'settings', route.params))}>Install the snippet</Button>}>Add the snippet to your site and events will show up here within seconds.</EmptyState>

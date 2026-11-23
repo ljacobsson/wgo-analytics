@@ -1,0 +1,38 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; background: #0a0a0f; font-family: "Inter", sans-serif; }
+    #p3-cam { position: absolute; left: 0; top: 0; width: 1300px; height: 950px; transform-origin: 0 0; }
+    #p3-video { position: absolute; left: 0; top: 0; width: 1300px; height: 950px; }
+    #p3-panel { position: absolute; left: 0; top: 0; width: 720px; height: 1080px; background: #0a0a0f; box-shadow: 30px 0 60px rgba(0,0,0,0.45); }
+    .ptext { position: absolute; left: 110px; top: 0; width: 540px; height: 1080px; display: flex; flex-direction: column; justify-content: center; gap: 30px; }
+    .ptitle { font-size: 68px; line-height: 1.08; font-weight: 700; letter-spacing: -0.03em; color: #f0efec; }
+    .ptitle span { display: inline-block; }
+    .psub { font-size: 32px; line-height: 1.4; color: #a3a2b0; }
+  </style>
+  <div id="root" data-composition-id="p3" data-width="1920" data-height="1080">
+    <div id="p3-cam">
+      <video id="p3-video" class="clip" src="assets/ui/replay.mp4" data-start="0" data-duration="6" data-track-index="1" muted playsinline></video>
+    </div>
+    <div id="p3-panel">
+      <div class="ptext">
+        <div id="p3-title" class="ptitle"><span class="w">Watch</span> <span class="w">what</span> <span class="w">visitors</span> <span class="w">did</span></div>
+        <div id="p3-sub" class="psub">No video, so a session costs kilobytes.</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      const FULL = 1920 / 1300;
+      tl.fromTo("#p3-cam", { x: 0, y: 0, scale: FULL }, { x: 750, y: -40, scale: 1.24, duration: 0.7, ease: "power3.inOut" }, 0);
+      tl.fromTo("#p3-panel", { x: -860 }, { x: 0, duration: 0.7, ease: "power3.inOut" }, 0);
+      tl.fromTo("#p3-title .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.07, ease: "power2.out" }, 0.7);
+      tl.fromTo("#p3-sub", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power2.out" }, 1.4);
+      tl.to("#p3-cam", { y: -70, duration: 4.1, ease: "sine.inOut" }, 0.8);
+      tl.to(["#p3-title .w", "#p3-sub"], { opacity: 0, filter: "blur(6px)", duration: 0.2, stagger: 0.02, ease: "power2.in" }, 4.9);
+      tl.to("#p3-cam", { x: 0, y: 0, scale: FULL, duration: 0.7, ease: "power3.inOut" }, 5.2);
+      tl.to("#p3-panel", { x: -860, duration: 0.7, ease: "power3.inOut" }, 5.2);
+      window.__timelines["p3"] = tl;
+    })();
+  </script>
+</template>

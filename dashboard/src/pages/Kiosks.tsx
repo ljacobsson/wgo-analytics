@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ArrowDown, ArrowUp, ExternalLink, KeyRound, Monitor, Plus, RefreshCw, ShieldCheck, Terminal, Trash2, Tv, X } from 'lucide-react';
 import type { Filter, Kiosk, KioskConfig, KioskPage, KioskScreen } from '../api/contract';
 import { getConfig } from '../api/config';
-import { useCreateKiosk, useDeleteKiosk, useKiosks, useRotateKiosk, useUpdateKiosk } from '../api/hooks';
+import { useCreateKiosk, useDashboards, useDeleteKiosk, useKiosks, useRotateKiosk, useUpdateKiosk } from '../api/hooks';
 import { cn, relTime } from '../lib/format';
 import { describeFilter, FILTER_PARAM } from '../lib/filters';
 import { KIOSK_PAGES, kioskSetupCommand, kioskUrl, normParams } from '../lib/kiosk';
@@ -18,7 +18,7 @@ const ROTATE = [10, 15, 20, 30, 45, 60, 120, 300, 600];
 const REFRESH = [15, 30, 60, 120, 300, 600];
 const ZOOM = ['1', '1.25', '1.5', '2', '2.5', '3'];
 const secs = (s: number) => (s < 60 ? `${s} s` : `${s / 60} min`);
-export const kioskPageLabel = (p: KioskPage) => PAGES.find((x) => x.id === p)?.label ?? p;
+export const kioskPageLabel = (p: KioskPage) => (p === 'dashboard' ? 'Custom dashboard' : PAGES.find((x) => x.id === p)?.label ?? p);
 // params that carry over when a screen switches page; anything else is specific to the old page
 const SHARED_PARAMS = ['range', 'from', 'to', 'f', 'lf', 'tf'];
 
@@ -210,9 +210,17 @@ function ScreenRow({ n, s, onChange, onUp, onDown, onRemove }: {
   const setParams = (p: URLSearchParams) => onChange({ ...s, params: normParams(p.toString()) });
   const range = params.get('range') ?? '24h';
   const setRange = (r: string) => { const p = new URLSearchParams(params); p.set('range', r); p.delete('from'); p.delete('to'); setParams(p); };
+  const { project } = useProject();
+  const dashboards = useDashboards(project.id, s.page === 'dashboard');
+  const setDashboard = (id: string) => { const p = new URLSearchParams(params); p.set('id', id); setParams(p); };
   const setPage = (page: KioskPage) => {
     const p = new URLSearchParams();
     for (const k of SHARED_PARAMS) if (params.get(k)) p.set(k, params.get(k)!);
+    if (page === 'dashboard') {
+      // the first dashboard to start with; picked from the list next to it
+      const first = dashboards.data?.[0]?.id;
+      if (first) p.set('id', first);
+    }
     onChange({ page, params: normParams(p.toString()), ...(s.title ? { title: s.title } : {}) });
   };
   const filters = (Object.values(FILTER_PARAM)).flatMap((key) => parseFilters(params.get(key)).map((f, i) => ({ key, i, f })));
@@ -222,7 +230,7 @@ function ScreenRow({ n, s, onChange, onUp, onDown, onRemove }: {
     if (rest.length) p.set(key, JSON.stringify(rest)); else p.delete(key);
     setParams(p);
   };
-  const options = [...params.entries()].filter(([k]) => !SHARED_PARAMS.includes(k));
+  const options = [...params.entries()].filter(([k]) => !SHARED_PARAMS.includes(k) && !(s.page === 'dashboard' && k === 'id'));
   const removeOption = (k: string) => { const p = new URLSearchParams(params); p.delete(k); setParams(p); };
   const chip = 'inline-flex max-w-[360px] items-center gap-1 rounded-full border border-line bg-[var(--hl)] py-0.5 pl-2.5 pr-1 text-[11.5px]';
 
@@ -233,6 +241,11 @@ function ScreenRow({ n, s, onChange, onUp, onDown, onRemove }: {
         <select className="field !w-[150px]" value={s.page} onChange={(e) => setPage(e.target.value as KioskPage)} aria-label="Page">
           {KIOSK_PAGES.map((p) => <option key={p} value={p}>{kioskPageLabel(p)}</option>)}
         </select>
+        {s.page === 'dashboard' && (
+          <select className="field !w-[180px]" value={params.get('id') ?? ''} onChange={(e) => setDashboard(e.target.value)} aria-label="Dashboard">
+            {!params.get('id') && <option value="">{dashboards.data?.length === 0 ? 'No dashboards yet' : 'Pick a dashboard…'}</option>}
+            {dashboards.data?.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>)}
         <select className="field !w-[140px]" value={range} onChange={(e) => setRange(e.target.value)} aria-label="Time range">
           {range === 'custom' && <option value="custom">Fixed dates</option>}
           {PRESETS.map((p) => <option key={p} value={p}>Last {p}</option>)}

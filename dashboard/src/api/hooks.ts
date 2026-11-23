@@ -8,13 +8,14 @@ import type {
   ReleasesResponse, Explanation, ExplainMetric, Filter, UploadKey, FrustrationRow, HeatmapResponse,
   UptimeCheck, UptimeCheckInput, UptimeResults, UptimeRunResult, CostsResponse, TriggerPreview, ErrorSuppression, ErrorSuppressionInput, Budget, BudgetInput,
   RecordingsResponse, RecordingResponse, RecordingSettings, RecordingSettingsResponse, RecordingFilters, ProjectSite,
+  Dashboard, DashboardInput, DashboardSummary, DashboardTile, MeasureNames, QueryResult, QuerySpec,
 } from './contract';
 import { previousWindow, type TimeRange } from '../lib/time';
-import { botsParam, filtersParam } from '../lib/filters';
+import { botsParam, filtersParam, type FieldScope } from '../lib/filters';
 
 const STALE = 20_000;
 const base = (pid: string) => `/api/projects/${pid}`;
-const rp = (r: TimeRange) => ({ from: r.from, to: r.to });
+const rp = (r: Pick<TimeRange, 'from' | 'to'>) => ({ from: r.from, to: r.to });
 
 export const keys = {
   me: ['me'] as const,
@@ -236,16 +237,17 @@ export function useRevokeDevice() {
   });
 }
 
-export const useFields = (pid: string, r: TimeRange, scope: FilterScope, enabled = true) =>
+/** `metric` narrows the metrics scope to one OpenTelemetry metric's attributes. */
+export const useFields = (pid: string, r: TimeRange, scope: FieldScope, enabled = true, metric?: string) =>
   useQuery({
-    queryKey: ['fields', pid, scope, r.from, r.to],
-    queryFn: ({ signal }) => api<FieldsResponse>(`${base(pid)}/fields`, { params: { ...rp(r), scope }, signal }),
+    queryKey: ['fields', pid, scope, metric, r.from, r.to],
+    queryFn: ({ signal }) => api<FieldsResponse>(`${base(pid)}/fields`, { params: { ...rp(r), scope, metric }, signal }),
     staleTime: 5 * 60_000, enabled,
   });
-export const useFieldValues = (pid: string, r: TimeRange, scope: FilterScope, field: string, q: string, enabled = true) =>
+export const useFieldValues = (pid: string, r: TimeRange, scope: FieldScope, field: string, q: string, enabled = true, metric?: string) =>
   useQuery({
-    queryKey: ['field-values', pid, scope, field, q, r.from, r.to],
-    queryFn: ({ signal }) => api<FieldValuesResponse>(`${base(pid)}/fields/values`, { params: { ...rp(r), scope, field, q: q || undefined }, signal }),
+    queryKey: ['field-values', pid, scope, metric, field, q, r.from, r.to],
+    queryFn: ({ signal }) => api<FieldValuesResponse>(`${base(pid)}/fields/values`, { params: { ...rp(r), scope, field, metric, q: q || undefined }, signal }),
     staleTime: 60_000, placeholderData: keepPreviousData, enabled: enabled && !!field,
   });
 
@@ -556,8 +558,9 @@ export function useSaveRecordingSettings(pid: string) {
 // ---------- uptime checks ----------
 const uptimeKey = (pid: string) => ['uptime', pid] as const;
 
-export const useUptime = (pid: string, r: TimeRange) =>
+export const useUptime = (pid: string, r: TimeRange, enabled = true) =>
   useQuery({
+    enabled,
     queryKey: [...uptimeKey(pid), r.from, r.to] as const,
     queryFn: ({ signal }) => api<UptimeCheck[]>(`${base(pid)}/uptime`, { params: rp(r), signal }),
     staleTime: 15_000, placeholderData: keepPreviousData, refetchInterval: 60_000,
@@ -648,3 +651,66 @@ export function useSiteImage(pid: string, day: string | null) {
 // ---------- what the install costs ----------
 export const useCosts = (pid: string) =>
   useQuery({ queryKey: ['costs', pid] as const, queryFn: () => api<CostsResponse>('/api/costs', { params: { pid } }), staleTime: 5 * 60_000, retry: false });
+
+// ---------- custom dashboards ----------
+const dashboardsKey = (pid: string) => ['dashboards', pid] as const;
+const dashboardKey = (pid: string, id: string) => ['dashboard', pid, id] as const;
+export const useDashboards = (pid: string, enabled = true) =>
+  useQuery({ queryKey: dashboardsKey(pid), queryFn: () => api<DashboardSummary[]>(`${base(pid)}/dashboards`), staleTime: 30_000, enabled });
+/** A kiosk screen polls it, so a member's edits show up on the wall. */
+export const useDashboard = (pid: string, id: string, poll?: number, enabled = true) =>
+  useQuery({ queryKey: dashboardKey(pid, id), queryFn: () => api<Dashboard>(`${base(pid)}/dashboards/${id}`), staleTime: 30_000, refetchInterval: poll, enabled: enabled && !!id });
+export function useCreateDashboard(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DashboardInput) => api<Dashboard>(`${base(pid)}/dashboards`, { method: 'POST', body: input }),
+    onSuccess: (d) => qc.setQueryData(dashboardKey(pid, d.id), d),
+    onSettled: () => qc.invalidateQueries({ queryKey: dashboardsKey(pid) }),
+  });
+}
+export function useUpdateDashboard(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Partial<DashboardInput> }) => api<Dashboard>(`${base(pid)}/dashboards/${id}`, { method: 'PATCH', body: input }),
+    onSuccess: (d) => qc.setQueryData(dashboardKey(pid, d.id), d),
+    onSettled: () => qc.invalidateQueries({ queryKey: dashboardsKey(pid) }),
+  });
+}
+export function useDuplicateDashboard(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<Dashboard>(`${base(pid)}/dashboards/${id}/duplicate`, { method: 'POST' }),
+    onSuccess: (d) => qc.setQueryData(dashboardKey(pid, d.id), d),
+    onSettled: () => qc.invalidateQueries({ queryKey: dashboardsKey(pid) }),
+  });
+}
+export function useDeleteDashboard(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>(`${base(pid)}/dashboards/${id}`, { method: 'DELETE' }),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: dashboardsKey(pid) });
+      qc.setQueryData<DashboardSummary[]>(dashboardsKey(pid), (cur) => cur?.filter((d) => d.id !== id));
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: dashboardsKey(pid) }),
+  });
+}
+/** Add one tile below the others ("Add to dashboard"). */
+export function useAddTile(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, tile }: { id: string; tile: Partial<DashboardTile> }) => api<Dashboard>(`${base(pid)}/dashboards/${id}/tiles`, { method: 'POST', body: tile }),
+    onSuccess: (d) => qc.setQueryData(dashboardKey(pid, d.id), d),
+    onSettled: () => qc.invalidateQueries({ queryKey: dashboardsKey(pid) }),
+  });
+}
+/** Names for the measure picker: tracked clicks, custom events and OpenTelemetry metrics seen in the last 7 days. */
+export const useMeasureNames = (pid: string) =>
+  useQuery({ queryKey: ['measures', pid], queryFn: () => api<MeasureNames>(`${base(pid)}/measures`), staleTime: 5 * 60_000 });
+/** One generic query (a dashboard tile). `filters` are the dashboard-wide events filters. */
+export const useQueryResult = (pid: string, r: Pick<TimeRange, 'from' | 'to'>, spec: QuerySpec | null, filters: string | undefined, bots: string | undefined, enabled = true) =>
+  useQuery({
+    queryKey: ['query', pid, r.from, r.to, spec, filters, bots],
+    queryFn: ({ signal }) => api<QueryResult>(`${base(pid)}/query`, { params: { ...rp(r), q: JSON.stringify(spec), filters, bots }, signal }),
+    staleTime: STALE, placeholderData: keepPreviousData, enabled: enabled && !!spec,
+  });

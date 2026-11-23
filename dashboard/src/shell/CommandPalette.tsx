@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, Clock, FolderKanban, LayoutGrid, Moon, LogOut, RefreshCw, Plus, Bookmark } from 'lucide-react';
-import { useViews } from '../api/hooks';
+import { useDashboards, useViews } from '../api/hooks';
 import { viewHref } from '../ui/FilterBar';
 import { PAGES, useProject } from '../lib/project';
 import { navigate, pageHref, useRoute, useSetParams } from '../lib/router';
@@ -20,6 +20,7 @@ export function CommandPalette({ open, onClose, toggleTheme }: { open: boolean; 
   const setParams = useSetParams();
   const { setAuto, auto, refresh } = useTime();
   const views = useViews(project.id, open);
+  const dashboards = useDashboards(project.id, open);
   const [q, setQ] = useState('');
   const [idx, setIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -31,6 +32,7 @@ export function CommandPalette({ open, onClose, toggleTheme }: { open: boolean; 
     { id: 'p-kiosks', label: 'Kiosks: show the dashboard on a TV', group: 'Pages', icon: <PageIcon id="kiosks" size={15} />, run: () => navigate(pageHref(project.id, 'kiosks', route.params)) },
     { id: 'p-widget', label: 'Android widget: download & connect', group: 'Pages', icon: <PageIcon id="widget" size={15} />, run: () => navigate(pageHref(project.id, 'widget', route.params)) },
     { id: 'p-mcp', label: 'AI assistants: connect Claude, VS Code or Cursor over MCP', group: 'Pages', icon: <PageIcon id="mcp" size={15} />, run: () => navigate(pageHref(project.id, 'mcp', route.params)) },
+    ...(dashboards.data ?? []).map((d) => ({ id: 'd-' + d.id, label: `Open dashboard: ${d.name}`, group: 'Dashboards', icon: <PageIcon id="dashboards" size={15} />, run: () => navigate(pageHref(project.id, `dashboards/${d.id}`, route.params)) })),
     ...(views.data ?? []).map((v) => ({ id: 'v-' + v.id, label: `Open view: ${v.name} · ${PAGES.find((p) => p.id === v.page)?.label ?? v.page}`, group: 'Saved views', icon: <Bookmark size={15} />, run: () => navigate(viewHref(project.id, v, route.params)) })),
     ...PRESETS.map((r) => ({ id: 'r-' + r, label: `Time range: last ${r}`, group: 'Time range', icon: <Clock size={15} />, run: () => setParams({ range: r === '24h' ? null : r, from: null, to: null }) })),
     { id: 'all-projects', label: 'All projects', group: 'Projects', icon: <LayoutGrid size={15} />, run: () => navigate(projectsHref(route.params)) },
@@ -40,7 +42,7 @@ export function CommandPalette({ open, onClose, toggleTheme }: { open: boolean; 
     { id: 'auto', label: auto ? 'Turn auto-refresh off' : 'Turn auto-refresh on', group: 'Actions', icon: <RefreshCw size={15} />, run: () => setAuto(!auto) },
     { id: 'theme', label: 'Toggle light / dark theme', group: 'Actions', icon: <Moon size={15} />, run: toggleTheme },
     { id: 'out', label: 'Sign out', group: 'Actions', icon: <LogOut size={15} />, run: () => void signOut() },
-  ], [project.id, projects, route.params, auto, views.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  ], [project.id, projects, route.params, auto, views.data, dashboards.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const list = useMemo(() => {
     const terms = q.toLowerCase().split(/\s+/).filter(Boolean);

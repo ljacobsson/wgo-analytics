@@ -457,4 +457,15 @@ export const SCHEMA_STATEMENTS: string[] = [
    )`,
   `CREATE INDEX ASYNC IF NOT EXISTS slack_workspaces_project_idx ON slack_workspaces (project_id)`,
   `CREATE INDEX ASYNC IF NOT EXISTS slack_workspaces_owner_idx ON slack_workspaces (owner_email)`,
+  // custom dashboards (lib/dashboards.ts): a grid of tiles, each a generic query (lib/query.ts), as one jsonb config
+  `CREATE TABLE IF NOT EXISTS dashboards (
+     project_id uuid NOT NULL,
+     id uuid NOT NULL,
+     name text NOT NULL,
+     config jsonb NOT NULL,
+     created_by text NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now(),
+     updated_at timestamptz NOT NULL DEFAULT now(),
+     PRIMARY KEY (project_id, id)
+   )`,
 ];

@@ -4,6 +4,7 @@ import * as C from './cohorts';
 import * as G from './goals';
 import * as REL from './releases';
 import * as EX from './explain';
+import * as QY from './query';
 
 type Q = Record<string, string | undefined>;
 export type ProjectRoute = (pid: string, q: Q, rest: string[]) => Promise<unknown>;
@@ -34,4 +35,6 @@ export const READ_ROUTES: Record<string, ProjectRoute> = {
   releases: (pid, q) => REL.releases(pid, q),
   explain: (pid, q) => EX.explain(pid, q),
   metrics: (pid, q, rest) => (rest[0] === 'series' ? A.metricSeries(pid, q) : A.metrics(pid, q)),
+  query: (pid, q) => QY.query(pid, q),
+  measures: (pid) => QY.measureNames(pid),
 };

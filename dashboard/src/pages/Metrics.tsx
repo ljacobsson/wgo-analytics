@@ -8,6 +8,8 @@ import { useRoute, useSetParams } from '../lib/router';
 import { Card, CardHeader, EmptyState, ErrorState, Segmented, Skeleton } from '../ui/kit';
 import { TimeChart } from '../charts/TimeChart';
 import { cn, fmtNum, relTime } from '../lib/format';
+import { AddToDashboard } from '../dashboards/AddToDashboard';
+import { otelUnit } from '../dashboards/measures';
 
 const AGGS = ['avg', 'sum', 'min', 'max', 'p95'] as const;
 const SERVICE_KEY = 'service.name'; // groupBy value the API reads as "split by reporting service"
@@ -95,6 +97,11 @@ export function MetricsPage() {
               <option value="">No split</option>{groupOptions.map((o) => <option key={o.value} value={o.value}>Split by {o.label}</option>)}
             </select>
             <Segmented value={agg} onChange={(v) => set({ agg: v === 'avg' ? null : v })} options={AGGS.map((a) => ({ value: a, label: a }))} />
+            {sel && <AddToDashboard tile={() => ({
+              viz: 'line',
+              measures: [{ source: 'metrics', agg, metric: sel, label: `${sel} ${agg}`, unit: otelUnit(info?.unit ?? null), ...(service ? { filters: [{ field: 'service', op: 'eq', value: service }] } : {}) }],
+              ...(groupBy ? { groupBy: groupBy === SERVICE_KEY ? 'service' : `attributes.${groupBy}`, limit: MAX_SHOWN } : {}),
+            })} />}
           </div>} />
         {info && <p className="px-4 text-[12.5px] text-muted">{info.description ? info.description + ' ' : ''}<span className="text-faint">{explain(info.type, agg)}{!service && reporters.length > 1 && !groupBy ? ' Points from all services are combined; split by service to compare them.' : ''}</span></p>}
         <div className="p-3">

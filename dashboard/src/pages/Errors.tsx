@@ -1,6 +1,6 @@
 import { Bug, EyeOff, ExternalLink } from 'lucide-react';
 import { useErrors, useEvents, useSuppressions } from '../api/hooks';
-import type { ErrorGroup, ErrorSuppressionInput, StackFrame } from '../api/contract';
+import type { Filter, ErrorGroup, ErrorSuppressionInput, StackFrame } from '../api/contract';
 import { SuppressDialog, SuppressionRules, suggestRule } from './ErrorSuppressions';
 import { useProject } from '../lib/project';
 import { useTime } from '../lib/time';
@@ -14,6 +14,9 @@ import { UserCell } from '../ui/EventColumns';
 import { eventTitle } from '../lib/events';
 
 import { FilterBar } from '../ui/FilterBar';
+import { AddToDashboard, withFilters, type TileDraft } from '../dashboards/AddToDashboard';
+import { currentFilters } from '../lib/filters';
+import { BUILTIN } from '../dashboards/measures';
 import { RowActions } from '../ui/RowActions';
 import { errorGroupConditions } from '../lib/rowFilters';
 import { SourcemapsMissing } from './SourcemapsMissing';
@@ -92,6 +95,7 @@ function ErrorDrawer({ g, onClose, onSuppress }: { g: ErrorGroup | null; onClose
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Events', fmtNum(g.count)], ['Sessions', fmtNum(g.sessions)], ['First seen', relTime(g.firstSeen)], ['Last seen', relTime(g.lastSeen)]].map(([k, v]) => (
             <div key={k} className="rounded-xl border border-line bg-[var(--hl)] p-3"><div className="text-[11px] text-faint">{k}</div><div className="mt-0.5 text-[16px] font-semibold tnum">{v}</div></div>))}</div>
           <StackSection g={g} />
+          <div className="flex justify-end"><AddToDashboard tile={() => errorsTile(currentFilters('events'), g)} /></div>
           <Dl rows={[['Sample URL', g.sampleUrl && <a className="inline-flex items-center gap-1 font-mono text-[12px] text-accent hover:underline" href={g.sampleUrl} target="_blank" rel="noreferrer">{g.sampleUrl}<ExternalLink size={11} /></a>], ['Source', g.source && <Mono>{g.source}</Mono>]]} />
           <div><h4 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-faint">Recent occurrences</h4>
             {occ.isPending ? <div className="space-y-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-9" />)}</div> : (
@@ -102,6 +106,14 @@ function ErrorDrawer({ g, onClose, onSuppress }: { g: ErrorGroup | null; onClose
       )}
     </Drawer>
   );
+}
+
+/** The built-in JS errors measure, narrowed by the page's filters (and one error group's fingerprint, if given). */
+function errorsTile(pageFilters: Filter[], g?: ErrorGroup): TileDraft {
+  const m = BUILTIN.find((d) => d.id === 'errors')!.measure;
+  const filters = [...(m.filters ?? []), ...pageFilters, ...(g ? [{ field: 'fingerprint', op: 'eq' as const, value: g.fingerprint }] : [])];
+  const label = g ? (g.message.length > 80 ? `${g.message.slice(0, 79)}…` : g.message) : 'JS errors';
+  return { viz: 'bars', measures: [withFilters({ ...m, label, unit: 'count', better: 'down' }, filters)] };
 }
 
 export function ErrorsPage() {
@@ -119,6 +131,7 @@ export function ErrorsPage() {
     <>
       <FilterBar scope="events" className="mb-3" />
       <div className="mb-3 flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-[12.5px] text-muted">
+        <AddToDashboard tile={() => errorsTile(currentFilters('events'))} />
         {hidden > 0 && <span>{hidden === 1 ? '1 suppressed group' : `${fmtNum(hidden)} suppressed groups`} {showSuppressed ? 'shown' : 'hidden'} ·{' '}
           <button className="cursor-pointer text-accent hover:underline" onClick={() => set({ suppressed: showSuppressed ? null : '1' }, false)}>{showSuppressed ? 'Hide' : 'Show'}</button></span>}
         <button className="inline-flex cursor-pointer items-center gap-1.5 hover:text-fg" onClick={() => setRulesOpen(true)}><EyeOff size={13} />Suppressed errors{rules.data?.length ? ` (${rules.data.length})` : ''}</button>

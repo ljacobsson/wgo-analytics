@@ -7,6 +7,7 @@ export const useProject = () => useContext(ProjectCtx);
 export interface PageDef { id: string; label: string; group: 'Product' | 'Observability'; key: string; icon: string }
 export const PAGES: PageDef[] = [
   { id: 'overview', label: 'Overview', group: 'Product', key: 'o', icon: 'overview' },
+  { id: 'dashboards', label: 'Dashboards', group: 'Product', key: 'h', icon: 'dashboards' },
   { id: 'live', label: 'Live', group: 'Product', key: 'l', icon: 'live' },
   { id: 'clicks', label: 'Clicks', group: 'Product', key: 'c', icon: 'clicks' },
   { id: 'errors', label: 'Errors', group: 'Product', key: 'e', icon: 'errors' },

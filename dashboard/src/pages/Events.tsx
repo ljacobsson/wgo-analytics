@@ -9,10 +9,11 @@ import { useTime } from '../lib/time';
 import { navigate, pageHref, useRoute, useSetParams } from '../lib/router';
 import { Badge, Card, EmptyState, ErrorState, Mono, Skeleton, TypeBadge, useDebounced } from '../ui/kit';
 import { FilterBar } from '../ui/FilterBar';
+import { AddToDashboard, withFilters } from '../dashboards/AddToDashboard';
 import { AttributeTable, eventAttributeRows } from './EventAttributes';
 import { useSentinel } from '../ui/useSentinel';
 import { ColumnsMenu, EventCell, eventRowMinWidth, useEventColumns, userFilter, type EventColumn } from '../ui/EventColumns';
-import { filtersParam, mergeFilters, useFilters } from '../lib/filters';
+import { currentFilters, filtersParam, mergeFilters, useFilters } from '../lib/filters';
 import { matches, matchesEventSearch } from '../lib/filterMatch';
 import { FEED_CAP, LiveCtx, useFirehose } from '../live/store';
 import { RowsSkeleton } from './common';
@@ -152,7 +153,7 @@ export function EventsPage() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="-mx-3 flex gap-1.5 overflow-x-auto px-3 sm:mx-0 sm:flex-wrap sm:px-0">{TYPES.map((t) => (
           <button key={t || 'all'} onClick={() => set({ type: t || null })} className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-[12px] font-medium transition-all cursor-pointer ${type === t ? 'border-accent/50 bg-accent/15 text-fg' : 'border-line text-muted hover:text-fg hover:border-[var(--line-strong)]'}`}>{t || 'All'}</button>))}</div>
-        <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto"><ColumnsMenu value={cols} onChange={setCols} defaults={DEFAULT_COLUMNS} />
+        <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto"><AddToDashboard label={false} tile={() => ({ viz: 'bars', measures: [withFilters({ source: 'events', agg: 'count', label: type ? `${type} events` : 'Events', unit: 'count' }, [...currentFilters('events'), ...(type ? [{ field: 'type', op: 'eq' as const, value: type }] : [])])] })} /><ColumnsMenu value={cols} onChange={setCols} defaults={DEFAULT_COLUMNS} />
           <div className="relative min-w-0 flex-1 sm:w-72 sm:flex-none"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Search path, selector, message…" value={qIn} onChange={(e) => { setQIn(e.target.value); }} onBlur={() => set({ q: qIn || null })} /></div></div>
       </div>
       {sessionId && <div className="flex flex-wrap items-center gap-2 text-[13px]"><Badge tone="accent" className="!py-1 !text-[12px]">Session timeline <Mono>{shortId(sessionId, 12)}</Mono><button onClick={() => set({ sessionId: null })} className="cursor-pointer"><X size={12} /></button></Badge><span className="text-muted">Showing every event from this session, newest first.</span></div>}

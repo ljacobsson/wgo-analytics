@@ -3,7 +3,7 @@ import { BellPlus, Bookmark, BookmarkCheck, Filter as FilterIcon, Flame, History
 import type { Filter, FilterOp, FilterScope, SavedView } from '../api/contract';
 import { useDeleteView, useFields, useFieldValues, useSaveView, useViews } from '../api/hooks';
 import { cn, fmtNum } from '../lib/format';
-import { describeFilter, fieldLabel, filterSetKey, needsValue, OP_LABEL, OPS, pageFilters, sameView, useFilters, valueHint, viewParamsOf } from '../lib/filters';
+import { describeFilter, fieldLabel, filterSetKey, needsValue, OP_LABEL, OPS, pageFilters, sameView, useFilters, valueHint, viewParamsOf, type FieldScope } from '../lib/filters';
 import { forgetFilterUse, recordFilterUse, useFilterHistory, type FilterUse } from '../lib/filterHistory';
 import { suggestName, suggestViewName } from '../lib/naming';
 import { PAGES, useProject } from '../lib/project';
@@ -15,17 +15,17 @@ import { Popover } from './Popover';
 import { newTriggerHref } from './RowActions';
 
 /** Prefixes that address JSON properties/attributes, per scope (typed paths are accepted as-is). */
-const JSON_PREFIX: Record<FilterScope, string[]> = { events: ['props.'], logs: ['attributes.', 'resource.'], spans: ['attributes.', 'resource.'] };
+const JSON_PREFIX: Record<FieldScope, string[]> = { events: ['props.'], logs: ['attributes.', 'resource.'], spans: ['attributes.', 'resource.'], metrics: ['attributes.'], checks: [] };
 
-function FilterEditor({ scope, initial, onSave, onCancel }: { scope: FilterScope; initial?: Filter; onSave: (f: Filter) => void; onCancel: () => void }) {
+function FilterEditor({ scope, metric, initial, onSave, onCancel }: { scope: FieldScope; metric?: string; initial?: Filter; onSave: (f: Filter) => void; onCancel: () => void }) {
   const { project } = useProject(); const { range } = useTime();
   const [field, setField] = useState(initial?.field ?? '');
   const [fieldQ, setFieldQ] = useState('');
   const [op, setOp] = useState<FilterOp>(initial?.op ?? 'eq');
   const [value, setValue] = useState(initial?.value ?? '');
-  const fields = useFields(project.id, range, scope);
+  const fields = useFields(project.id, range, scope, true, metric);
   const dq = useDebounced(value, 200);
-  const values = useFieldValues(project.id, range, scope, field, dq, needsValue(op));
+  const values = useFieldValues(project.id, range, scope, field, dq, needsValue(op), metric);
   const valueRef = useRef<HTMLInputElement>(null);
 
   const options = useMemo(() => {
@@ -45,7 +45,7 @@ function FilterEditor({ scope, initial, onSave, onCancel }: { scope: FilterScope
   if (!field) {
     return (
       <div className="w-[360px]">
-        <input autoFocus className="field" placeholder={`Search fields, or type a path like ${JSON_PREFIX[scope][0]}plan`} value={fieldQ}
+        <input autoFocus className="field" placeholder={JSON_PREFIX[scope].length ? `Search fields, or type a path like ${JSON_PREFIX[scope][0]}plan` : 'Search fields'} value={fieldQ}
           onChange={(e) => setFieldQ(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && typedPath) pick(typedPath); if (e.key === 'Escape') onCancel(); }} />
         <div className="mt-2 max-h-[320px] overflow-y-auto">
@@ -61,7 +61,7 @@ function FilterEditor({ scope, initial, onSave, onCancel }: { scope: FilterScope
               <span className="truncate font-mono text-[12px]">{f.field}</span><span className="tnum text-[11px] text-faint">{fmtNum(f.count ?? 0)}</span>
             </button>))}
           {fields.isPending && <div className="px-2.5 py-2 text-[12px] text-faint">Loading fields…</div>}
-          {!fields.isPending && !typedPath && !options.builtin.length && !options.discovered.length && <div className="px-2.5 py-2 text-[12px] text-faint">No matching fields. Type a path like <span className="font-mono">{JSON_PREFIX[scope][0]}name</span>.</div>}
+          {!fields.isPending && !typedPath && !options.builtin.length && !options.discovered.length && <div className="px-2.5 py-2 text-[12px] text-faint">No matching fields.{JSON_PREFIX[scope].length > 0 && <> Type a path like <span className="font-mono">{JSON_PREFIX[scope][0]}name</span>.</>}</div>}
         </div>
       </div>
     );
@@ -98,8 +98,8 @@ function FilterEditor({ scope, initial, onSave, onCancel }: { scope: FilterScope
 }
 
 /** Editable filter chips (controlled). Used by the page filter bar and the trigger editor. */
-export function FilterChips({ scope, value: filters, onChange: setFilters, className, children }: {
-  scope: FilterScope; value: Filter[]; onChange: (f: Filter[]) => void; className?: string; children?: React.ReactNode;
+export function FilterChips({ scope, metric, value: filters, onChange: setFilters, className, children }: {
+  scope: FieldScope; metric?: string; value: Filter[]; onChange: (f: Filter[]) => void; className?: string; children?: React.ReactNode;
 }) {
   const [editing, setEditing] = useState<number | 'new' | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -133,7 +133,7 @@ export function FilterChips({ scope, value: filters, onChange: setFilters, class
       {children}
       {editing !== null && (
         <div className="anim-pop absolute left-0 top-full z-40 mt-2 rounded-xl border border-line bg-[var(--raised)] p-3 shadow-2xl">
-          <FilterEditor scope={scope} initial={typeof editing === 'number' ? filters[editing] : undefined} onSave={save} onCancel={() => setEditing(null)} />
+          <FilterEditor scope={scope} metric={metric} initial={typeof editing === 'number' ? filters[editing] : undefined} onSave={save} onCancel={() => setEditing(null)} />
         </div>)}
     </div>
   );

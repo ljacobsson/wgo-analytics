@@ -1,0 +1,92 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; background: #f6f6f8; font-family: "Inter", sans-serif; color: #0e0e14; }
+    #g-cam { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+    .g-title { position: absolute; left: 100px; top: 0; width: 440px; height: 1080px; display: flex; align-items: center; font-size: 66px; line-height: 1.08; font-weight: 800; letter-spacing: -0.035em; }
+    .g-title p { margin: 0; }
+    .g-title span { display: inline-block; }
+    #g-t2 .w { opacity: 0; }
+    .box { position: absolute; width: 400px; height: 225px; border-radius: 18px; overflow: hidden; background: #0a0a0f; border: 1px solid #e3e3ea; box-shadow: 0 16px 36px rgba(14,14,20,0.10); }
+    .box img { position: absolute; left: 0; top: 0; width: 400px; }
+    .box img.full { height: 225px; }
+    .box img.out { opacity: 0; }
+    .label { position: absolute; font-size: 30px; font-weight: 700; letter-spacing: -0.015em; white-space: nowrap; }
+    #g-b1, #g-l1, #g-b4, #g-l4, #g-b7, #g-l7 { left: 600px; }
+    #g-b2, #g-l2, #g-b5, #g-l5, #g-b8, #g-l8 { left: 1032px; }
+    #g-b3, #g-l3, #g-b6, #g-l6, #g-b9, #g-l9 { left: 1464px; }
+    #g-b1, #g-b2, #g-b3 { top: 84px; }  #g-l1, #g-l2, #g-l3 { top: 322px; }
+    #g-b4, #g-b5, #g-b6 { top: 396px; } #g-l4, #g-l5, #g-l6 { top: 634px; }
+    #g-b7, #g-b8, #g-b9 { top: 708px; } #g-l7, #g-l8, #g-l9 { top: 946px; }
+  </style>
+  <div id="root" data-composition-id="grid" data-width="1920" data-height="1080">
+    <div id="g-cam">
+      <div id="g-t1" class="g-title" data-layout-allow-overlap><p><span class="w">See</span> <span class="w">what's</span> <span class="w">going</span> <span class="w">on</span> <span class="w">in</span> <span class="w">your</span> <span class="w">web</span> <span class="w">app</span></p></div>
+      <div id="g-t2" class="g-title" data-layout-allow-overlap><p><span class="w">All</span> <span class="w">in</span> <span class="w">your</span> <span class="w">own</span> <span class="w">AWS</span> <span class="w">account</span></p></div>
+
+      <div id="g-b1" class="box" data-layout-allow-overflow><img class="in" src="assets/ui/overview.png" alt="Overview" /><img class="out" src="assets/ui/overview.png" alt="" /></div>
+      <div id="g-b2" class="box" data-layout-allow-overflow><img class="in" src="assets/covers/p2-in.jpg" alt="Live map" /><img class="out" src="assets/covers/p2-out.jpg" alt="" /></div>
+      <div id="g-b3" class="box" data-layout-allow-overflow><img class="in full" src="assets/covers/p3-in.png" alt="Session replay" /><img class="out full" src="assets/covers/p3-out.png" alt="" /></div>
+      <div id="g-b4" class="box" data-layout-allow-overflow><img class="in" src="assets/ui/funnel.png" alt="Goal funnel" /><img class="out" src="assets/ui/funnel.png" alt="" /></div>
+      <div id="g-b5" class="box" data-layout-allow-overflow><img class="in" src="assets/ui/why.png" alt="Why? drawer" /><img class="out" src="assets/ui/why.png" alt="" /></div>
+      <div id="g-b6" class="box" data-layout-allow-overflow><img class="in" src="assets/ui/trace.png" alt="Trace waterfall" /><img class="out" src="assets/ui/trace.png" alt="" /></div>
+      <div id="g-b7" class="box" data-layout-allow-overflow><img class="in full" src="assets/covers/p7-in.png" alt="Claude Code with WGO over MCP" /><img class="out full" src="assets/covers/p7-out.png" alt="" /></div>
+      <div id="g-b8" class="box" data-layout-allow-overflow><img class="in full" src="assets/covers/p8.png" alt="Office TV and phone widget" /><img class="out full" src="assets/covers/p8.png" alt="" /></div>
+      <div id="g-b9" class="box" data-layout-allow-overflow><img class="in" src="assets/ui/costs.png" alt="Costs" /><img class="out" src="assets/ui/costs.png" alt="" /></div>
+
+      <div id="g-l1" class="label">Web analytics</div>
+      <div id="g-l2" class="label">Live activity</div>
+      <div id="g-l3" class="label">Session replay</div>
+      <div id="g-l4" class="label">Goals and funnels</div>
+      <div id="g-l5" class="label">Why? and alerts</div>
+      <div id="g-l6" class="label">Traces, logs, metrics</div>
+      <div id="g-l7" class="label">AI assistant</div>
+      <div id="g-l8" class="label">TV and phone</div>
+      <div id="g-l9" class="label">Costs and budgets</div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      const Z = 1920 / 400; // a box fills the frame at this scale
+      const COLS = [600, 1032, 1464], ROWS = [84, 396, 708];
+      const N = 9;
+      /*TIMING*/
+      const D = [6, 8.5, 6, 6, 6.5, 6, 10, 6, 6]; // promo lengths
+      const T = [4.5, 12.8, 23.6, 31.9, 40.2, 49.0, 57.3, 69.6, 77.9]; // when each feature is chosen
+      const CLAIM = 86.2, LEAVE = 88.75;
+      /*END TIMING*/
+
+      // intro: the title is up from frame 0, the boxes land one by one
+      tl.fromTo("#g-t1 .w", { opacity: 0.25, filter: "blur(4px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.07, ease: "power2.out" }, 0);
+      for (let i = 1; i <= N; i++) {
+        const t = 0.35 + (i - 1) * 0.11;
+        tl.fromTo(`#g-b${i}`, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: "expo.out" }, t);
+        tl.fromTo(`#g-l${i}`, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: "expo.out" }, t + 0.08);
+      }
+
+      // each feature: choose, zoom in, (the promo plays on top), zoom out
+      for (let i = 1; i <= N; i++) {
+        const Ti = T[i - 1], Di = D[i - 1];
+        const bx = COLS[(i - 1) % 3], by = ROWS[Math.floor((i - 1) / 3)];
+        const others = [];
+        for (let k = 1; k <= N; k++) if (k !== i) others.push(`#g-b${k}`, `#g-l${k}`);
+        others.push("#g-t1");
+        tl.to(others, { opacity: 0.3, duration: 0.35, ease: "power1.out" }, Ti);
+        tl.to("#g-cam", { x: -bx * Z, y: -by * Z, scale: Z, duration: 0.9, ease: "power2.inOut" }, Ti + 0.3);
+        tl.to(`#g-b${i}`, { borderRadius: 0, borderColor: "rgba(227,227,234,0)", duration: 0.9, ease: "power2.inOut" }, Ti + 0.3);
+        // under the promo, the box takes the promo's last frame
+        tl.set(`#g-b${i} img.in`, { opacity: 0 }, Ti + 1.2);
+        tl.set(`#g-b${i} img.out`, { opacity: 1 }, Ti + 1.2);
+        tl.to("#g-cam", { x: 0, y: 0, scale: 1, duration: 0.7, ease: "power2.inOut" }, Ti + 1.2 + Di);
+        tl.to(`#g-b${i}`, { borderRadius: 18, borderColor: "rgba(227,227,234,1)", duration: 0.7, ease: "power2.inOut" }, Ti + 1.2 + Di);
+        tl.to(others, { opacity: 1, duration: 0.5, ease: "power1.out" }, Ti + 1.35 + Di);
+      }
+
+      // the title becomes the claim, then the grid leaves for the end card
+      tl.to("#g-t1 .w", { opacity: 0, filter: "blur(8px)", duration: 0.2, stagger: 0.03, ease: "power2.in" }, CLAIM - 0.3);
+      tl.fromTo("#g-t2 .w", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.14, stagger: 0.08, ease: "power2.out" }, CLAIM);
+      tl.to("#g-cam", { opacity: 0, scale: 0.96, x: 38, y: 22, filter: "blur(10px)", duration: 0.4, ease: "power2.in" }, LEAVE);
+      window.__timelines["grid"] = tl;
+    })();
+  </script>
+</template>
