@@ -9,7 +9,7 @@ import { stacksFor } from './errorStacks';
 import { markSuppressed, suppressedSql } from './suppressions';
 import { symbolicateEvents, symbolicateGroups } from './sourcemaps';
 import { toApiEvent, type EventRow } from './events';
-import { COLUMNS, fieldExpression, filtersFrom, includeBots, jsonPath, parseFilters } from './filters';
+import { COLUMNS, fieldExpression, filtersFrom, includeBots, jsonPath, parseFilters, type QueryScope } from './filters';
 import { Hll } from './hll';
 import { HttpError } from './http';
 import { projectRetention } from './retention';
@@ -728,12 +728,19 @@ const SCOPE_TABLE = {
   events: { table: 'events', time: 'ts', json: [['props', 'props.', true]] },
   logs: { table: 'logs', time: 'ts', json: [['attributes', 'attributes.', false], ['resource', 'resource.', false]] },
   spans: { table: 'spans', time: 'start_time', json: [['attributes', 'attributes.', false], ['resource', 'resource.', false]] },
-} as const;
+  metrics: { table: 'metric_points', time: 'ts', json: [['attributes', 'attributes.', false]] },
+  checks: { table: 'checks', time: 'ts', json: [] },
+} as const satisfies Record<QueryScope, { table: string; time: string; json: ReadonlyArray<readonly [string, string, boolean]> }>;
 
-function scopeOf(p: Params): FilterScope {
-  const s = (p.scope ?? 'events') as FilterScope;
-  if (!(s in SCOPE_TABLE)) throw new HttpError(400, 'scope must be events, logs or spans');
+function scopeOf(p: Params): QueryScope {
+  const s = (p.scope ?? 'events') as QueryScope;
+  if (!Object.hasOwn(SCOPE_TABLE, s)) throw new HttpError(400, 'scope must be events, logs, spans, metrics or checks');
   return s;
+}
+
+/** metrics scope: `metric=<name>` narrows discovery to one metric's points. */
+function metricWhere(scope: QueryScope, p: Params, params: unknown[]): string {
+  return scope === 'metrics' && p.metric ? ` AND name = $${params.push(p.metric)}` : '';
 }
 
 /** Fields offered by the filter UI: the fixed ones, plus JSON keys seen in the most recent rows. */
@@ -746,15 +753,17 @@ export async function fields(pid: string, p: Params): Promise<FieldsResponse> {
   const SAMPLE = 5000;
   for (const [column, prefix] of json) {
     // top-level keys, plus one level down for event props (custom events keep their props under `props`)
+    const params: unknown[] = [pid, r.from, r.to];
+    const narrow = metricWhere(scope, p, params);
     const rows = await rawQuery<{ k: string; n: number }>(pid, r,
       `SELECT k, count(*)::int AS n FROM (
          SELECT unnest(json_keys(j)) AS k FROM (
-           SELECT ${column} AS j FROM ${table} WHERE project_id = $1 AND ${time} >= $2 AND ${time} < $3 AND json_type(${column}) = 'OBJECT'
+           SELECT ${column} AS j FROM ${table} WHERE project_id = $1 AND ${time} >= $2 AND ${time} < $3${narrow} AND json_type(${column}) = 'OBJECT'
             ORDER BY ${time} DESC LIMIT ${SAMPLE}
          ) s
        ) keys
        GROUP BY k ORDER BY n DESC, k LIMIT 200`,
-      [pid, r.from, r.to],
+      params,
     );
     for (const { k, n } of rows) {
       if (scope === 'events' && (k === 'props' || k === '$ctx')) continue; // expanded below
@@ -789,10 +798,11 @@ export async function fieldValues(pid: string, p: Params): Promise<FieldValuesRe
   const { table, time } = SCOPE_TABLE[scope];
   const params: unknown[] = [pid, r.from, r.to];
   const expr = fieldExpression(scope, p.field, params);
+  const narrow = metricWhere(scope, p, params);
   const qFilter = p.q ? ` AND (${expr})::text ${ILIKE('$' + params.push(likeEscape(p.q)))}` : '';
   const rows = await rawQuery<{ value: string; count: number }>(pid, r,
     `SELECT (${expr})::text AS value, count(*)::int AS count
-       FROM ${table} WHERE project_id = $1 AND ${time} >= $2 AND ${time} < $3 AND (${expr}) IS NOT NULL${qFilter}
+       FROM ${table} WHERE project_id = $1 AND ${time} >= $2 AND ${time} < $3${narrow} AND (${expr}) IS NOT NULL${qFilter}
       GROUP BY 1 ORDER BY count DESC LIMIT 20`,
     params,
   );

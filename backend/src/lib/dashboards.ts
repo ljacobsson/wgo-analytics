@@ -1,0 +1,183 @@
+import { randomUUID } from 'node:crypto';
+import type { Dashboard, DashboardConfig, DashboardInput, DashboardSummary, DashboardTile, QuerySpec, TileMeasure, TileUnit, TileViz } from '../contract';
+import { query } from './db';
+import { filterSql, parseFilters } from './filters';
+import { HttpError } from './http';
+import { isUuid } from './projects';
+import { validateMeasure, validateSpec } from './query';
+
+/**
+ * Custom dashboards: named grids of tiles, each one a generic query (lib/query.ts) and a way to show it. A dashboard
+ * belongs to its project; every member sees and edits it. The whole layout is one jsonb config, validated on write.
+ */
+
+export const MAX_DASHBOARDS = 50;
+export const MAX_TILES = 40;
+const MAX_CONFIG_BYTES = 200_000;
+export const COLS = 12;
+const MAX_ROWS = 12;
+const MAX_Y = 1000;
+export const TILE_VIZ: readonly TileViz[] = ['number', 'line', 'area', 'bars', 'top', 'table', 'text'];
+const UNITS: readonly TileUnit[] = ['count', 'ms', 's', 'bytes', 'percent', 'score', 'none'];
+export const TILE_RANGES = ['15m', '1h', '24h', '7d', '30d'] as const;
+
+interface Row { project_id: string; id: string; name: string; config: DashboardConfig; created_by: string; created_at: Date; updated_at: Date }
+
+const toDashboard = (r: Row): Dashboard => ({
+  id: r.id, name: r.name, config: r.config, createdBy: r.created_by, createdAt: r.created_at.toISOString(), updatedAt: r.updated_at.toISOString(),
+});
+
+const dashboardName = (v: unknown) => {
+  const n = typeof v === 'string' ? v.trim() : '';
+  if (!n || n.length > 120) throw new HttpError(400, 'Dashboard name must be 1-120 characters');
+  return n;
+};
+
+const int = (v: unknown, min: number, max: number, what: string) => {
+  if (!Number.isInteger(v) || (v as number) < min || (v as number) > max) throw new HttpError(400, `${what} must be a whole number from ${min} to ${max}`);
+  return v as number;
+};
+const optRange = (v: unknown, what: string) => {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (!(TILE_RANGES as readonly unknown[]).includes(v)) throw new HttpError(400, `${what} must be one of ${TILE_RANGES.join(', ')}`);
+  return v as string;
+};
+
+/** The query shape a tile runs for its chart type. */
+export function tileShape(t: Pick<DashboardTile, 'viz' | 'groupBy'>): QuerySpec['shape'] {
+  if (t.viz === 'number') return 'total';
+  if (t.viz === 'top') return 'top';
+  if (t.viz === 'table') return t.groupBy ? 'top' : 'total';
+  return 'series';
+}
+
+function sanitizeMeasure(raw: unknown, where: string): TileMeasure {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  let m: TileMeasure;
+  try {
+    m = validateMeasure(o);
+  } catch (e) {
+    if (e instanceof HttpError) throw new HttpError(400, `${where}: ${e.message}`);
+    throw e;
+  }
+  if (o.label !== undefined && o.label !== '') {
+    if (typeof o.label !== 'string' || o.label.length > 80) throw new HttpError(400, `${where}: label must be at most 80 characters`);
+    m.label = o.label;
+  }
+  if (o.unit !== undefined) {
+    if (!UNITS.includes(o.unit as TileUnit)) throw new HttpError(400, `${where}: unit must be one of ${UNITS.join(', ')}`);
+    m.unit = o.unit as TileUnit;
+  }
+  if (o.better !== undefined) {
+    if (o.better !== 'up' && o.better !== 'down') throw new HttpError(400, `${where}: better must be up or down`);
+    m.better = o.better;
+  }
+  return m;
+}
+
+export function sanitizeTile(raw: unknown, i: number): DashboardTile {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  const where = `Tile ${i + 1}`;
+  if (typeof o.id !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(o.id)) throw new HttpError(400, `${where}: id must be 1-40 letters, digits, - or _`);
+  const viz = o.viz as TileViz;
+  if (!TILE_VIZ.includes(viz)) throw new HttpError(400, `${where}: viz must be one of ${TILE_VIZ.join(', ')}`);
+  const l = (o.layout ?? {}) as Record<string, unknown>;
+  const w = int(l.w, 1, COLS, `${where}: width`);
+  const layout = { x: int(l.x, 0, COLS - w, `${where}: x`), y: int(l.y, 0, MAX_Y, `${where}: y`), w, h: int(l.h, 1, MAX_ROWS, `${where}: height`) };
+  const tile: DashboardTile = { id: o.id, viz, measures: [], layout };
+  if (o.title !== undefined && o.title !== '') {
+    if (typeof o.title !== 'string' || o.title.length > 120) throw new HttpError(400, `${where}: title must be at most 120 characters`);
+    tile.title = o.title;
+  }
+  const range = optRange(o.range, `${where}: range`);
+  if (range) tile.range = range;
+  if (viz === 'text') {
+    if (typeof o.text !== 'string' || o.text.length > 2000) throw new HttpError(400, `${where}: text must be at most 2000 characters`);
+    tile.text = o.text;
+    return tile;
+  }
+  if (!Array.isArray(o.measures)) throw new HttpError(400, `${where}: measures must be a list`);
+  tile.measures = o.measures.map((m, k) => sanitizeMeasure(m, `${where}, measure ${k + 1}`));
+  if (typeof o.groupBy === 'string' && o.groupBy) tile.groupBy = o.groupBy;
+  if (o.limit !== undefined && o.limit !== null) tile.limit = o.limit as number;
+  try {
+    const spec = validateSpec({ shape: tileShape(tile), measures: tile.measures, groupBy: tile.groupBy, limit: tile.limit });
+    if (spec.limit !== undefined) tile.limit = Math.min(spec.limit, 50);
+  } catch (e) {
+    if (e instanceof HttpError) throw new HttpError(400, `${where}: ${e.message}`);
+    throw e;
+  }
+  return tile;
+}
+
+export function sanitizeConfig(raw: unknown): DashboardConfig {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  if (JSON.stringify(o).length > MAX_CONFIG_BYTES) throw new HttpError(400, 'Dashboard is too large');
+  const tiles = o.tiles ?? [];
+  if (!Array.isArray(tiles)) throw new HttpError(400, 'tiles must be a list');
+  if (tiles.length > MAX_TILES) throw new HttpError(400, `A dashboard can have at most ${MAX_TILES} tiles`);
+  const out: DashboardConfig = { tiles: tiles.map(sanitizeTile) };
+  const ids = new Set(out.tiles.map((t) => t.id));
+  if (ids.size !== out.tiles.length) throw new HttpError(400, 'Tile ids must be unique');
+  if (o.filters !== undefined) {
+    if (!Array.isArray(o.filters)) throw new HttpError(400, 'filters must be a list');
+    const filters = parseFilters(JSON.stringify(o.filters));
+    filterSql(filters, 'events', []);
+    if (filters.length) out.filters = filters;
+  }
+  const range = optRange(o.range, 'range');
+  if (range) out.range = range;
+  return out;
+}
+
+export async function listDashboards(pid: string): Promise<DashboardSummary[]> {
+  const rows = await query<Row>('SELECT * FROM dashboards WHERE project_id = $1 ORDER BY updated_at DESC LIMIT $2', [pid, MAX_DASHBOARDS]);
+  return rows.map((r) => ({ id: r.id, name: r.name, tiles: r.config?.tiles?.length ?? 0, createdBy: r.created_by, updatedAt: r.updated_at.toISOString() }));
+}
+
+async function getRow(pid: string, id: string): Promise<Row> {
+  const [row] = isUuid(id) ? await query<Row>('SELECT * FROM dashboards WHERE project_id = $1 AND id = $2', [pid, id]) : [];
+  if (!row) throw new HttpError(404, 'Dashboard not found');
+  return row;
+}
+
+export const getDashboard = async (pid: string, id: string): Promise<Dashboard> => toDashboard(await getRow(pid, id));
+
+export async function createDashboard(pid: string, email: string, body: Partial<DashboardInput>): Promise<Dashboard> {
+  const name = dashboardName(body.name);
+  const config = sanitizeConfig(body.config ?? { tiles: [] });
+  const [{ n }] = await query<{ n: number }>('SELECT count(*)::int AS n FROM dashboards WHERE project_id = $1', [pid]);
+  if (n >= MAX_DASHBOARDS) throw new HttpError(400, `A project can have at most ${MAX_DASHBOARDS} dashboards`);
+  const id = randomUUID();
+  await query('INSERT INTO dashboards (project_id, id, name, config, created_by) VALUES ($1, $2, $3, $4::jsonb, $5)',
+    [pid, id, name, JSON.stringify(config), email]);
+  return getDashboard(pid, id);
+}
+
+export async function updateDashboard(pid: string, id: string, body: Partial<DashboardInput>): Promise<Dashboard> {
+  const cur = await getRow(pid, id);
+  const name = body.name !== undefined ? dashboardName(body.name) : cur.name;
+  const config = body.config !== undefined ? sanitizeConfig(body.config) : cur.config;
+  await query('UPDATE dashboards SET name = $3, config = $4::jsonb, updated_at = now() WHERE project_id = $1 AND id = $2',
+    [pid, id, name, JSON.stringify(config)]);
+  return getDashboard(pid, id);
+}
+
+export async function duplicateDashboard(pid: string, id: string, email: string): Promise<Dashboard> {
+  const cur = await getRow(pid, id);
+  return createDashboard(pid, email, { name: `${cur.name.slice(0, 113)} (copy)`, config: cur.config });
+}
+
+export async function deleteDashboard(pid: string, id: string): Promise<void> {
+  await getRow(pid, id);
+  await query('DELETE FROM dashboards WHERE project_id = $1 AND id = $2', [pid, id]);
+}
+
+/** Add one tile below the others (the "Add to dashboard" buttons and the MCP tool). */
+export async function addTile(pid: string, id: string, raw: Partial<DashboardTile>): Promise<Dashboard> {
+  const cur = await getRow(pid, id);
+  const bottom = cur.config.tiles.reduce((m, t) => Math.max(m, t.layout.y + t.layout.h), 0);
+  const w = Number.isInteger(raw.layout?.w) ? raw.layout!.w : 6;
+  const tile = { ...raw, id: raw.id ?? randomUUID().slice(0, 8), layout: { x: 0, y: bottom, w, h: raw.layout?.h ?? (raw.viz === 'number' ? 2 : 4) } };
+  return updateDashboard(pid, id, { config: { ...cur.config, tiles: [...cur.config.tiles, tile as DashboardTile] } });
+}

@@ -10,6 +10,9 @@ import { fmtDateTime, fmtMs, fmtNum, relTime } from '../lib/format';
 import { UserCell } from '../ui/EventColumns';
 
 import { FilterBar } from '../ui/FilterBar';
+import { AddToDashboard, withFilters } from '../dashboards/AddToDashboard';
+import { currentFilters } from '../lib/filters';
+import { BUILTIN } from '../dashboards/measures';
 import { RowActions } from '../ui/RowActions';
 import { httpGroupConditions } from '../lib/rowFilters';
 const COLS = 'grid-cols-[70px_minmax(240px,3fr)_70px_90px_80px_110px_110px]';
@@ -67,7 +70,11 @@ export function NetworkPage() {
   if (isError) return <ErrorState error={error} retry={() => refetch()} />;
   return (
     <>
-      <FilterBar scope="events" className="mb-4" />
+      <FilterBar scope="events" className="mb-3" />
+      <div className="mb-3 flex justify-end"><AddToDashboard tile={() => {
+        const m = BUILTIN.find((d) => d.id === 'http-errors')!.measure;
+        return { viz: 'bars', measures: [withFilters(m, [...(m.filters ?? []), ...currentFilters('events')])], groupBy: 'httpRoute', limit: 5 };
+      }} /></div>
       <Card className="@container overflow-x-auto">
         <div className="min-w-[900px]">
           <TableHead className={COLS} sort={sort} onSort={(k) => onSort(k as keyof typeof SORT)}

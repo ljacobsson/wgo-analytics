@@ -11,8 +11,14 @@ interface Column { sql: string; type: ColType }
 
 const col = (sql: string, type: ColType = 'text'): Column => ({ sql, type });
 
+/**
+ * Scopes the generic query (lib/query.ts) can read: the filterable ones, plus OpenTelemetry metric points and uptime
+ * check runs. The public FilterScope (triggers, the filter bar) stays the first three.
+ */
+export type QueryScope = FilterScope | 'metrics' | 'checks';
+
 /** Built-in fields per scope, keyed by their API (camelCase) name. */
-export const COLUMNS: Record<FilterScope, Record<string, Column>> = {
+export const COLUMNS: Record<QueryScope, Record<string, Column>> = {
   events: {
     type: col('type'), path: col('path'), url: col('url'), title: col('title'), referrer: col('referrer'),
     selector: col('selector'), elementText: col('element_text'), elementTag: col('element_tag'), trackName: col('track_name'),
@@ -32,6 +38,13 @@ export const COLUMNS: Record<FilterScope, Record<string, Column>> = {
     name: col('name'), service: col('service'), durationMs: col('duration_ms', 'number'), statusCode: col('status_code', 'number'),
     statusMessage: col('status_message'), kind: col('kind', 'number'), traceId: col('trace_id'), spanId: col('span_id'),
   },
+  metrics: {
+    name: col('name'), service: col('service'), type: col('type'), unit: col('unit'), value: col('value', 'number'),
+  },
+  checks: {
+    checkId: col('check_id'), ok: col('ok', 'number'), status: col('status', 'number'), durationMs: col('duration_ms', 'number'),
+    error: col('error'), region: col('region'),
+  },
 };
 
 /**
@@ -39,10 +52,12 @@ export const COLUMNS: Record<FilterScope, Record<string, Column>> = {
  * event's `plan`), so the remainder is a path. OpenTelemetry attribute keys contain dots themselves
  * (`http.route`), so the remainder is one key.
  */
-const JSON_PREFIXES: Record<FilterScope, Record<string, { column: string; nested: boolean }>> = {
+const JSON_PREFIXES: Record<QueryScope, Record<string, { column: string; nested: boolean }>> = {
   events: { props: { column: 'props', nested: true } },
   logs: { attributes: { column: 'attributes', nested: false }, resource: { column: 'resource', nested: false } },
   spans: { attributes: { column: 'attributes', nested: false }, resource: { column: 'resource', nested: false } },
+  metrics: { attributes: { column: 'attributes', nested: false } },
+  checks: {},
 };
 
 export const OPS: FilterOp[] = ['eq', 'neq', 'contains', 'not_contains', 'starts_with', 'ends_with', 'gt', 'gte', 'lt', 'lte', 'set', 'not_set'];
@@ -72,7 +87,7 @@ export function parseFilters(raw: string | undefined): Filter[] {
 export const jsonPath = (keys: string[]) => '$' + keys.map((k) => `."${k.replace(/["\\]/g, (c) => '\\' + c)}"`).join('');
 
 /** Resolve a field to a SQL expression (+ its params) or reject it. */
-function expression(scope: FilterScope, field: string, bind: (v: unknown) => string): { sql: string; type: ColType | 'json' } {
+function expression(scope: QueryScope, field: string, bind: (v: unknown) => string): { sql: string; type: ColType | 'json' } {
   const c = COLUMNS[scope][field];
   if (c) return c;
   const dot = field.indexOf('.');
@@ -83,8 +98,13 @@ function expression(scope: FilterScope, field: string, bind: (v: unknown) => str
   return { sql: `json_extract_string(${prefix.column}, ${bind(jsonPath(path))})`, type: 'json' };
 }
 
+/** SQL expression and kind of one field, binding any JSON path into `params`. */
+export function fieldInfo(scope: QueryScope, field: string, params: unknown[]): { sql: string; type: ColType | 'json' } {
+  return expression(scope, field, (v) => `$${params.push(v)}`);
+}
+
 /** SQL expression for one field, binding any JSON path into `params` (used for value suggestions). */
-export function fieldExpression(scope: FilterScope, field: string, params: unknown[]): string {
+export function fieldExpression(scope: QueryScope, field: string, params: unknown[]): string {
   return expression(scope, field, (v) => `$${params.push(v)}`).sql;
 }
 
@@ -95,7 +115,7 @@ const NUMERIC = /^\s*-?\d+(\.\d+)?\s*$/;
  * Compile filters into `AND …` SQL (empty string when none). Params are appended to `params`, so this works
  * after a query has already bound its own parameters.
  */
-export function filterSql(filters: Filter[], scope: FilterScope, params: unknown[]): string {
+export function filterSql(filters: Filter[], scope: QueryScope, params: unknown[]): string {
   if (!filters.length) return '';
   const bind = (v: unknown) => {
     params.push(v);

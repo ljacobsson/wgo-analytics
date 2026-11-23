@@ -8,6 +8,7 @@ import * as B from '../lib/budgets';
 import * as C from '../lib/costs';
 import * as U from '../lib/uptime';
 import * as D from '../lib/devices';
+import * as DB from '../lib/dashboards';
 import * as G from '../lib/goals';
 import * as GF from '../lib/funnel';
 import * as K from '../lib/kiosks';
@@ -143,6 +144,19 @@ async function route(method: string, parts: string[], q: Q, email: string, event
     if (!id && method === 'POST') return V.createView(pid, email, jsonBody(event));
     if (id && method === 'PATCH') return V.updateView(pid, id, jsonBody(event));
     if (id && method === 'DELETE') { await V.deleteView(pid, id); return { ok: true }; }
+    throw new HttpError(405, 'Method not allowed');
+  }
+
+  if (sub === 'dashboards') {
+    await P.getProject(email, pid); // authorization: caller must be a member
+    const [id, action] = rest;
+    if (!id && method === 'GET') return DB.listDashboards(pid);
+    if (!id && method === 'POST') return DB.createDashboard(pid, email, jsonBody(event));
+    if (id && !action && method === 'GET') return DB.getDashboard(pid, id);
+    if (id && !action && method === 'PATCH') return DB.updateDashboard(pid, id, jsonBody(event));
+    if (id && !action && method === 'DELETE') { await DB.deleteDashboard(pid, id); return { ok: true }; }
+    if (id && action === 'duplicate' && method === 'POST') return DB.duplicateDashboard(pid, id, email);
+    if (id && action === 'tiles' && method === 'POST') return DB.addTile(pid, id, jsonBody(event));
     throw new HttpError(405, 'Method not allowed');
   }
 

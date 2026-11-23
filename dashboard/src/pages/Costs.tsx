@@ -124,7 +124,7 @@ function Report({ d }: { d: CostsResponse }) {
 
       <Card>
         <CardHeader title="Cost per day" sub="Last 30 days" />
-        <div className="px-3 pb-3"><TimeChart times={chart.times} series={chart.series} mode="bars" height={220} format={money} legend={chart.series.length > 1} /></div>
+        <div className="px-3 pb-3"><TimeChart zoom={false} times={chart.times} series={chart.series} mode="bars" height={220} format={money} legend={chart.series.length > 1} /></div>
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">

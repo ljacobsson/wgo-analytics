@@ -13,6 +13,8 @@ import { retention as mockRetention } from './retention';
 
 interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; recordingSettings?: Record<string, RecordingSettings>; uploadKeys?: Record<string, string> }
 import * as UP from './uptime';
+import * as QY from './query';
+import type { Dashboard, DashboardInput, DashboardSummary, DashboardTile } from '../api/contract';
 import { mockSite, mockSiteImage } from './site';
 
 interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; uptime?: Record<string, UP.MockCheck[]>; recordingSettings?: Record<string, RecordingSettings>; destinations?: MockDestination[]; accountSlackApps?: Record<string, string> }
@@ -21,6 +23,7 @@ type MockDestination = Destination & { projectId: string | null; workspaceId?: s
 /** A connected Slack workspace: a project's (projectId) or someone's own (owner). */
 interface MockWorkspace { id: string; projectId: string | null; owner: string | null; teamName: string; createdBy: string; createdAt: string }
 interface Db { slackWorkspaces?: MockWorkspace[] }
+interface Db { dashboards?: Record<string, Dashboard[]> }
 const MOCK_CHANNELS = [
   { id: 'C01ALERTS', name: '#alerts', private: false }, { id: 'C02CHECK', name: '#checkout', private: false }, { id: 'C03GROW', name: '#growth', private: false },
   { id: 'G04ONCALL', name: '#oncall', private: true }, { id: 'C05RANDOM', name: '#random', private: false },
@@ -446,8 +449,69 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     case 'explain': return EX.explain({ metric: (qp('metric') ?? 'events') as never, where: F.parse(qp('where')), goalId: qp('goalId'), label: qp('label'), from, to, goals: db.goals?.[pid] ?? [] });
     case 'releases': return REL.releases(from, to, db.goals?.[pid] ?? [], qp('markers') === '1');
     case 'geo': return D.geo(from, to);
+    case 'query': {
+      let spec;
+      try { spec = JSON.parse(qp('q') ?? ''); } catch { throw new MockHttpError(400, 'q must be JSON'); }
+      if (!spec?.measures?.length) throw new MockHttpError(400, 'At least one measure');
+      if (spec.shape === 'top' && !spec.groupBy) throw new MockHttpError(400, 'top needs a groupBy field');
+      const checks = (db.uptime?.[pid] ?? UP.seedChecks(now)).map((c) => ({ id: c.id, name: c.name }));
+      return QY.query(spec, from, to, checks, !!qp('filters'));
+    }
+    case 'measures': return QY.measureNames();
+    case 'dashboards': {
+      const list = ((db.dashboards ??= {})[pid] ??= []);
+      const [, , , id, action] = parts;
+      const d = list.find((x) => x.id === id);
+      const at = new Date().toISOString();
+      const name = (v: unknown) => {
+        const n = typeof v === 'string' ? v.trim() : '';
+        if (!n || n.length > 120) throw new MockHttpError(400, 'Dashboard name must be 1-120 characters');
+        return n;
+      };
+      if (!id && method === 'GET') return [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((x): DashboardSummary => ({ id: x.id, name: x.name, tiles: x.config.tiles.length, createdBy: x.createdBy, updatedAt: x.updatedAt }));
+      if (!id && method === 'POST') {
+        const b = (body ?? {}) as Partial<DashboardInput>;
+        const n: Dashboard = { id: crypto.randomUUID(), name: name(b.name), config: b.config ?? { tiles: [] }, createdBy: email, createdAt: at, updatedAt: at };
+        list.push(n); save(db); return n;
+      }
+      if (!d) throw new MockHttpError(404, 'Dashboard not found');
+      if (!action && method === 'GET') return d;
+      if (!action && method === 'PATCH') {
+        const b = (body ?? {}) as Partial<DashboardInput>;
+        if (b.name !== undefined) d.name = name(b.name);
+        if (b.config !== undefined) {
+          if (b.config.tiles.length > 40) throw new MockHttpError(400, 'A dashboard can have at most 40 tiles');
+          d.config = b.config;
+        }
+        d.updatedAt = at; save(db); return d;
+      }
+      if (!action && method === 'DELETE') { db.dashboards![pid] = list.filter((x) => x.id !== id); save(db); return { ok: true }; }
+      if (action === 'duplicate' && method === 'POST') {
+        const n: Dashboard = { ...structuredClone(d), id: crypto.randomUUID(), name: `${d.name} (copy)`, createdBy: email, createdAt: at, updatedAt: at };
+        list.push(n); save(db); return n;
+      }
+      if (action === 'tiles' && method === 'POST') {
+        const t = body as Partial<DashboardTile>;
+        const bottom = d.config.tiles.reduce((m, x) => Math.max(m, x.layout.y + x.layout.h), 0);
+        d.config.tiles.push({ ...t, id: t.id ?? hex(8, Date.now()), layout: { x: 0, y: bottom, w: t.layout?.w ?? 6, h: t.layout?.h ?? (t.viz === 'number' ? 2 : 4) } } as DashboardTile);
+        d.updatedAt = at; save(db); return d;
+      }
+      throw new MockHttpError(405, 'Method not allowed');
+    }
     case 'fields': {
-      const scope = (qp('scope') ?? 'events') as 'events' | 'logs' | 'spans';
+      const fscope = qp('scope') ?? 'events';
+      if (fscope === 'metrics' || fscope === 'checks') {
+        const builtin = fscope === 'metrics'
+          ? [{ field: 'name', type: 'text' }, { field: 'service', type: 'text' }, { field: 'type', type: 'text' }, { field: 'unit', type: 'text' }, { field: 'value', type: 'number' }]
+          : [{ field: 'checkId', type: 'text' }, { field: 'ok', type: 'number' }, { field: 'status', type: 'number' }, { field: 'durationMs', type: 'number' }, { field: 'error', type: 'text' }, { field: 'region', type: 'text' }];
+        if (parts[3] === 'values') {
+          const field = qp('field') ?? '';
+          const vals = field === 'service' ? ['api-gateway', 'catalog-service', 'cart-service'] : field === 'region' ? ['eu-north-1', 'us-east-1'] : field === 'attributes.host.name' ? ['ip-10-0-1-12', 'ip-10-0-2-40'] : [];
+          return { values: vals.map((value, i) => ({ value, count: 900 - i * 300 })) };
+        }
+        return { builtin, discovered: fscope === 'metrics' ? [{ field: 'attributes.host.name', type: 'json', count: 4100 }, { field: 'attributes.http.route', type: 'json', count: 3800 }] : [] };
+      }
+      const scope = fscope as 'events' | 'logs' | 'spans';
       const sample = scope === 'logs' ? D.logs({ from, to, limit: 300 }).logs : D.events({ from, to, limit: 300 }).events;
       return parts[3] === 'values' ? F.values(scope, sample, qp('field') ?? '', qp('q')) : F.fields(scope, sample);
     }

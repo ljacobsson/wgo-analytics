@@ -10,7 +10,7 @@ import { isUuid } from './projects';
  * token, which is the only credential: it grants read access to that one project's analytics (the same read-only
  * routes members use), and nothing else. Members pick what the screen shows; the screen polls for changes.
  */
-export const KIOSK_PAGES: readonly KioskPage[] = ['overview', 'live', 'clicks', 'errors', 'network', 'events', 'traces', 'logs', 'metrics'];
+export const KIOSK_PAGES: readonly KioskPage[] = ['overview', 'live', 'clicks', 'errors', 'network', 'events', 'traces', 'logs', 'metrics', 'dashboard'];
 const MAX_KIOSKS = 20;
 const MAX_SCREENS = 12;
 const MAX_PARAMS = 4000;
@@ -53,6 +53,9 @@ function screen(input: unknown, i: number): KioskScreen {
   if (page === 'live') {
     const watches = sanitizeWatches(o.watches);
     if (watches.length) out.watches = watches;
+  }
+  if (page === 'dashboard' && !isUuid(new URLSearchParams(params).get('id') ?? '')) {
+    throw new HttpError(400, `Screen ${i + 1}: pick a dashboard (params id=<dashboard id>)`);
   }
   return out;
 }

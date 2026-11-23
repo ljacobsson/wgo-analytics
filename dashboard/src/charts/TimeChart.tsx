@@ -1,7 +1,10 @@
 import { useId, useMemo, useState } from 'react';
 import { compact, fmtTick, fmtTipTime, niceMax, useSize } from './util';
+import { BrushBand, useBrush, useZoom } from './zoom';
+import { cn } from '../lib/format';
 
-export interface ChartSeries { key: string; label: string; color: string; values: number[] }
+/** `null` is a bucket without a value (an average over nothing): lines break there. */
+export interface ChartSeries { key: string; label: string; color: string; values: Array<number | null> }
 /** A moment to mark on the chart, e.g. a deploy (a release first seen). */
 export interface ChartMarker { t: number; label: string; color?: string }
 interface Props {
@@ -14,11 +17,15 @@ interface Props {
   markers?: ChartMarker[];
   /** bucket length in ms (bars: where inside a bucket a marker falls) */
   bucketMs?: number;
+  /** y-axis labels (default: compact numbers) */
+  axisFormat?: (n: number) => string;
+  /** drag across the chart to zoom the page's time range to the selection (default on; off for charts not on the page's range) */
+  zoom?: boolean;
 }
 
 const M = { l: 42, r: 10, t: 10, b: 22 };
 
-export function TimeChart({ times, series, mode, height = 260, format = compact, legend = true, markers, bucketMs }: Props) {
+export function TimeChart({ times, series, mode, height = 260, format = compact, legend = true, markers, bucketMs, axisFormat = compact, zoom = true }: Props) {
   const [ref, w] = useSize<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const gid = useId();
@@ -52,6 +59,12 @@ export function TimeChart({ times, series, mode, height = 260, format = compact,
     setHover(i >= 0 && i < n ? i : null);
   };
 
+  // plot x → time: bars cover whole buckets, lines run from the first point to the last
+  const bucketStep = bucketMs ?? (n > 1 ? (times[n - 1] - times[0]) / (n - 1) : 60_000);
+  const timeAt = (px: number) => (stacked ? times[0] + (px / pw) * n * bucketStep : px >= pw - 1 ? times[n - 1] + bucketStep : times[0] + (px / pw) * span);
+  const zoomTo = useZoom();
+  const brush = useBrush(M.l, pw, timeAt, zoom && n > 1 ? zoomTo : null);
+
   const bw = Math.max(1, pw / n - (pw / n > 6 ? 2 : 1));
   const singleArea = mode !== 'bars' && series.length === 1;
 
@@ -64,14 +77,15 @@ export function TimeChart({ times, series, mode, height = 260, format = compact,
       )}
       <div ref={ref} className="relative" style={{ height }}>
         {w > 0 && n > 0 && (
-          <svg width={w} height={height} onMouseMove={onMove} onMouseLeave={() => setHover(null)} className="block select-none">
+          <svg width={w} height={height} onMouseMove={onMove} onMouseLeave={() => setHover(null)} {...brush.handlers}
+            className={cn('block select-none', brush.enabled && 'cursor-crosshair touch-pan-y')}>
             <defs>{series.map((s, k) => (
               <linearGradient key={s.key} id={`${gid}${k}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={s.color} stopOpacity=".28" /><stop offset="1" stopColor={s.color} stopOpacity="0" /></linearGradient>))}</defs>
             <g transform={`translate(${M.l},${M.t})`}>
               {yTicks.map((v) => (
                 <g key={v}>
                   <line x1={0} x2={pw} y1={y(v)} y2={y(v)} stroke="var(--line)" strokeDasharray={v === 0 ? undefined : '2 4'} />
-                  <text x={-8} y={y(v)} dy="0.32em" textAnchor="end" className="fill-faint tnum" fontSize="10.5">{compact(v)}</text>
+                  <text x={-8} y={y(v)} dy="0.32em" textAnchor="end" className="fill-faint tnum" fontSize="10.5">{axisFormat(v)}</text>
                 </g>
               ))}
               {xTickIdx.map((i, k) => (
@@ -104,10 +118,12 @@ export function TimeChart({ times, series, mode, height = 260, format = compact,
                 });
               })}
               {!stacked && series.map((s, k) => {
-                const d = s.values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+                const gaps = s.values.some((v) => v == null);
+                // a lone value between gaps still shows, as a dot
+                const d = s.values.map((v, i) => (v == null ? '' : `${i && s.values[i - 1] != null ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}${s.values[i - 1] == null && s.values[i + 1] == null ? 'h0' : ''}`)).join(' ');
                 return (
                   <g key={s.key}>
-                    {singleArea && <path d={`${d} L${x(n - 1)} ${ph} L${x(0)} ${ph} Z`} fill={`url(#${gid}${k})`} />}
+                    {singleArea && !gaps && <path d={`${d} L${x(n - 1)} ${ph} L${x(0)} ${ph} Z`} fill={`url(#${gid}${k})`} />}
                     <path d={d} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
                   </g>
                 );
@@ -115,13 +131,14 @@ export function TimeChart({ times, series, mode, height = 260, format = compact,
               {hover != null && !stacked && (
                 <g>
                   <line x1={x(hover)} x2={x(hover)} y1={0} y2={ph} stroke="var(--line-strong)" />
-                  {series.map((s) => <circle key={s.key} cx={x(hover)} cy={y(s.values[hover] ?? 0)} r={4} fill={s.color} stroke="var(--raised)" strokeWidth={2} />)}
+                  {series.map((s) => s.values[hover] != null && <circle key={s.key} cx={x(hover)} cy={y(s.values[hover]!)} r={4} fill={s.color} stroke="var(--raised)" strokeWidth={2} />)}
                 </g>
               )}
+              {brush.sel && <BrushBand sel={brush.sel} height={ph} toTime={timeAt} span={span} />}
             </g>
           </svg>
         )}
-        {hover != null && w > 0 && (() => {
+        {hover != null && w > 0 && !brush.sel && (() => {
           const px = M.l + x(hover);
           const left = px > w * 0.62;
           const total = series.reduce((s, k) => s + (k.values[hover] ?? 0), 0);
@@ -131,7 +148,7 @@ export function TimeChart({ times, series, mode, height = 260, format = compact,
               {series.map((s) => (
                 <div key={s.key} className="flex items-center justify-between gap-4 py-[1px]">
                   <span className="inline-flex items-center gap-1.5 text-muted"><i className="h-2 w-2 rounded-[3px]" style={{ background: s.color }} />{s.label}</span>
-                  <span className="tnum font-medium">{format(s.values[hover] ?? 0)}</span>
+                  <span className="tnum font-medium">{s.values[hover] == null ? '–' : format(s.values[hover]!)}</span>
                 </div>
               ))}
               {stacked && series.length > 1 && <div className="mt-1 flex justify-between border-t border-line pt-1 text-muted"><span>Total</span><span className="tnum text-fg">{format(total)}</span></div>}

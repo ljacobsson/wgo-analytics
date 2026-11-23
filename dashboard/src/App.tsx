@@ -35,6 +35,8 @@ import { CostsPage } from './pages/Costs';
 import { McpPage } from './pages/Mcp';
 import { OtelDocs } from './docs/OtelDocs';
 import { Docs } from './docs/Docs';
+import { DashboardsPage } from './dashboards/DashboardsPage';
+import { DashboardPage } from './dashboards/DashboardPage';
 
 function Authed({ email }: { email: string }) {
   const me = useMe();
@@ -63,6 +65,7 @@ function Authed({ email }: { email: string }) {
 
   const body = (() => {
     switch (page) {
+      case 'dashboards': return sub ? <DashboardPage id={sub} /> : <DashboardsPage />;
       case 'live': return <LivePage />;
       case 'clicks': return <ClicksPage />;
       case 'errors': return <ErrorsPage />;

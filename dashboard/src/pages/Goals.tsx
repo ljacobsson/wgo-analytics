@@ -10,6 +10,7 @@ import { suggestName } from '../lib/naming';
 import { useProject } from '../lib/project';
 import { navigate, pageHref, useRoute, useSetParams } from '../lib/router';
 import { useTime } from '../lib/time';
+import { AddToDashboard } from '../dashboards/AddToDashboard';
 import { FilterBar, FilterChips } from '../ui/FilterBar';
 import { Badge, Button, Card, Delta, Dialog, EmptyState, ErrorState, Field, useToast } from '../ui/kit';
 import { InfoTip } from '../ui/InfoTip';
@@ -112,6 +113,7 @@ function GoalRow({ g, all, prevRate, goal, onEdit }: { g: GoalConversions; all: 
       <div className="flex items-center justify-end gap-0.5">
         <button onClick={() => navigate(pageHref(project.id, `goals/${g.id}`, route.params))} className="rounded-md p-1.5 text-muted hover:bg-[var(--hl)] hover:text-fg cursor-pointer" title="Funnel: how sessions reach this goal"><Workflow size={14} /></button>
         <button onClick={() => navigate(goalEventsHref(project.id, route.params, g.filters))} className="rounded-md p-1.5 text-muted hover:bg-[var(--hl)] hover:text-fg cursor-pointer" title="Show this goal’s events"><ListTree size={14} /></button>
+        <AddToDashboard label={false} className="!h-auto !border-transparent !px-1.5 !py-1.5 hover:!bg-[var(--hl)]" tile={() => ({ viz: 'number', measures: [{ source: 'events', agg: 'session_rate', filters: g.filters, label: `${g.name} conversion`, unit: 'percent', better: 'up' }] })} />
         {!kiosk && goal && <>
           <button onClick={() => onEdit(goal)} className="rounded-md p-1.5 text-muted hover:bg-[var(--hl)] hover:text-fg cursor-pointer" title="Edit"><Pencil size={14} /></button>
           <button onClick={() => { if (confirm(`Delete goal “${g.name}”?`)) del.mutate(g.id); }} className="rounded-md p-1.5 text-muted hover:bg-bad/15 hover:text-bad cursor-pointer" title="Delete"><Trash2 size={14} /></button>

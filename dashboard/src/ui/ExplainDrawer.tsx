@@ -89,7 +89,7 @@ export function ExplainDrawer({ spec, onClose }: { spec: ExplainSpec | null; onC
             <p className="text-[14.5px] leading-relaxed">{x.data.summary}</p>
             {chart && (
               <div>
-                <TimeChart times={chart.times} series={chart.series} mode="bars" height={180} markers={chart.markers} bucketMs={x.data.bucketSeconds * 1000} legend={false} />
+                <TimeChart zoom={false} times={chart.times} series={chart.series} mode="bars" height={180} markers={chart.markers} bucketMs={x.data.bucketSeconds * 1000} legend={false} />
                 <p className="mt-1 text-[11.5px] text-faint">The comparison window, then the selected range. Dashed lines: where the range starts{x.data.startedAt && ', when the change started'}{x.data.release && ', when the release was first seen'}.</p>
               </div>
             )}

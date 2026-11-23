@@ -908,12 +908,12 @@ export interface WidgetOverview {
 // GET /kiosk/v1/state?w=1920&h=1080        -> KioskState   (polled by the screen; w×h is shown in the dashboard)
 // GET /kiosk/v1/{stats|clicks|…}           -> same as GET /api/projects/{pid}/{stats|clicks|…} for the kiosk's project
 // Live WebSocket: connect with ?kiosk=<token> instead of ?token=…&projectId=…
-export type KioskPage = 'overview' | 'live' | 'clicks' | 'errors' | 'network' | 'events' | 'traces' | 'logs' | 'metrics';
+export type KioskPage = 'overview' | 'live' | 'clicks' | 'errors' | 'network' | 'events' | 'traces' | 'logs' | 'metrics' | 'dashboard';
 
 export interface KioskScreen {
   page: KioskPage;
   /** The page's URL query, as in the dashboard: time range, filters (f, lf, tf) and page options, e.g. `range=1h&f=[…]`. */
-  params: string;
+  params: string; // dashboard: id=<dashboard id> plus range and f
   title?: string; // caption on the screen (default: the page name)
   watches?: Watch[]; // 'live' only: the watches to count (a browser keeps its own watches locally; the kiosk gets a copy)
 }
@@ -1339,4 +1339,101 @@ export interface Budget extends Omit<BudgetInput, 'acknowledged'> {
   createdBy: string;
   createdAt: string;
   status: BudgetStatus;
+}
+
+// ---------- generic query (custom dashboards) ----------
+// One measure over any source: events (web analytics), logs, spans, metrics (OpenTelemetry metric points) and
+// checks (uptime check runs). Fields are the filter fields of the source (see GET /fields?scope=…): for metrics
+// name, service, type, unit, value and attributes.<key>; for checks checkId, ok (1/0), status, durationMs, error, region.
+export type QuerySource = 'events' | 'logs' | 'spans' | 'metrics' | 'checks';
+export type QueryAgg =
+  | 'count' // matching rows
+  | 'sessions' | 'users' // distinct sessions / visitors (events)
+  | 'session_rate' // share of sessions with a matching event, 0..1 (events; the measure's filters pick the matches)
+  | 'sum' | 'avg' | 'min' | 'max' | 'p50' | 'p75' | 'p95' | 'p99' // over `field` (metrics: the point value)
+  | 'rate'; // average of a 0/1 field, 0..1 (checks: `ok` by default, so uptime)
+export interface MeasureQuery {
+  source: QuerySource;
+  agg: QueryAgg;
+  field?: string; // numeric field for sum…p99 and rate; metrics default to the point value, checks to durationMs / ok
+  metric?: string; // metrics: the OpenTelemetry metric name (required)
+  filters?: Filter[]; // ANDed, in the source's fields
+}
+// GET /api/projects/{pid}/query?q=<JSON QuerySpec>&from&to[&filters=<JSON Filter[]>][&bots=1]
+//   `filters` (dashboard-wide) apply to events measures only. Range at most 92 days.
+export interface QuerySpec {
+  measures: MeasureQuery[]; // 1-4
+  groupBy?: string; // a field of the measure's source: split into one series / row per value (one measure only)
+  shape: 'series' | 'total' | 'top'; // over time; one number; top values of groupBy
+  limit?: number; // groups: series default 5, max 10; top default 10, max 50
+  compare?: boolean; // also the total of the same-length window just before `from`
+}
+export interface QueryMeasureResult {
+  total: number | null; // null: nothing to average
+  previous?: number | null; // with compare
+  series?: Array<{ key: string; label?: string; points: Array<{ t: string; value: number | null }> }>; // shape series; key '' without groupBy
+  groups?: Array<{ key: string; label?: string; value: number | null }>; // with groupBy, biggest first
+  // label: a readable name for a key that is an id (uptime checks: the check's name)
+}
+export interface QueryResult {
+  bucketSeconds: number; // shape series
+  measures: QueryMeasureResult[]; // in the order asked
+}
+
+// GET /api/projects/{pid}/measures -> MeasureNames: names seen in the last 7 days, for the measure picker
+export interface MeasureNames {
+  trackedClicks: string[]; // data-track names
+  customEvents: string[];
+  metrics: Array<{ name: string; type: MetricInfo['type']; unit: string | null; description: string | null }>;
+}
+
+// ---------- custom dashboards ----------
+// A dashboard belongs to its project: every member sees and edits it.
+// GET    /api/projects/{pid}/dashboards                 -> DashboardSummary[] (most recently updated first)
+// GET    /api/projects/{pid}/dashboards/{id}            -> Dashboard  (also GET /kiosk/v1/dashboards/{id})
+// POST   /api/projects/{pid}/dashboards  DashboardInput -> Dashboard
+// PATCH  /api/projects/{pid}/dashboards/{id}  Partial<DashboardInput> -> Dashboard
+// POST   /api/projects/{pid}/dashboards/{id}/duplicate  -> Dashboard
+// POST   /api/projects/{pid}/dashboards/{id}/tiles  DashboardTile (id and layout optional: added below the others) -> Dashboard
+// DELETE /api/projects/{pid}/dashboards/{id}            -> 204
+export type TileViz = 'number' | 'line' | 'area' | 'bars' | 'top' | 'table' | 'text';
+export type TileUnit = 'count' | 'ms' | 's' | 'bytes' | 'percent' | 'score' | 'none';
+export interface TileMeasure extends MeasureQuery {
+  label?: string; // legend / column name
+  unit?: TileUnit; // how values are shown; percent: a 0..1 share
+  better?: 'up' | 'down'; // which way a change is good
+}
+export interface TileLayout { x: number; y: number; w: number; h: number } // 12 columns; x 0-11, w 1-12, h 1-12 rows
+export interface DashboardTile {
+  id: string; // 1-40 characters
+  title?: string; // up to 120 characters
+  viz: TileViz;
+  measures: TileMeasure[]; // 1-4 (none for text)
+  groupBy?: string;
+  limit?: number;
+  range?: string; // the tile's own range ('15m', '1h', '24h', '7d', '30d'); otherwise the dashboard's
+  text?: string; // viz text: up to 2000 characters
+  layout: TileLayout;
+}
+export interface DashboardConfig {
+  tiles: DashboardTile[]; // at most 40
+  filters?: Filter[]; // default dashboard filters (events measures), applied when the URL has none
+  range?: string; // default range
+}
+export interface DashboardInput {
+  name: string; // 1-120 characters
+  config: DashboardConfig;
+}
+export interface Dashboard extends DashboardInput {
+  id: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface DashboardSummary {
+  id: string;
+  name: string;
+  tiles: number;
+  createdBy: string;
+  updatedAt: string;
 }

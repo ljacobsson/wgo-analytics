@@ -8,6 +8,7 @@ import { cn, fmtDateTime, fmtMs, fmtTime, relTime } from '../lib/format';
 import { useProject } from '../lib/project';
 import { navigate, pageHref } from '../lib/router';
 import { useTime, type TimeRange } from '../lib/time';
+import { AddToDashboard } from '../dashboards/AddToDashboard';
 import { Button, Card, Dialog, Drawer, EmptyState, ErrorState, Field, Mono, Skeleton, Switch, useToast } from '../ui/kit';
 
 const REGION_NOTE = (region: string) => `Checks run from ${region}, where WGO is deployed.`;
@@ -174,6 +175,7 @@ function CheckDrawer({ check, range, onClose, onEdit }: { check: UptimeCheck | n
             <Button variant="primary" size="sm" disabled={run.isPending} onClick={runNow}><Play size={13} />{run.isPending ? 'Running' : 'Run now'}</Button>
             <Button size="sm" onClick={notify}><BellRing size={13} />Notify me</Button>
             <Button size="sm" onClick={() => onEdit(check)}><Pencil size={13} />Edit</Button>
+            <AddToDashboard tile={() => ({ viz: 'number', measures: [{ source: 'checks', agg: 'rate', field: 'ok', filters: [{ field: 'checkId', op: 'eq', value: check.id }], label: `${check.name} uptime`, unit: 'percent', better: 'up' }] })} />
             {confirm
               ? <Button variant="danger" size="sm" disabled={del.isPending} onClick={async () => { await del.mutateAsync(check.id); onClose(); }}>Confirm delete</Button>
               : <Button variant="ghost" size="sm" onClick={() => setConfirm(true)}><Trash2 size={13} />Delete</Button>}

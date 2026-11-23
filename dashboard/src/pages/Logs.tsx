@@ -11,6 +11,9 @@ import { RowsSkeleton } from './common';
 import { cn, fmtTime } from '../lib/format';
 
 import { FilterBar } from '../ui/FilterBar';
+import { AddToDashboard, withFilters } from '../dashboards/AddToDashboard';
+import { currentFilters } from '../lib/filters';
+import type { Filter } from '../api/contract';
 import { RowActions } from '../ui/RowActions';
 import { logConditions } from '../lib/rowFilters';
 import { AttributeTable } from './EventAttributes';
@@ -75,7 +78,10 @@ export function LogsPage() {
         <select className="field !w-44" value={service} onChange={(e) => set({ service: e.target.value || null })}><option value="">All services</option>{services.data?.map((s) => <option key={s.service}>{s.service}</option>)}</select>
         <div className="relative w-full sm:w-72"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="field !pl-8" placeholder="Search log body…" value={qIn} onChange={(e) => setQIn(e.target.value)} onBlur={() => set({ q: qIn || null })} /></div>
         {traceId && <Badge tone="accent" className="!py-1 !text-[12px]">trace <Mono>{traceId.slice(0, 12)}</Mono><button onClick={() => set({ traceId: null })} className="cursor-pointer"><X size={12} /></button></Badge>}
-        <div className="ml-auto flex items-center gap-2">{live && <i className="h-2 w-2 rounded-full bg-good pulse-dot" />}<Switch checked={live} onChange={setLive} label={<span className="inline-flex items-center gap-1"><Radio size={13} />Live tail</span>} /></div>
+        <div className="ml-auto flex items-center gap-2"><AddToDashboard label={false} tile={() => {
+          const filters: Filter[] = [...currentFilters('logs'), ...(sev ? [{ field: 'severityNumber', op: 'gte' as const, value: String(sev) }] : []), ...(service ? [{ field: 'service', op: 'eq' as const, value: service }] : [])];
+          return { viz: 'bars', measures: [withFilters({ source: 'logs', agg: 'count', label: sev >= 17 ? 'Error logs' : 'Logs', unit: 'count', ...(sev >= 17 ? { better: 'down' as const } : {}) }, filters)] };
+        }} />{live && <i className="h-2 w-2 rounded-full bg-good pulse-dot" />}<Switch checked={live} onChange={setLive} label={<span className="inline-flex items-center gap-1"><Radio size={13} />Live tail</span>} /></div>
       </div>
       <Card className="overflow-hidden">
         {logs.isPending ? <RowsSkeleton n={14} /> : rows.length === 0 ? <EmptyState icon={<ScrollText size={22} />} title="No logs match">Send OTLP logs to your ingest endpoint, or loosen the filters.</EmptyState> : (

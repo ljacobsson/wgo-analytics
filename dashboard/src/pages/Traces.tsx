@@ -12,6 +12,9 @@ import { Dl, JsonView, RowsSkeleton, TableHead } from './common';
 import { fmtMs, fmtNum, fmtTime, relTime, cn } from '../lib/format';
 
 import { FilterBar } from '../ui/FilterBar';
+import { AddToDashboard, withFilters } from '../dashboards/AddToDashboard';
+import { currentFilters } from '../lib/filters';
+import { BUILTIN } from '../dashboards/measures';
 import { RowActions } from '../ui/RowActions';
 import { spanConditions, traceConditions } from '../lib/rowFilters';
 export function serviceColor(services: string[], s: string) {
@@ -53,7 +56,10 @@ function TraceList() {
             </div></div>)}
         </Card>
         <Card>
-          <CardHeader title="Trace duration" sub="each dot is a trace · red has errors" />
+          <CardHeader title="Trace duration" sub="each dot is a trace · red has errors" right={<AddToDashboard label={false} tile={() => {
+            const m = BUILTIN.find((d) => d.id === 'span-p95')!.measure;
+            return { viz: 'line', measures: [withFilters(m, [...(m.filters ?? []), ...currentFilters('spans'), ...(service ? [{ field: 'service', op: 'eq' as const, value: service }] : [])])], ...(service ? {} : { groupBy: 'service' }) };
+          }} />} />
           <div className="px-3 pb-3">{traces.isPending ? <Skeleton className="h-[150px]" /> : <Scatter dots={dots} from={dots.length ? Math.min(...dots.map((d) => d.t)) : Date.parse(range.from)} to={dots.length ? Math.max(...dots.map((d) => d.t)) + 1000 : Date.parse(range.to)} onSelect={(id) => open(traces.data!.find((t) => t.traceId === id)!)} />}</div>
         </Card>
       </div>
