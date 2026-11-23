@@ -1,0 +1,32 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; background: #0a0a0f; font-family: "Inter", sans-serif; }
+    #p4-cam { position: absolute; left: 0; top: 0; width: 1600px; height: 1000px; transform-origin: 0 0; }
+    #p4-cam img { position: absolute; left: 0; top: 0; width: 1600px; height: 1000px; }
+    #p4-band { position: absolute; left: 0; top: 820px; width: 1920px; height: 260px; background: #0a0a0f; box-shadow: 0 -30px 60px rgba(0,0,0,0.45); }
+    #p4-title { position: absolute; left: 110px; top: 40px; font-size: 64px; font-weight: 700; letter-spacing: -0.03em; color: #f0efec; white-space: nowrap; }
+    #p4-title span { display: inline-block; }
+    #p4-sub { position: absolute; left: 112px; top: 130px; font-size: 32px; color: #a3a2b0; white-space: nowrap; }
+  </style>
+  <div id="root" data-composition-id="p4" data-width="1920" data-height="1080">
+    <div id="p4-cam"><img src="assets/ui/funnel.png" alt="Goal funnel for Checkout completed: viewed a product, opened the cart, started checkout" /></div>
+    <div id="p4-band">
+      <div id="p4-title"><span class="w">See</span> <span class="w">where</span> <span class="w">visitors</span> <span class="w">drop</span> <span class="w">off</span></div>
+      <div id="p4-sub">Goals, funnel steps, and what converts better than average.</div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      tl.fromTo("#p4-cam", { x: 0, y: 0, scale: 1.2 }, { x: -318, y: -270, scale: 1.4, duration: 0.7, ease: "power3.inOut" }, 0);
+      tl.fromTo("#p4-band", { y: 300 }, { y: 0, duration: 0.7, ease: "power3.inOut" }, 0);
+      tl.fromTo("#p4-title .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.07, ease: "power2.out" }, 0.7);
+      tl.fromTo("#p4-sub", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power2.out" }, 1.4);
+      tl.to("#p4-cam", { x: -372, y: -306, scale: 1.46, duration: 4.0, ease: "sine.inOut" }, 0.8);
+      tl.to(["#p4-title .w", "#p4-sub"], { opacity: 0, filter: "blur(6px)", duration: 0.2, stagger: 0.02, ease: "power2.in" }, 4.9);
+      tl.to("#p4-cam", { x: 0, y: 0, scale: 1.2, duration: 0.7, ease: "power3.inOut" }, 5.2);
+      tl.to("#p4-band", { y: 300, duration: 0.7, ease: "power3.inOut" }, 5.2);
+      window.__timelines["p4"] = tl;
+    })();
+  </script>
+</template>

@@ -12,3 +12,11 @@ slack-app-manifest.json
 
 # HyperFrames caches in video/: check reports, snapshots, history, thumbnails, transcodes
 video/
+
+# HyperFrames project in film/: caches, snapshots and rendered videos
+film/.hyperframes/
+film/renders/
+film/.transcode-cache/
+film/.thumbnails/
+film/.waveform-cache/
+film/.v1/

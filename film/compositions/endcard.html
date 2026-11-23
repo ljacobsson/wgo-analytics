@@ -1,0 +1,40 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; background: #0a0a0f; font-family: "Inter", sans-serif; }
+    #s11-lockup { position: absolute; left: 675px; top: 340px; width: 600px; height: 180px; }
+    #s11-mark { position: absolute; left: 0; top: 0; width: 180px; height: 180px; }
+    #s11-word { position: absolute; left: 216px; top: 6px; font-size: 172px; line-height: 170px; font-weight: 800; letter-spacing: -0.04em; color: #f0efec; clip-path: inset(0 100% 0 0); }
+    #s11-q { position: absolute; left: 0; width: 1920px; top: 572px; text-align: center; font-size: 52px; font-weight: 600; letter-spacing: -0.02em; color: #a3a2b0; }
+    #s11-cmd { position: absolute; left: 0; width: 1920px; top: 720px; text-align: center; font-family: "JetBrains Mono", monospace; font-size: 36px; font-weight: 500; color: #f0efec; }
+    #s11-note { position: absolute; left: 0; width: 1920px; top: 790px; text-align: center; font-size: 28px; color: #6c6b7a; }
+  </style>
+  <div id="root" data-composition-id="endcard" data-width="1920" data-height="1080">
+    <div id="s11-lockup">
+      <svg id="s11-mark" viewBox="0 0 32 32">
+        <defs><linearGradient id="s11g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8b7cf6"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs>
+        <rect id="s11-tile" width="32" height="32" rx="9" fill="#0b0b10" stroke="rgba(255,255,255,0.14)" stroke-width="0.4"/>
+        <path id="s11-line" d="M6 22 12 14l5 4 9-11" fill="none" stroke="url(#s11g)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="32" stroke-dashoffset="32"/>
+      </svg>
+      <div id="s11-word">WGO</div>
+    </div>
+    <div id="s11-q">What's going on?</div>
+    <div id="s11-cmd">$ npm run deploy</div>
+    <div id="s11-note">Open source, MIT licensed. Runs in your own AWS account.</div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      // light to dark: colour flood behind the mark
+      tl.fromTo("#root", { backgroundColor: "#f6f6f8" }, { backgroundColor: "#0a0a0f", duration: 0.4, ease: "power2.inOut" }, 0);
+      tl.fromTo("#s11-tile", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power1.out" }, 0.25);
+      tl.fromTo("#s11-mark", { scale: 0.86 }, { scale: 1, duration: 0.6, ease: "expo.out", transformOrigin: "50% 50%" }, 0.25);
+      // the logo's line draws, then the name wipes in beside it
+      tl.fromTo("#s11-line", { strokeDashoffset: 32 }, { strokeDashoffset: 0, duration: 0.6, ease: "power2.inOut" }, 0.4);
+      tl.fromTo("#s11-word", { clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)", duration: 0.45, ease: "power3.out" }, 1.0);
+      tl.fromTo("#s11-q", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power2.out" }, 1.55);
+      tl.fromTo("#s11-cmd", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power2.out" }, 2.05);
+      tl.fromTo("#s11-note", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power1.out" }, 2.3);
+      window.__timelines["endcard"] = tl;
+    })();
+  </script>
+</template>

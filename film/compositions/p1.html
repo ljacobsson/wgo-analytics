@@ -1,0 +1,38 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; background: #0a0a0f; font-family: "Inter", sans-serif; }
+    #p1-cam { position: absolute; left: 0; top: 0; width: 1600px; height: 1000px; transform-origin: 0 0; }
+    #p1-cam img { position: absolute; left: 0; top: 0; width: 1600px; height: 1000px; }
+    #p1-panel { position: absolute; left: 0; top: 0; width: 720px; height: 1080px; background: #0a0a0f; box-shadow: 30px 0 60px rgba(0,0,0,0.45); }
+    .ptext { position: absolute; left: 110px; top: 0; width: 520px; height: 1080px; display: flex; flex-direction: column; justify-content: center; gap: 30px; }
+    .ptitle { font-size: 68px; line-height: 1.08; font-weight: 700; letter-spacing: -0.03em; color: #f0efec; }
+    .ptitle span { display: inline-block; }
+    .psub { font-size: 32px; line-height: 1.4; color: #a3a2b0; }
+  </style>
+  <div id="root" data-composition-id="p1" data-width="1920" data-height="1080">
+    <div id="p1-cam"><img src="assets/ui/overview.png" alt="WGO Overview: pageviews, sessions, users, clicks, errors" /></div>
+    <div id="p1-panel">
+      <div class="ptext">
+        <div id="p1-title" class="ptitle"><span class="w">Every</span> <span class="w">click,</span> <span class="w">pageview</span> <span class="w">and</span> <span class="w">error</span></div>
+        <div id="p1-sub" class="psub">From real users, with one script tag.</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      // open: the screen moves right and closer, the panel slides in beside it
+      tl.fromTo("#p1-cam", { x: 0, y: 0, scale: 1.2 }, { x: 240, y: -160, scale: 1.6, duration: 0.7, ease: "power3.inOut" }, 0);
+      tl.fromTo("#p1-panel", { x: -860 }, { x: 0, duration: 0.7, ease: "power3.inOut" }, 0);
+      tl.fromTo("#p1-title .w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, stagger: 0.07, ease: "power2.out" }, 0.7);
+      tl.fromTo("#p1-sub", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power2.out" }, 1.4);
+      // a slow drift across the tiles and the chart
+      tl.to("#p1-cam", { x: -60, y: -200, duration: 4.1, ease: "sine.inOut" }, 0.8);
+      // close back to the box's framing
+      tl.to(["#p1-title .w", "#p1-sub"], { opacity: 0, filter: "blur(6px)", duration: 0.2, stagger: 0.02, ease: "power2.in" }, 4.9);
+      tl.to("#p1-cam", { x: 0, y: 0, scale: 1.2, duration: 0.7, ease: "power3.inOut" }, 5.2);
+      tl.to("#p1-panel", { x: -860, duration: 0.7, ease: "power3.inOut" }, 5.2);
+      window.__timelines["p1"] = tl;
+    })();
+  </script>
+</template>
