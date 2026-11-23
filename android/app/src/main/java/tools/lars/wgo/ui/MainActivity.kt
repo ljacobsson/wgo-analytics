@@ -55,10 +55,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import tools.lars.wgo.data.Account
 import tools.lars.wgo.data.AccountStore
 import tools.lars.wgo.data.ApiException
+import tools.lars.wgo.data.ALL_ACCOUNTS
 import tools.lars.wgo.data.ALL_PROJECTS
 import tools.lars.wgo.data.DEFAULT_OVERVIEW_STATS
 import tools.lars.wgo.data.DEFAULT_STATS
@@ -72,6 +76,7 @@ import tools.lars.wgo.widget.StatsWidget
 import tools.lars.wgo.widget.StatsWidgetReceiver
 import tools.lars.wgo.widget.WidgetConfig
 import tools.lars.wgo.widget.WidgetStore
+import tools.lars.wgo.widget.allProjectsName
 import java.io.IOException
 
 class MainActivity : ComponentActivity() {
@@ -100,7 +105,8 @@ private sealed interface PairState {
 private fun MainScreen(incoming: String?, consumeIncoming: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var account by remember { mutableStateOf(AccountStore.get(ctx)) }
+    var accounts by remember { mutableStateOf(AccountStore.all(ctx)) }
+    var adding by remember { mutableStateOf(false) } // pairing another account while already connected
     var pair by remember { mutableStateOf<PairState>(PairState.Idle) }
 
     fun connect(p: Pairing) {
@@ -108,9 +114,10 @@ private fun MainScreen(incoming: String?, consumeIncoming: () -> Unit) {
         scope.launch {
             pair = try {
                 val me = WgoApi(p.apiUrl, p.token).me()
-                val a = Account(p.apiUrl, p.dashUrl, p.token, me.email)
-                AccountStore.save(ctx, a)
-                account = a
+                // the same deployment and user replaces the earlier token, so its widgets keep working
+                AccountStore.save(ctx, Account(p.apiUrl, p.dashUrl, p.token, me.email))
+                accounts = AccountStore.all(ctx)
+                adding = false
                 Refresher.refreshAll(ctx)
                 PairState.Idle
             } catch (e: ApiException) {
@@ -126,7 +133,7 @@ private fun MainScreen(incoming: String?, consumeIncoming: () -> Unit) {
         consumeIncoming()
         val p = AccountStore.parsePairing(raw)
         if (p == null) pair = PairState.Failed("That link isn't a valid WGO connection link.")
-        else if (account?.token != p.token) connect(p)
+        else if (accounts.none { it.token == p.token }) connect(p)
     }
 
     Box(Modifier.fillMaxSize().background(Brand.bg)) {
@@ -154,13 +161,18 @@ private fun MainScreen(incoming: String?, consumeIncoming: () -> Unit) {
                         Spacer(Modifier.height(4.dp))
                         Text(p.message, color = Brand.muted, fontSize = 13.5.sp)
                     }
-                    val a = account
-                    if (a == null) Welcome(onConnect = ::connect)
-                    else Home(a, onDisconnect = {
-                        AccountStore.clear(ctx)
-                        account = null
-                        scope.launch { Refresher.refreshAll(ctx) } // widgets switch to "Connect WGO"
-                    })
+                    if (accounts.isEmpty()) Welcome(onConnect = ::connect)
+                    else Home(
+                        accounts,
+                        adding = adding,
+                        onAdding = { adding = it; if (!it) pair = PairState.Idle },
+                        onConnect = ::connect,
+                        onDisconnect = { a ->
+                            AccountStore.remove(ctx, a.id)
+                            accounts = AccountStore.all(ctx)
+                            scope.launch { Refresher.refreshAll(ctx) } // its widgets switch to "Connect WGO"
+                        },
+                    )
                 }
             }
         }
@@ -169,10 +181,6 @@ private fun MainScreen(incoming: String?, consumeIncoming: () -> Unit) {
 
 @Composable
 private fun Welcome(onConnect: (Pairing) -> Unit) {
-    val clipboard = LocalClipboardManager.current
-    var text by remember { mutableStateOf("") }
-    val parsed = AccountStore.parsePairing(text)
-
     Panel {
         Text("Your stats, on your home screen", color = Brand.fg, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
@@ -181,8 +189,22 @@ private fun Welcome(onConnect: (Pairing) -> Unit) {
             color = Brand.muted, fontSize = 14.sp,
         )
     }
+    ConnectPanel("Connect this phone", onConnect)
+    Text(
+        "The connection is read-only. You can revoke it any time from the dashboard.",
+        color = Brand.faint, fontSize = 12.5.sp, modifier = Modifier.padding(horizontal = 4.dp),
+    )
+}
+
+/** Pairing steps plus a field for pasting a connection link. */
+@Composable
+private fun ConnectPanel(title: String, onConnect: (Pairing) -> Unit, onCancel: (() -> Unit)? = null) {
+    val clipboard = LocalClipboardManager.current
+    var text by remember { mutableStateOf("") }
+    val parsed = AccountStore.parsePairing(text)
+
     Panel {
-        SectionTitle("Connect this phone")
+        SectionTitle(title)
         Step(1, "Open your WGO dashboard and go to Mobile widget.")
         Step(2, "Tap Connect a device. Scan the QR code with this phone, or open the link on it.")
         Step(3, "Or copy the connection link and paste it here:")
@@ -209,11 +231,10 @@ private fun Welcome(onConnect: (Pairing) -> Unit) {
             ) { Text("Paste", color = Brand.fg) }
             GradientButton("Connect", onClick = { parsed?.let(onConnect) }, enabled = parsed != null, modifier = Modifier.weight(1f))
         }
+        if (onCancel != null) TextButton(onClick = onCancel, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+            Text("Cancel", color = Brand.muted)
+        }
     }
-    Text(
-        "The connection is read-only. You can revoke it any time from the dashboard.",
-        color = Brand.faint, fontSize = 12.5.sp, modifier = Modifier.padding(horizontal = 4.dp),
-    )
 }
 
 @Composable
@@ -229,51 +250,82 @@ private fun Step(n: Int, text: String) {
 }
 
 @Composable
-private fun Home(account: Account, onDisconnect: () -> Unit) {
+private fun Home(
+    accounts: List<Account>,
+    adding: Boolean,
+    onAdding: (Boolean) -> Unit,
+    onConnect: (Pairing) -> Unit,
+    onDisconnect: (Account) -> Unit,
+) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var projects by remember { mutableStateOf<List<ProjectRef>?>(null) }
-    var loadError by remember { mutableStateOf<String?>(null) }
+    var reloads by remember { mutableIntStateOf(0) }
+    var projectsBy by remember { mutableStateOf<Map<String, List<ProjectRef>>>(emptyMap()) }
+    var errors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var loading by remember { mutableStateOf(true) }
+    var accountId by remember { mutableStateOf<String?>(null) } // an account's id, or ALL_ACCOUNTS
     var selected by remember { mutableStateOf<String?>(null) }
     var widgetCount by remember { mutableIntStateOf(0) }
     var interval by remember { mutableIntStateOf(Settings.refreshMinutes(ctx)) }
-    var confirmDisconnect by remember { mutableStateOf(false) }
+    var confirmDisconnect by remember { mutableStateOf<Account?>(null) }
 
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        scope.launch {
-            widgetCount = WidgetStore.glanceIds(ctx).size
-            try {
-                val me = WgoApi(account).me()
-                projects = me.projects
-                val known = me.projects.any { it.id == selected } || (selected == ALL_PROJECTS && me.projects.size > 1)
-                if (!known) selected = me.projects.firstOrNull()?.id
-                loadError = null
-            } catch (e: ApiException) {
-                loadError = if (e.unauthorized) "This device was disconnected from the dashboard. Disconnect and pair again." else e.message
-            } catch (e: IOException) {
-                loadError = "Offline"
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { reloads++ }
+
+    LaunchedEffect(accounts, reloads) {
+        if (reloads == 0) return@LaunchedEffect // ON_RESUME follows right away
+        widgetCount = WidgetStore.glanceIds(ctx).size
+        val results = coroutineScope { accounts.map { a -> async { a to runCatching { WgoApi(a).me() } } }.awaitAll() }
+        projectsBy = results.mapNotNull { (a, r) -> r.getOrNull()?.let { a.id to it.projects } }.toMap()
+        errors = results.mapNotNull { (a, r) ->
+            when (val e = r.exceptionOrNull()) {
+                null -> null
+                is ApiException -> a.id to (if (e.unauthorized) "This phone was disconnected from this dashboard. Remove the account and pair again." else e.message ?: "Request failed")
+                is IOException -> a.id to "Offline"
+                else -> a.id to (e.message ?: "Request failed")
+            }
+        }.toMap()
+        loading = false
+    }
+
+    // the choices, kept valid as accounts come and go
+    val allAccounts = accountId == ALL_ACCOUNTS && accounts.size > 1
+    val account = if (allAccounts) null else accounts.firstOrNull { it.id == accountId } ?: accounts.first()
+    val list = account?.let { projectsBy[it.id] }
+    val project = selected?.takeIf { s -> list.orEmpty().any { it.id == s } || (s == ALL_PROJECTS && list.orEmpty().size > 1) } ?: list?.firstOrNull()?.id
+
+    accounts.forEach { a ->
+        val error = errors[a.id]
+        Panel {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StatusDot(if (error == null) Brand.good else Brand.warn)
+                Spacer(Modifier.width(8.dp))
+                Text(if (error == null) "Connected" else "Connection problem", color = Brand.fg, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(a.email, color = Brand.fg, fontSize = 15.sp)
+            Text(a.host, color = Brand.faint, fontSize = 13.sp)
+            error?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, color = Brand.warn, fontSize = 13.sp)
+            }
+            Row {
+                if (a.dashUrl.isNotBlank()) {
+                    TextButton(onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.dashUrl))) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                        Text("Open dashboard", color = Brand.accent)
+                    }
+                    Spacer(Modifier.width(16.dp))
+                }
+                TextButton(onClick = { confirmDisconnect = a }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                    Text(if (accounts.size > 1) "Remove account" else "Disconnect", color = Brand.bad)
+                }
             }
         }
     }
 
-    Panel {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(if (loadError == null) Brand.good else Brand.warn)
-            Spacer(Modifier.width(8.dp))
-            Text(if (loadError == null) "Connected" else "Connection problem", color = Brand.fg, fontWeight = FontWeight.SemiBold)
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(account.email, color = Brand.fg, fontSize = 15.sp)
-        Text(account.host, color = Brand.faint, fontSize = 13.sp)
-        loadError?.let {
-            Spacer(Modifier.height(6.dp))
-            Text(it, color = Brand.warn, fontSize = 13.sp)
-        }
-        if (account.dashUrl.isNotBlank()) {
-            TextButton(onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(account.dashUrl))) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                Text("Open dashboard", color = Brand.accent)
-            }
-        }
+    if (adding) ConnectPanel("Add another account", onConnect, onCancel = { onAdding(false) })
+    else OutlinedButton(onClick = { onAdding(true) }, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Default.Add, contentDescription = null, tint = Brand.fg, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Add another account", color = Brand.fg)
     }
 
     Panel {
@@ -281,9 +333,19 @@ private fun Home(account: Account, onDisconnect: () -> Unit) {
             "Add a widget",
             if (widgetCount == 0) "No widgets on your home screen yet" else "$widgetCount widget${if (widgetCount == 1) "" else "s"} on your home screen",
         )
-        val list = projects
+        if (accounts.size > 1) {
+            Text("Account", color = Brand.faint, fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
+            ChipFlow(accounts.map { it.id to AccountStore.label(it, accounts) } + (ALL_ACCOUNTS to "All accounts"), account?.id ?: ALL_ACCOUNTS) { accountId = it }
+            Spacer(Modifier.height(12.dp))
+        }
         when {
-            list == null && loadError == null -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Brand.accent)
+            allAccounts -> {
+                Text("One list with the projects from every account, busiest first.", color = Brand.muted, fontSize = 13.5.sp)
+                Spacer(Modifier.height(12.dp))
+                AddWidgetButton(WidgetConfig(ALL_PROJECTS, allProjectsName(null, accounts), DEFAULT_OVERVIEW_STATS, accountId = ALL_ACCOUNTS))
+            }
+            list == null && loading -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Brand.accent)
             list.isNullOrEmpty() -> Text(
                 if (list != null) "You don't have any projects yet. Create one in the dashboard." else "Projects will show here once connected.",
                 color = Brand.muted, fontSize = 13.5.sp,
@@ -292,24 +354,12 @@ private fun Home(account: Account, onDisconnect: () -> Unit) {
                 if (list.size > 1) {
                     Text("Project", color = Brand.faint, fontSize = 12.sp)
                     Spacer(Modifier.height(6.dp))
-                    ChipFlow(listOf(ALL_PROJECTS to "All projects") + list.map { it.id to it.name }, selected) { selected = it }
+                    ChipFlow(listOf(ALL_PROJECTS to "All projects") + list.map { it.id to it.name }, project) { selected = it }
                     Spacer(Modifier.height(12.dp))
                 }
-                GradientButton(
-                    "Add to home screen",
-                    icon = { Icon(Icons.Default.Add, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
-                    onClick = {
-                        val config = if (selected == ALL_PROJECTS) WidgetConfig(ALL_PROJECTS, "All projects", DEFAULT_OVERVIEW_STATS)
-                        else list.first { it.id == selected }.let { WidgetConfig(it.id, it.name, DEFAULT_STATS) }
-                        val ok = StatsWidgetReceiver.requestPin(ctx, config)
-                        if (!ok) Toast.makeText(ctx, "Long-press your home screen, tap Widgets, then choose WGO", Toast.LENGTH_LONG).show()
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Or long-press your home screen, tap Widgets, and drag WGO. You can resize it: it rearranges itself from a single number up to a full board. Tap a widget's title to change its stats.",
-                    color = Brand.faint, fontSize = 12.5.sp,
+                AddWidgetButton(
+                    if (project == ALL_PROJECTS) WidgetConfig(ALL_PROJECTS, allProjectsName(account, accounts), DEFAULT_OVERVIEW_STATS, accountId = account?.id)
+                    else (list.firstOrNull { it.id == project } ?: list.first()).let { WidgetConfig(it.id, it.name, DEFAULT_STATS, accountId = account?.id) },
                 )
             }
         }
@@ -336,17 +386,38 @@ private fun Home(account: Account, onDisconnect: () -> Unit) {
         }
     }
 
-    TextButton(onClick = { confirmDisconnect = true }, modifier = Modifier.fillMaxWidth()) {
-        Text("Disconnect this phone", color = Brand.bad)
+    confirmDisconnect?.let { a ->
+        AlertDialog(
+            onDismissRequest = { confirmDisconnect = null },
+            title = { Text(if (accounts.size > 1) "Remove ${a.host}?" else "Disconnect?") },
+            text = { Text("Widgets for this account stop updating until you pair it again. To revoke this phone's access completely, remove it under Mobile widget in the dashboard.") },
+            confirmButton = {
+                TextButton(onClick = { confirmDisconnect = null; onDisconnect(a) }) {
+                    Text(if (accounts.size > 1) "Remove" else "Disconnect", color = Brand.bad)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDisconnect = null }) { Text("Cancel") } },
+            containerColor = Brand.raised,
+        )
     }
+}
 
-    if (confirmDisconnect) AlertDialog(
-        onDismissRequest = { confirmDisconnect = false },
-        title = { Text("Disconnect?") },
-        text = { Text("Widgets stop updating until you pair again. To revoke this phone's access completely, remove it under Mobile widget in the dashboard.") },
-        confirmButton = { TextButton(onClick = { confirmDisconnect = false; onDisconnect() }) { Text("Disconnect", color = Brand.bad) } },
-        dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text("Cancel") } },
-        containerColor = Brand.raised,
+@Composable
+private fun AddWidgetButton(config: WidgetConfig) {
+    val ctx = LocalContext.current
+    GradientButton(
+        "Add to home screen",
+        icon = { Icon(Icons.Default.Add, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
+        onClick = {
+            val ok = StatsWidgetReceiver.requestPin(ctx, config)
+            if (!ok) Toast.makeText(ctx, "Long-press your home screen, tap Widgets, then choose WGO", Toast.LENGTH_LONG).show()
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(10.dp))
+    Text(
+        "Or long-press your home screen, tap Widgets, and drag WGO. You can resize it: it rearranges itself from a single number up to a full board. Tap a widget's title to change its stats.",
+        color = Brand.faint, fontSize = 12.5.sp,
     )
 }
 

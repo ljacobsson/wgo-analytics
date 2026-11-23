@@ -2,6 +2,9 @@ package tools.lars.wgo.data
 
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -62,4 +65,22 @@ class WgoApi(private val apiUrl: String, private val token: String) {
             else -> "Request failed ($status)"
         }
     }
+}
+
+/** Fetches the overview from every account at once. One account failing doesn't fail the others. */
+suspend fun fetchOverviews(accounts: List<Account>, range: String, stats: List<String>): List<Pair<Account, Result<WidgetOverview>>> =
+    coroutineScope {
+        accounts.map { a -> async { a to runCatching { WgoApi(a).overview(range, stats) } } }.awaitAll()
+    }
+
+/**
+ * One overview from several accounts' overviews: every row tagged with its account, busiest first by the first
+ * stat (as the server orders them).
+ */
+fun mergeOverviews(parts: List<Pair<String, WidgetOverview>>): WidgetOverview? {
+    val first = parts.firstOrNull()?.second ?: return null
+    val lead = { r: OverviewRow -> r.stats.firstOrNull()?.value ?: -1.0 }
+    val rows = parts.flatMap { (accountId, o) -> o.projects.map { it.copy(accountId = accountId) } }
+        .sortedWith(compareByDescending(lead).thenBy { it.project.name.lowercase() })
+    return first.copy(projects = rows, total = parts.sumOf { it.second.total })
 }

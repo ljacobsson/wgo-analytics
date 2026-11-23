@@ -15,10 +15,14 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import tools.lars.wgo.data.Account
 import tools.lars.wgo.data.AccountStore
 import tools.lars.wgo.data.ApiException
 import tools.lars.wgo.data.Settings
 import tools.lars.wgo.data.WgoApi
+import tools.lars.wgo.data.WidgetOverview
+import tools.lars.wgo.data.fetchOverviews
+import tools.lars.wgo.data.mergeOverviews
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -26,36 +30,60 @@ object Refresher {
     /** Fetch fresh numbers for one widget and redraw it. Never throws. */
     suspend fun refresh(context: Context, id: GlanceId) {
         val config = WidgetStore.config(context, id) ?: return
-        val account = AccountStore.get(context)
-        if (account == null) {
+        val accounts = AccountStore.resolve(context, config.accountId)
+        if (accounts.isEmpty()) {
             WidgetStore.updateData(context, id) { it.copy(refreshing = false, error = "Not connected", errorKind = "auth") }
             StatsWidget().update(context, id)
             return
         }
         WidgetStore.updateData(context, id) { it.copy(refreshing = true) }
         StatsWidget().update(context, id)
-        val api = WgoApi(account)
-        val result = runCatching {
-            val now = System.currentTimeMillis()
-            if (config.allProjects) WidgetData(overview = api.overview(config.range, config.stats), updatedAt = now)
-            else WidgetData(summary = api.summary(config.projectId, config.range, config.stats), updatedAt = now)
-        }
-        WidgetStore.updateData(context, id) { old ->
-            result.fold(
-                onSuccess = { it },
-                onFailure = { e ->
-                    val kind = when {
-                        e is ApiException && e.unauthorized -> "auth"
-                        e is ApiException -> "other"
-                        e is IOException -> "net"
-                        else -> "other"
-                    }
-                    val message = if (kind == "net") "Offline" else e.message ?: "Refresh failed"
-                    old.copy(refreshing = false, error = message, errorKind = kind)
-                },
-            )
+        val now = System.currentTimeMillis()
+        if (config.allProjects) {
+            val results = fetchOverviews(accounts, config.range, config.stats)
+            WidgetStore.updateData(context, id) { old -> overviewData(old, results, accounts, now) }
+        } else {
+            val result = runCatching { WgoApi(accounts.first()).summary(config.projectId, config.range, config.stats) }
+            WidgetStore.updateData(context, id) { old ->
+                result.fold(
+                    onSuccess = { WidgetData(summary = it, updatedAt = now) },
+                    onFailure = { e -> failure(e).let { (message, kind) -> old.copy(refreshing = false, error = message, errorKind = kind) } },
+                )
+            }
         }
         StatsWidget().update(context, id)
+    }
+
+    /** A user-facing message and kind (auth | net | other) for a failed request. */
+    private fun failure(e: Throwable): Pair<String, String> {
+        val kind = when {
+            e is ApiException && e.unauthorized -> "auth"
+            e is ApiException -> "other"
+            e is IOException -> "net"
+            else -> "other"
+        }
+        return (if (kind == "net") "Offline" else e.message ?: "Refresh failed") to kind
+    }
+
+    /**
+     * Merges the accounts that answered. An account that failed keeps its previous rows, and the header names it,
+     * so one deployment being down or disconnected doesn't blank out the others.
+     */
+    private fun overviewData(old: WidgetData, results: List<Pair<Account, Result<WidgetOverview>>>, accounts: List<Account>, now: Long): WidgetData {
+        val multi = accounts.size > 1
+        val failed = results.mapNotNull { (a, r) -> r.exceptionOrNull()?.let { a to failure(it) } }
+        // with several accounts, name the one that failed; a revoked token there doesn't take over the whole widget
+        val error = failed.firstOrNull()?.let { (a, f) ->
+            if (!multi) f else "${AccountStore.label(a, accounts)}: ${if (f.second == "auth") "disconnected" else f.first}" to (if (f.second == "net") "net" else "other")
+        }
+        // nothing new: keep what's on screen
+        if (failed.size == results.size) return old.copy(refreshing = false, error = error?.first, errorKind = error?.second)
+        val fresh = results.mapNotNull { (a, r) -> r.getOrNull()?.let { a.id to it } }
+        val stale = failed.mapNotNull { (a, _) ->
+            val rows = old.overview?.projects?.filter { it.accountId == a.id }.orEmpty()
+            old.overview?.takeIf { rows.isNotEmpty() }?.let { a.id to it.copy(projects = rows, total = rows.size) }
+        }
+        return WidgetData(overview = mergeOverviews(fresh + stale), updatedAt = now, error = error?.first, errorKind = error?.second)
     }
 
     suspend fun refreshAll(context: Context) {

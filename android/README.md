@@ -6,6 +6,10 @@ with a grid at 4×3 and larger. A widget can also show **all projects**: one row
 with up to 3 built-in stats each. The rows stretch to fill the widget, or scroll when they don't all fit. It ships
 as an APK that the dashboard serves under **Mobile widget**.
 
+The app can be paired with **several accounts**, e.g. a private and a work deployment. Each widget belongs to one
+account, and an all-projects widget can also span **all accounts**: one list with every account's projects, busiest
+first, each row naming its account.
+
 ## How it fits together
 
 ```
@@ -32,6 +36,12 @@ Widget refresh (WorkManager, 15–180 min, or ↻) ─▶ GET {apiUrl}/widget/v1
   since tracked clicks, events and metrics differ per project. The widget stores `projectId = "*"` for this mode.
 - **Refresh**: Android runs background work at most every 15 minutes, so that's the floor for unattended
   updates. Tapping ↻ fetches immediately, and so does opening the app.
+- **Accounts** (`data/Account.kt`): a JSON list in app-private prefs. An account's id is a hash of its API URL and
+  email, so pairing the same account again replaces its token and keeps its widgets. Widgets store `accountId`, or
+  `"*"` for all accounts. Widgets from before multi-account support store none and keep using the account that was
+  paired then (migrated on first start). An all-accounts widget fetches every account's overview in parallel and
+  merges the rows client-side (`mergeOverviews`). An account that fails keeps its previous rows on screen and the
+  header names it, so one deployment being down doesn't blank out the others.
 
 ## Code map
 
@@ -43,7 +53,7 @@ Widget refresh (WorkManager, 15–180 min, or ↻) ─▶ GET {apiUrl}/widget/v1
 | `widget/Sparkline.kt` | sparklines rendered to bitmaps (widgets can't draw paths) |
 | `widget/Palette.kt` | Dark / Light / Auto / Material You colours |
 | `widget/StatsWidgetReceiver.kt` | widget provider; applies config to widgets pinned from inside the app |
-| `ui/MainActivity.kt` | pairing (deep link or pasted link), account, add widget, refresh interval |
+| `ui/MainActivity.kt` | pairing (deep link or pasted link), accounts, add widget, refresh interval |
 | `ui/ConfigActivity.kt` | per-widget setup with a live preview of the real numbers |
 | `data/` | API client, models, account storage, link parsing |
 

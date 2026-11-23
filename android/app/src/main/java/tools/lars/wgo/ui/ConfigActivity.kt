@@ -58,8 +58,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import tools.lars.wgo.data.ALL_ACCOUNTS
 import tools.lars.wgo.data.ALL_PROJECTS
 import tools.lars.wgo.data.AccountStore
 import tools.lars.wgo.data.DEFAULT_OVERVIEW_STATS
@@ -75,12 +79,15 @@ import tools.lars.wgo.data.WgoApi
 import tools.lars.wgo.data.WidgetOverview
 import tools.lars.wgo.data.WidgetStat
 import tools.lars.wgo.data.WidgetSummary
+import tools.lars.wgo.data.fetchOverviews
+import tools.lars.wgo.data.mergeOverviews
 import tools.lars.wgo.widget.Fmt
 import tools.lars.wgo.widget.Scheduler
 import tools.lars.wgo.widget.StatsWidget
 import tools.lars.wgo.widget.WidgetConfig
 import tools.lars.wgo.widget.WidgetData
 import tools.lars.wgo.widget.WidgetStore
+import tools.lars.wgo.widget.allProjectsName
 
 /** Widget configuration: shown when a widget is placed, and when its title is tapped. */
 class ConfigActivity : ComponentActivity() {
@@ -112,8 +119,9 @@ private val THEMES = listOf("auto" to "Auto", "dark" to "Dark", "light" to "Ligh
 private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var account by remember { mutableStateOf(AccountStore.get(ctx)) }
-    var projects by remember { mutableStateOf<List<ProjectRef>?>(null) }
+    var accounts by remember { mutableStateOf(AccountStore.all(ctx)) }
+    var accountId by remember { mutableStateOf<String?>(null) } // an account's id, or ALL_ACCOUNTS
+    var projectsBy by remember { mutableStateOf<Map<String, List<ProjectRef>>>(emptyMap()) }
     var options by remember { mutableStateOf<List<StatOption>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
@@ -128,6 +136,11 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
     var previewFor by remember { mutableStateOf("") } // which project/range/stats `preview` was computed for
     var saving by remember { mutableStateOf(false) }
 
+    val allAccounts = accountId == ALL_ACCOUNTS
+    val account = accounts.firstOrNull { it.id == accountId }
+    /** the accounts the widget reads from */
+    val selected = if (allAccounts) accounts else listOfNotNull(account)
+    val projects = if (allAccounts) null else account?.let { projectsBy[it.id] }
     val allProjects = projectId == ALL_PROJECTS
     val maxStats = if (allProjects) MAX_OVERVIEW_STATS else MAX_STATS
 
@@ -140,48 +153,57 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
         projectId = id
     }
 
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { account = AccountStore.get(ctx) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { accounts = AccountStore.all(ctx) }
 
-    // existing config (reconfigure) + the user's projects
-    LaunchedEffect(account) {
-        val a = account ?: return@LaunchedEffect
+    // existing config (reconfigure) + every account's projects
+    LaunchedEffect(accounts) {
+        if (accounts.isEmpty()) return@LaunchedEffect
         if (!loaded) {
             WidgetStore.glanceId(ctx, appWidgetId)?.let { WidgetStore.config(ctx, it) }?.let { c ->
                 projectId = c.projectId; range = c.range; theme = c.theme; opacity = c.opacity.toFloat()
                 stats.clear(); stats.addAll(c.stats)
+                accountId = if (c.accountId == ALL_ACCOUNTS) ALL_ACCOUNTS else AccountStore.resolve(ctx, c.accountId).firstOrNull()?.id
             }
             if (stats.isEmpty()) stats.addAll(DEFAULT_STATS)
             loaded = true
         }
-        runCatching { WgoApi(a).me() }
-            .onSuccess { me ->
-                projects = me.projects
-                val known = me.projects.any { it.id == projectId } || (projectId == ALL_PROJECTS && me.projects.isNotEmpty())
-                if (!known) projectId = me.projects.firstOrNull()?.id
-                error = null
-            }
-            .onFailure { error = it.message ?: "Couldn't load your projects" }
+        if (accountId != ALL_ACCOUNTS && accounts.none { it.id == accountId }) accountId = accounts.first().id
+        val results = coroutineScope { accounts.map { a -> async { a to runCatching { WgoApi(a).me() } } }.awaitAll() }
+        projectsBy = results.mapNotNull { (a, r) -> r.getOrNull()?.let { a.id to it.projects } }.toMap()
+        error = results.firstNotNullOfOrNull { (a, r) ->
+            r.exceptionOrNull()?.let { e -> (e.message ?: "Couldn't load your projects").let { if (accounts.size > 1) "${a.host}: $it" else it } }
+        }
     }
 
-    LaunchedEffect(projectId, account, projects) {
-        val a = account ?: return@LaunchedEffect
+    // keep the project valid for the chosen account
+    LaunchedEffect(accountId, projectsBy) {
+        if (allAccounts) return@LaunchedEffect selectProject(ALL_PROJECTS)
+        val list = projects ?: return@LaunchedEffect
+        val known = list.any { it.id == projectId } || (projectId == ALL_PROJECTS && list.isNotEmpty())
+        if (!known) projectId = list.firstOrNull()?.id
+    }
+
+    LaunchedEffect(projectId, accountId, projectsBy) {
         // an overview offers built-ins only, which every project's catalog lists
-        val pid = (if (allProjects) projects?.firstOrNull()?.id else projectId) ?: return@LaunchedEffect
+        val a = selected.firstOrNull { !projectsBy[it.id].isNullOrEmpty() } ?: return@LaunchedEffect
+        val pid = (if (allProjects) projectsBy[a.id]?.firstOrNull()?.id else projectId) ?: return@LaunchedEffect
         runCatching { WgoApi(a).catalog(pid) }.onSuccess { options = it.options }
     }
 
     // live preview with real numbers, debounced while the user is picking
-    LaunchedEffect(projectId, range, stats.toList(), account) {
-        val a = account ?: return@LaunchedEffect
+    LaunchedEffect(projectId, range, stats.toList(), selected) {
         val pid = projectId ?: return@LaunchedEffect
+        if (selected.isEmpty()) return@LaunchedEffect
         if (stats.isEmpty()) { preview = emptyList(); overviewPreview = null; return@LaunchedEffect }
         delay(350)
         val keys = stats.toList()
+        val key = "$accountId|$pid|$range|$keys"
         if (pid == ALL_PROJECTS) {
             if (keys.any { it !in OVERVIEW_STATS } || keys.size > MAX_OVERVIEW_STATS) return@LaunchedEffect
-            runCatching { WgoApi(a).overview(range, keys) }.onSuccess { overviewPreview = it; previewFor = "$pid|$range|$keys" }
+            val parts = fetchOverviews(selected, range, keys).mapNotNull { (a, r) -> r.getOrNull()?.let { a.id to it } }
+            mergeOverviews(parts)?.let { overviewPreview = it; previewFor = key }
         } else {
-            runCatching { WgoApi(a).summary(pid, range, keys) }.onSuccess { preview = it.stats; previewFor = "$pid|$range|$keys" }
+            runCatching { WgoApi(selected.first()).summary(pid, range, keys) }.onSuccess { preview = it.stats; previewFor = key }
         }
     }
 
@@ -189,7 +211,7 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
 
     fun save() {
         val pid = projectId ?: return
-        val name = if (pid == ALL_PROJECTS) "All projects" else projects?.firstOrNull { it.id == pid }?.name ?: ""
+        val name = if (pid == ALL_PROJECTS) allProjectsName(account, accounts) else projects?.firstOrNull { it.id == pid }?.name ?: ""
         saving = true
         scope.launch {
             val id = WidgetStore.glanceId(ctx, appWidgetId)
@@ -198,9 +220,9 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
                 onDone()
                 return@launch
             }
-            WidgetStore.saveConfig(ctx, id, WidgetConfig(pid, name, stats.toList(), range, theme, opacity.toInt()))
+            WidgetStore.saveConfig(ctx, id, WidgetConfig(pid, name, stats.toList(), range, theme, opacity.toInt(), accountId))
             // show the preview's numbers immediately; the refresh below replaces them within seconds
-            val fresh = previewFor == "$pid|$range|${stats.toList()}"
+            val fresh = previewFor == "$accountId|$pid|$range|${stats.toList()}"
             val shown = preview?.takeIf { fresh && pid != ALL_PROJECTS }
             val shownOverview = overviewPreview?.takeIf { fresh && pid == ALL_PROJECTS }
             if (shown != null) WidgetStore.updateData(ctx, id) {
@@ -217,7 +239,7 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
     }
 
     Box(Modifier.fillMaxSize().background(Brand.bg)) {
-        if (account == null) {
+        if (accounts.isEmpty()) {
             Column(Modifier.fillMaxSize().safeDrawingPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 BrandHeader("Widget setup")
                 Panel {
@@ -240,7 +262,15 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
             item {
                 Panel {
                     val list = projects
-                    if (list == null) {
+                    if (accounts.size > 1) {
+                        SectionTitle("Account", if (allAccounts) "Projects from every connected account in one list" else null)
+                        ChipFlow(accounts.map { it.id to AccountStore.label(it, accounts) } + (ALL_ACCOUNTS to "All accounts"), accountId) { accountId = it }
+                        Spacer(Modifier.height(16.dp))
+                    }
+                    if (allAccounts) {
+                        SectionTitle("Project", "One row per project, busiest first")
+                        ChipFlow(listOf(ALL_PROJECTS to "All projects"), ALL_PROJECTS) {}
+                    } else if (list == null) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Brand.accent)
                     } else {
                         SectionTitle("Project", if (allProjects) "One row per project, busiest first" else null)
@@ -272,7 +302,12 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
                 }
             }
 
-            item { if (allProjects) OverviewPreview(overviewPreview, stats.toList(), labelOf) else Preview(preview, stats.toList(), labelOf) }
+            item {
+                if (allProjects) {
+                    val hostOf = { id: String? -> accounts.firstOrNull { it.id == id }?.let { AccountStore.label(it, accounts) } }
+                    OverviewPreview(overviewPreview?.takeIf { previewFor.startsWith("$accountId|") }, stats.toList(), labelOf, if (allAccounts && accounts.size > 1) hostOf else null)
+                } else Preview(preview, stats.toList(), labelOf)
+            }
 
             grouped.forEach { (category, opts) ->
                 item(key = "cat-$category") {
@@ -365,7 +400,7 @@ private fun OptionRow(opt: StatOption, enabled: Boolean, onAdd: () -> Unit) {
 
 /** A Compose rendition of an all-projects widget: one row per project with the chosen stats. */
 @Composable
-private fun OverviewPreview(overview: WidgetOverview?, keys: List<String>, labelOf: (String) -> String) {
+private fun OverviewPreview(overview: WidgetOverview?, keys: List<String>, labelOf: (String) -> String, accountLabel: ((String?) -> String?)?) {
     Panel {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Preview", color = Brand.fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -378,13 +413,13 @@ private fun OverviewPreview(overview: WidgetOverview?, keys: List<String>, label
             keys.forEach { Text(labelOf(it), color = Brand.faint, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.width(72.dp)) }
         }
         val rows = overview?.projects ?: emptyList()
-        rows.forEach { row -> OverviewPreviewRow(row, keys) }
+        rows.forEach { row -> OverviewPreviewRow(row, keys, accountLabel?.invoke(row.accountId)) }
         overview?.let { if (it.total > rows.size) Text("Showing the busiest ${rows.size} of ${it.total} projects", color = Brand.faint, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, top = 6.dp)) }
     }
 }
 
 @Composable
-private fun OverviewPreviewRow(row: OverviewRow, keys: List<String>) {
+private fun OverviewPreviewRow(row: OverviewRow, keys: List<String>, account: String?) {
     val byKey = row.stats.associateBy { it.key }
     Row(
         Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(12.dp)).background(Brand.tile).padding(horizontal = 12.dp, vertical = 9.dp),
@@ -393,6 +428,7 @@ private fun OverviewPreviewRow(row: OverviewRow, keys: List<String>) {
         Column(Modifier.weight(1f)) {
             Text(row.project.name, color = Brand.fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             row.error?.let { Text(it, color = Brand.warn, fontSize = 11.5.sp) }
+                ?: account?.let { Text(it, color = Brand.faint, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
         keys.forEachIndexed { i, key ->
             val s = byKey[key]

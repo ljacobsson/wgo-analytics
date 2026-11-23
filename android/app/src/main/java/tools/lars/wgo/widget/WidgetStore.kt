@@ -9,6 +9,9 @@ import androidx.glance.appwidget.state.getAppWidgetState
 import androidx.glance.appwidget.state.updateAppWidgetState
 import androidx.glance.state.PreferencesGlanceStateDefinition
 import kotlinx.serialization.Serializable
+import tools.lars.wgo.data.ALL_ACCOUNTS
+import tools.lars.wgo.data.Account
+import tools.lars.wgo.data.AccountStore
 import tools.lars.wgo.data.ALL_PROJECTS
 import tools.lars.wgo.data.WgoJson
 import tools.lars.wgo.data.WidgetOverview
@@ -26,9 +29,21 @@ data class WidgetConfig(
     val theme: String = "auto",
     /** background opacity, 30..100 */
     val opacity: Int = 100,
+    /**
+     * the account the project belongs to, or [ALL_ACCOUNTS] for an all-projects widget across every account.
+     * Null for widgets set up before multi-account support: see [tools.lars.wgo.data.AccountStore.resolve].
+     */
+    val accountId: String? = null,
 ) {
     val allProjects: Boolean get() = projectId == ALL_PROJECTS
 }
+
+/**
+ * The title of an all-projects widget. With several accounts connected, one scoped to a single [account] names
+ * it, to tell it apart from the same widget for another account.
+ */
+fun allProjectsName(account: Account?, accounts: List<Account>): String =
+    if (account != null && accounts.size > 1) "All projects · ${AccountStore.label(account, accounts)}" else "All projects"
 
 /** The last fetched data plus fetch status. A failed refresh keeps the previous summary on screen. */
 @Serializable
@@ -67,8 +82,8 @@ object WidgetStore {
         updateAppWidgetState(context, id) { prefs ->
             val old = config(prefs)
             prefs[CONFIG] = WgoJson.encodeToString(WidgetConfig.serializer(), config)
-            // a different project means the cached numbers no longer belong to this widget
-            if (old != null && old.projectId != config.projectId) prefs[DATA] = WgoJson.encodeToString(WidgetData.serializer(), WidgetData())
+            // a different project or account means the cached numbers no longer belong to this widget
+            if (old != null && (old.projectId != config.projectId || old.accountId != config.accountId)) prefs[DATA] = WgoJson.encodeToString(WidgetData.serializer(), WidgetData())
         }
     }
 

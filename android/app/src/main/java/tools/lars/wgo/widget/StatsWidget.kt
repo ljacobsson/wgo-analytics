@@ -75,7 +75,7 @@ class StatsWidget : GlanceAppWidget() {
             val config = WidgetStore.config(prefs)
             val data = WidgetStore.data(prefs)
             val pal = Palette.forTheme(context, config?.theme ?: "auto", config?.opacity ?: 100)
-            Content(appWidgetId, config, data, AccountStore.get(context), pal)
+            Content(appWidgetId, config, data, config?.let { AccountStore.resolve(context, it.accountId) }.orEmpty(), pal)
         }
     }
 }
@@ -92,8 +92,11 @@ private class Ui(
     val appWidgetId: Int,
     val config: WidgetConfig,
     val data: WidgetData,
-    val account: Account,
+    /** the widget's account, or every account for an all-accounts overview */
+    val accounts: List<Account>,
 ) {
+    /** several accounts: rows name the one they come from */
+    val multi: Boolean get() = accounts.size > 1
     fun configure(): Action = actionStartActivity(
         Intent(ctx, ConfigActivity::class.java)
             .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
@@ -101,8 +104,12 @@ private class Ui(
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
     )
 
-    fun open(page: String, projectId: String = config.projectId): Action {
-        val dash = account.dashUrl
+    fun account(id: String?): Account = accounts.firstOrNull { it.id == id } ?: accounts.first()
+
+    fun label(row: OverviewRow): String = AccountStore.label(account(row.accountId), accounts)
+
+    fun open(page: String, projectId: String = config.projectId, accountId: String? = null): Action {
+        val dash = account(accountId).dashUrl
         if (dash.isBlank()) return actionStartActivity(Intent(ctx, MainActivity::class.java))
         val url = "$dash/#/p/${Uri.encode(projectId)}/$page?range=${config.range}"
         return actionStartActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -110,7 +117,7 @@ private class Ui(
 }
 
 @Composable
-private fun Content(appWidgetId: Int, config: WidgetConfig?, data: WidgetData, account: Account?, pal: Palette) {
+private fun Content(appWidgetId: Int, config: WidgetConfig?, data: WidgetData, accounts: List<Account>, pal: Palette) {
     val ctx = LocalContext.current
     Box(
         modifier = GlanceModifier.fillMaxSize().appWidgetBackground().background(pal.bg).cornerRadius(24.dp).padding(PAD.dp),
@@ -125,13 +132,13 @@ private fun Content(appWidgetId: Int, config: WidgetConfig?, data: WidgetData, a
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
                 ),
             )
-            account == null || data.errorKind == "auth" -> Prompt(
+            accounts.isEmpty() || data.errorKind == "auth" -> Prompt(
                 pal,
-                if (account == null) "Connect WGO" else "Device disconnected",
+                if (accounts.isEmpty()) "Connect WGO" else "Device disconnected",
                 "Tap to pair this phone with your dashboard",
                 actionStartActivity(Intent(ctx, MainActivity::class.java)),
             )
-            else -> Body(Ui(ctx, pal, appWidgetId, config, data, account))
+            else -> Body(Ui(ctx, pal, appWidgetId, config, data, accounts))
         }
     }
 }
@@ -291,7 +298,7 @@ private fun Overview(ui: Ui, rows: List<OverviewRow>, total: Int, w: Float, h: F
                 }
             }
         } else LazyColumn(GlanceModifier.fillMaxWidth().defaultWeight()) {
-            itemsIndexed(rows, itemId = { _, row -> row.project.id.hashCode().toLong() }) { i, row ->
+            itemsIndexed(rows, itemId = { _, row -> "${row.accountId}/${row.project.id}".hashCode().toLong() }) { i, row ->
                 Column(GlanceModifier.fillMaxWidth().padding(top = if (i > 0) rowGap.dp else 0.dp)) {
                     OverviewRowView(ui, row, cols, colW, if (spark) sparkW else 0f, GlanceModifier.height(rowH.dp))
                 }
@@ -306,12 +313,13 @@ private fun ColumnScope.OverviewRowView(ui: Ui, row: OverviewRow, cols: Int, col
     val lead = row.stats.firstOrNull()
     Row(
         GlanceModifier.fillMaxWidth().then(sizing).background(pal.tile).cornerRadius(14.dp).padding(horizontal = 10.dp)
-            .clickable(ui.open(lead?.page ?: "overview", row.project.id)),
+            .clickable(ui.open(lead?.page ?: "overview", row.project.id, row.accountId)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(GlanceModifier.defaultWeight()) {
             Text(row.project.name, maxLines = 1, style = TextStyle(color = pal.p(pal.text), fontSize = 13.sp, fontWeight = FontWeight.Bold))
             if (row.error != null) Text(row.error, maxLines = 1, style = TextStyle(color = pal.p(pal.warn), fontSize = 10.sp))
+            else if (ui.multi) Text(ui.label(row), maxLines = 1, style = TextStyle(color = pal.p(pal.faint), fontSize = 10.sp))
             else if (cols == 1 && lead != null) Text(lead.label, maxLines = 1, style = TextStyle(color = pal.p(pal.faint), fontSize = 10.sp))
         }
         if (sparkW > 0 && lead != null && lead.series.size >= 2) {

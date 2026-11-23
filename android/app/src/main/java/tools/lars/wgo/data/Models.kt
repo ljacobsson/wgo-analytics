@@ -54,7 +54,13 @@ data class WidgetSummary(
 )
 
 @Serializable
-data class OverviewRow(val project: ProjectRef, val stats: List<WidgetStat> = emptyList(), val error: String? = null)
+data class OverviewRow(
+    val project: ProjectRef,
+    val stats: List<WidgetStat> = emptyList(),
+    val error: String? = null,
+    /** not from the API: the account the row came from, set by [mergeOverviews] */
+    val accountId: String? = null,
+)
 
 @Serializable
 data class WidgetOverview(
