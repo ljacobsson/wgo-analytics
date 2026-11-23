@@ -18,6 +18,7 @@ Dashboard → Mobile widget                     Phone
   Connect a device → POST /api/devices          │
      QR: https://<dash>/pair.html#api=…&token=dt_…   (token in the fragment: never sent to the server)
         └─ "Open in the WGO app" → wgo://pair?… ─▶ MainActivity stores {apiUrl, dashUrl, token}
+     or scanned in the app (Scan QR code) ────▶ same link, same pairing
                                                 │
 Widget refresh (WorkManager, 15–180 min, or ↻) ─▶ GET {apiUrl}/widget/v1/projects/{pid}/summary
                                                     Authorization: Bearer dt_…
@@ -53,7 +54,8 @@ Widget refresh (WorkManager, 15–180 min, or ↻) ─▶ GET {apiUrl}/widget/v1
 | `widget/Sparkline.kt` | sparklines rendered to bitmaps (widgets can't draw paths) |
 | `widget/Palette.kt` | Dark / Light / Auto / Material You colours |
 | `widget/StatsWidgetReceiver.kt` | widget provider; applies config to widgets pinned from inside the app |
-| `ui/MainActivity.kt` | pairing (deep link or pasted link), accounts, add widget, refresh interval |
+| `ui/MainActivity.kt` | pairing (deep link, in-app QR scan or pasted link), accounts, add widget, refresh interval |
+| `ui/QrScanner.kt` | full-screen QR scanner for pairing: CameraX preview, ZXing decoding (no Play Services needed) |
 | `ui/ConfigActivity.kt` | per-widget setup with a live preview of the real numbers |
 | `data/` | API client, models, account storage, link parsing |
 

@@ -1,11 +1,15 @@
 package tools.lars.wgo.ui
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -53,6 +57,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.async
@@ -199,14 +204,42 @@ private fun Welcome(onConnect: (Pairing) -> Unit) {
 /** Pairing steps plus a field for pasting a connection link. */
 @Composable
 private fun ConnectPanel(title: String, onConnect: (Pairing) -> Unit, onCancel: (() -> Unit)? = null) {
+    val ctx = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var text by remember { mutableStateOf("") }
     val parsed = AccountStore.parsePairing(text)
 
+    var cameraDenied by remember { mutableStateOf(false) }
+    val scan = rememberLauncherForActivityResult(QrScanActivity.Contract()) { it?.let(onConnect) }
+    val askCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        cameraDenied = !granted
+        if (granted) scan.launch(Unit)
+    }
+
     Panel {
         SectionTitle(title)
         Step(1, "Open your WGO dashboard and go to Mobile widget.")
-        Step(2, "Tap Connect a device. Scan the QR code with this phone, or open the link on it.")
+        Step(2, "Tap Connect a device, then scan the QR code it shows.")
+        Spacer(Modifier.height(8.dp))
+        GradientButton(
+            "Scan QR code",
+            onClick = {
+                if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    cameraDenied = false // may have been allowed in Settings since
+                    scan.launch(Unit)
+                } else askCamera.launch(Manifest.permission.CAMERA)
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (cameraDenied) {
+            Spacer(Modifier.height(8.dp))
+            Text("Scanning needs camera access. Allow it in Settings, or paste the link below.", color = Brand.warn, fontSize = 13.sp)
+            TextButton(
+                onClick = { ctx.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", ctx.packageName, null))) },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+            ) { Text("Open settings", color = Brand.accent) }
+        }
+        Spacer(Modifier.height(8.dp))
         Step(3, "Or copy the connection link and paste it here:")
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
