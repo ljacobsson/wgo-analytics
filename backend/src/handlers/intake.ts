@@ -43,6 +43,25 @@ const headerLines = (event: APIGatewayProxyEventV2, keep: (name: string) => bool
     .filter(([name]) => keep(name.toLowerCase()))
     .map(([name, value]) => line(name.toLowerCase(), value));
 
+/**
+ * A function URL passes text types (application/json, text/*) to the function as a string, which mangles a
+ * gzipped JSON body (OTLP exporters send those). So CloudFront (IntakeBodyFunction in template.yaml) sends every
+ * body as application/octet-stream, which arrives base64-encoded byte for byte, and moves the request's own
+ * Content-Type into this query parameter.
+ */
+export const CONTENT_TYPE_PARAM = 'wgo-ct';
+
+/** The Content-Type the sender used. */
+export function contentType(event: APIGatewayProxyEventV2): string | undefined {
+  const moved = event.queryStringParameters?.[CONTENT_TYPE_PARAM];
+  if (moved == null) return event.headers?.['content-type'];
+  try {
+    return moved.includes('%') ? decodeURIComponent(moved) : moved; // in case it arrives encoded twice
+  } catch {
+    return moved;
+  }
+}
+
 /** The request body as base64, whether the function URL handed it over as text or base64. */
 const base64Body = (event: APIGatewayProxyEventV2) => (!event.body ? '' : event.isBase64Encoded ? event.body : Buffer.from(event.body, 'utf8').toString('base64'));
 
@@ -58,7 +77,7 @@ export function toMessage(event: APIGatewayProxyEventV2): QueuedMessage | Result
     const signal = path.slice(4);
     if (!SIGNALS.has(signal)) return json(404, { error: 'Unknown OTLP signal' });
     queue = 'otlp';
-    lines = [line('signal', signal), ...headerLines(event, (n) => n === 'content-type' || n === 'x-wgo-key' || n === 'authorization'), line('key', event.queryStringParameters?.key)];
+    lines = [line('signal', signal), line('content-type', contentType(event)), ...headerLines(event, (n) => n === 'x-wgo-key' || n === 'authorization'), line('key', event.queryStringParameters?.key)];
   } else {
     return json(404, { error: 'Not found' });
   }
@@ -72,7 +91,7 @@ export function toMessage(event: APIGatewayProxyEventV2): QueuedMessage | Result
 /** OTLP spec: answer in the request's encoding; an empty protobuf message is zero bytes. */
 function accepted(event: APIGatewayProxyEventV2, queue: Queue): Result {
   if (queue === 'ingest') return json(202, {});
-  const protobuf = (event.headers?.['content-type'] ?? '').toLowerCase().includes('protobuf');
+  const protobuf = (contentType(event) ?? '').toLowerCase().includes('protobuf');
   return protobuf ? { statusCode: 200, headers: { 'content-type': 'application/x-protobuf', ...CORS }, body: '' } : json(200, {});
 }
 

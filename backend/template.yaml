@@ -1190,6 +1190,29 @@ Resources:
           return request;
         }
 
+  # A Lambda function URL hands text bodies (application/json, text/*) to the function as a string, which mangles
+  # gzipped JSON (OTLP exporters send it). So every intake body goes on as application/octet-stream, which arrives
+  # base64-encoded byte for byte, and the sender's Content-Type moves to the wgo-ct query parameter
+  # (src/handlers/intake.ts reads it from there).
+  IntakeBodyFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${AWS::StackName}-intake-body'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Send intake bodies as binary, keeping the Content-Type in a query parameter
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var type = request.headers['content-type'];
+          if (type) {
+            request.querystring['wgo-ct'] = { value: encodeURIComponent(type.value) };
+            request.headers['content-type'] = { value: 'application/octet-stream' };
+          }
+          return request;
+        }
+
   WebDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -1244,6 +1267,9 @@ Resources:
             CachePolicyId: !FindInMap [CloudFront, Managed, CachingDisabled]
             OriginRequestPolicyId: !Ref IngestOriginRequestPolicy
             Compress: false
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt IntakeBodyFunction.FunctionMetadata.FunctionARN
           - PathPattern: /v1/*
             TargetOriginId: intake
             ViewerProtocolPolicy: https-only
@@ -1252,6 +1278,9 @@ Resources:
             CachePolicyId: !FindInMap [CloudFront, Managed, CachingDisabled]
             OriginRequestPolicyId: !Ref IngestOriginRequestPolicy
             Compress: false
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt IntakeBodyFunction.FunctionMetadata.FunctionARN
           - PathPattern: /replay/config
             TargetOriginId: api
             ViewerProtocolPolicy: https-only

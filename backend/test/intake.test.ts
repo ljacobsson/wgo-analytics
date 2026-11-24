@@ -67,6 +67,35 @@ describe('intake function', () => {
     expect(logs.body().toString()).toBe('{"resourceLogs":[]}');
   });
 
+  it('reads gzipped JSON that CloudFront sent on as binary, with the type in the query string', async () => {
+    const { sent, call } = handlerWith();
+    const otlp = JSON.stringify({ resourceSpans: [] });
+    // what the function URL delivers after IntakeBodyFunction: octet-stream (so base64), the real type moved
+    for (const ct of ['application/json', 'application%2Fjson']) {
+      const res = await call(event({ path: '/v1/traces', body: gzipSync(otlp), binary: true, headers: { 'content-type': 'application/octet-stream', 'x-wgo-key': 'wk_a' }, query: { 'wgo-ct': ct } }));
+      expect(res).toMatchObject({ statusCode: 200, body: '{}' });
+    }
+    const proto = await call(event({ path: '/v1/logs', body: Buffer.from([0x0a, 0x00]), binary: true, headers: { 'content-type': 'application/octet-stream' }, query: { 'wgo-ct': 'application/x-protobuf' } }));
+    expect(proto).toMatchObject({ statusCode: 200, body: '', headers: { 'content-type': 'application/x-protobuf' } });
+    for (const m of sent.slice(0, 2)) {
+      const req = parseQueuedRequest(m.body, m.meta);
+      expect(req).toMatchObject({ signal: 'traces', protobuf: false, writeKey: 'wk_a' });
+      expect(req.body().toString()).toBe(otlp);
+    }
+    expect(parseQueuedRequest(sent[2].body, sent[2].meta).protobuf).toBe(true);
+  });
+
+  it('the CloudFront function moves the Content-Type and sends the body on as binary', async () => {
+    const { readFileSync } = await import('node:fs');
+    const code = /IntakeBodyFunction:[\s\S]*?FunctionCode: \|\n([\s\S]*?)\n\n/.exec(readFileSync(new URL('../template.yaml', import.meta.url), 'utf8'))![1];
+    const handler = new Function(`${code}; return handler;`)() as (e: unknown) => { headers: Record<string, { value: string }>; querystring: Record<string, { value: string }> };
+    const out = handler({ request: { headers: { 'content-type': { value: 'application/json; charset=utf-8' } }, querystring: { k: { value: 'wk' } } } });
+    expect(out.headers['content-type'].value).toBe('application/octet-stream');
+    expect(decodeURIComponent(out.querystring['wgo-ct'].value)).toBe('application/json; charset=utf-8');
+    expect(out.querystring.k.value).toBe('wk');
+    expect(handler({ request: { headers: {}, querystring: {} } }).headers['content-type']).toBeUndefined();
+  });
+
   it('only accepts requests that came through CloudFront', async () => {
     const { sent, call } = handlerWith();
     const res = await call(event({ path: '/ingest', body: '{}', headers: { 'x-wgo-edge': 'forged' } }));
