@@ -402,6 +402,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     }
     case 'stats': { const r = D.stats(from, to); return qp('compare') === '0' ? { ...r, previous: null } : r; }
     case 'totals': return D.totalsFor(from, to);
+    case 'hours': return D.hours(from, to, qp('tz') || 'UTC');
     case 'clicks': {
       // like the API: an aliased selector is one row, keeping its text only when every click had the same one
       const names = new Map((db.clickAliases?.[pid] ?? []).map((a) => [a.selector, a.alias]));

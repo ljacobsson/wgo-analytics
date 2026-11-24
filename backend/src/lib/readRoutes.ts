@@ -15,6 +15,7 @@ export type ProjectRoute = (pid: string, q: Q, rest: string[]) => Promise<unknow
  */
 export const READ_ROUTES: Record<string, ProjectRoute> = {
   stats: (pid, q) => A.stats(pid, q),
+  hours: (pid, q) => A.hours(pid, q),
   totals: (pid, q) => A.totalsFor(pid, q),
   clicks: (pid, q) => A.clicks(pid, q),
   frustration: (pid, q) => F.frustration(pid, q),

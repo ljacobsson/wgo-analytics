@@ -1,6 +1,6 @@
 import type {
   BreakdownRow, BrowserRequest, ClickRow, ErrorGroup, EventsResponse, EventType, FieldInfo, FieldsResponse, FieldValuesResponse, FilterScope, GeoResponse,
-  HttpErrorGroup, LogRecord, LogsResponse, MetricInfo,
+  HoursResponse, HttpErrorGroup, LogRecord, LogsResponse, MetricInfo,
   MetricSeriesResponse, PageRow, ServiceRow, Span, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse,
 } from '../contract';
 import { rawQuery, inList, type Window as Win } from './store/duck';
@@ -194,6 +194,41 @@ export async function stats(pid: string, p: Params): Promise<StatsResponse> {
   ]);
   for (const row of rows) add(row.t.getTime(), row.type, row.n);
   return { bucketSeconds: bucket, totals: current, previous, series: [...byT.values()], botSessions: await hiddenBots };
+}
+
+/** Hour of the day (0-23) in `tz` for each epoch ms; one formatter for the whole batch. */
+export function localHours(times: number[], tz: string): number[] {
+  const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' });
+  return times.map((t) => Number(fmt.format(t)) % 24);
+}
+
+/** GET /hours: traffic per hour of the day in the viewer's time zone, summed over the range. */
+export async function hours(pid: string, p: Params): Promise<HoursResponse> {
+  const r = parseRange(p);
+  const tz = p.tz || 'UTC';
+  try { new Intl.DateTimeFormat('en', { timeZone: tz }); } catch { throw new HttpError(400, 'Invalid tz'); }
+  const plan = await rollupPlan(pid, r, p);
+  let rows: Array<{ hour: number; type: string; n: number }>;
+  if (plan) rows = await hourlyTypes(pid, plan);
+  else {
+    const params: unknown[] = [pid, r.from, r.to];
+    const F = filtersFrom(p, 'events', params) + await suppressedSql(pid, params);
+    rows = (await rawQuery<{ t: Date; type: string; n: number }>(pid, r,
+      `SELECT ${BUCKET_SQL('ts', '3600')} AS t, type, count(*)::int AS n
+         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3${F}
+        GROUP BY 1, 2`,
+      params,
+    )).map((x) => ({ hour: x.t.getTime(), type: x.type, n: Number(x.n) }));
+  }
+  const out = Array.from({ length: 24 }, (_, hour) => ({ hour, pageviews: 0, events: 0 }));
+  // by the hour's midpoint, so a +5:30 zone puts 00:00-01:00 UTC at 06 rather than 05
+  const local = localHours(rows.map((x) => x.hour + 1800_000), tz);
+  rows.forEach((x, i) => {
+    const h = out[local[i]];
+    h.events += x.n;
+    if (x.type === 'pageview') h.pageviews += x.n;
+  });
+  return { tz, hours: out };
 }
 
 /**

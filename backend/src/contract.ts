@@ -509,6 +509,14 @@ export interface StatsResponse {
   botSessions?: number; // sessions left out as bots in this range (when bots aren't included)
 }
 
+// GET /api/projects/{pid}/hours?from&to&tz=Europe/Stockholm[&filters]
+//   Traffic per hour of the day in `tz` (an IANA zone, the viewer's), summed over the range. Read like /stats
+//   (hourly rollups for long ranges): each UTC hour is placed by its midpoint, so half-hour zones round to an hour.
+export interface HoursResponse {
+  tz: string;
+  hours: Array<{ hour: number; pageviews: number; events: number }>; // 24 rows, hour 0-23
+}
+
 // GET /api/projects/{pid}/clicks?from&to&limit=50
 export interface ClickRow {
   selector: string;

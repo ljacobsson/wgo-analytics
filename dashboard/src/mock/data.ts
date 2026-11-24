@@ -1,6 +1,6 @@
 import type {
   AnalyticsEvent, BreakdownRow, ClickRow, ErrorGroup, FrustrationRow, EventType, HttpErrorGroup, LogRecord, MetricInfo, MetricSeriesResponse,
-  PageRow, ServiceRow, Span, StatsResponse, Totals, TraceSummary, VitalsResponse, GeoResponse,
+  PageRow, ServiceRow, Span, StatsResponse, Totals, TraceSummary, VitalsResponse, GeoResponse, HoursResponse,
 } from '../api/contract';
 import type { BrowserRequest, ConversionsResponse, Filter, Goal, TraceResponse } from '../api/contract';
 import { matches } from './filters';
@@ -43,6 +43,19 @@ export function stats(from: number, to: number): StatsResponse {
   totals.events = totals.pageviews + totals.clicks + totals.errors + totals.httpErrors + sum('custom');
   totals.sessions = Math.round(totals.pageviews * 0.38); totals.users = Math.round(totals.sessions * 0.74);
   return { bucketSeconds: bs, totals, previous: totalsFor(from - len, from), series };
+}
+/** Like the API's /hours: hourly buckets of the range, folded into the hour of day in `tz`. */
+export function hours(from: number, to: number, tz: string): HoursResponse {
+  const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' });
+  const out = Array.from({ length: 24 }, (_, hour) => ({ hour, pageviews: 0, events: 0 }));
+  const H = 3600 * SEC;
+  for (let t = Math.floor(from / H) * H; t < to; t += H) {
+    const pv = Math.round(integral(Math.max(t, from), Math.min(t + H, to)) * 0.62 * (0.85 + rnd(t / 1000, 7) * 0.3));
+    const h = out[Number(fmt.format(t + H / 2)) % 24];
+    h.pageviews += pv;
+    h.events += Math.round(pv * (1 + MULT.click + MULT.custom + MULT.error + MULT.http_error));
+  }
+  return { tz, hours: out };
 }
 export function clicks(from: number, to: number, limit: number): ClickRow[] {
   const total = totalsFor(from, to).clicks;

@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { MapCallout } from '../charts/MapCallout';
 import { cellKey, type CalloutGroup, type CalloutMode } from '../charts/geoTypes';
 import { MousePointerClick, Bug, Globe, Eye, Users, Layers, Download, MapPin, Target } from 'lucide-react';
-import { useBreakdown, useClicks, useConversions, useGeo, usePages, usePreviousConversions, usePreviousTotals, useReleaseMarkers, useStats, useVitals } from '../api/hooks';
+import { useBreakdown, useClicks, useConversions, useGeo, useHours, usePages, usePreviousConversions, usePreviousTotals, useReleaseMarkers, useStats, useVitals } from '../api/hooks';
 import { markerLabel } from './Releases';
 import { conversionRate, fmtRate, goalEventsHref, previousRate } from './Goals';
 import { countryName, flag } from '../lib/geo';
@@ -20,6 +20,7 @@ import { Card, CardHeader, CountUp, Delta, EmptyState, ErrorState, Segmented, Sk
 import { Sparkline } from '../charts/Sparkline';
 import { TimeChart } from '../charts/TimeChart';
 import { BarList } from '../charts/BarList';
+import { ClockHeatmap } from '../charts/ClockHeatmap';
 import { RowActions } from '../ui/RowActions';
 import { clickConditions, type RowCondition } from '../lib/rowFilters';
 import { fmtNum, relTime } from '../lib/format';
@@ -161,6 +162,25 @@ function Breakdowns() {
       {b.isPending ? <div className="space-y-2 p-4">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-7" />)}</div>
         : b.data?.length ? <BarList color="var(--s7)" rows={b.data.slice(0, 8).map((r) => ({ key: r.key, label: label(r.key), value: r.count, actions: <RowActions scope="events" conditions={dimConditions(dim, r.key)} /> }))} />
         : <EmptyState title="No data yet" />}
+    </Card>
+  );
+}
+
+/** Traffic by hour of the day in the viewer's time zone, as two clock faces. */
+function HoursCard() {
+  const { project } = useProject(); const { range } = useTime();
+  const h = useHours(project.id, range);
+  const d = h.data;
+  // pageviews where the project has them; apps sending only custom events show events instead
+  const unit = d && d.hours.some((x) => x.pageviews) ? 'pageviews' : 'events';
+  return (
+    <Card>
+      <CardHeader title="Traffic by hour of day" sub={`${unit} · your time${d ? ` (${d.tz.replace(/_/g, ' ')})` : ''}`} />
+      <div className="px-4 pb-4">
+        {h.isPending ? <div className="grid grid-cols-2 gap-3"><Skeleton className="aspect-square rounded-full" /><Skeleton className="aspect-square rounded-full" /></div>
+          : d && d.hours.some((x) => x.events) ? <ClockHeatmap values={d.hours.map((x) => (unit === 'pageviews' ? x.pageviews : x.events))} unit={unit} />
+          : <EmptyState title="No traffic yet" />}
+      </div>
     </Card>
   );
 }
@@ -362,7 +382,7 @@ export function Overview() {
       <Visitors />
       <ExplainDrawer spec={why} onClose={() => setWhy(null)} />
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader title="Top pages" sub="by views" />
           {pages.isPending ? <div className="space-y-2 p-4">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-7" />)}</div>
@@ -374,6 +394,7 @@ export function Overview() {
             : clicks.data?.length ? <BarList color="var(--s3)" rows={clicks.data.slice(0, 8).map((c) => ({ key: c.selector, label: clickLabel(c), value: c.count, actions: <RowActions scope="events" conditions={clickConditions(c)} /> }))} /> : <EmptyState title="No clicks yet" />}
         </Card>
         <Breakdowns />
+        <HoursCard />
       </div>
     </div>
   );

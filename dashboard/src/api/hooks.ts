@@ -5,7 +5,7 @@ import type {
   BreakdownRow, ClickRow, ErrorGroup, EventsResponse, GeoResponse, HttpErrorGroup, LogsResponse, Me, Member, MetricInfo,
   MetricSeriesResponse, PageRow, Project, ServiceRow, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse, FieldsResponse, FieldValuesResponse, FilterScope, SlackIntegration, SlackChannel, Destination, DestinationInput, DestinationLevel, Trigger, TriggerInput, TriggerTestResult, SlackSetup,
   SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, ConversionsResponse, ClickAlias, RetentionResponse,
-  ReleasesResponse, Explanation, ExplainMetric, Filter, UploadKey, FrustrationRow, HeatmapResponse,
+  ReleasesResponse, Explanation, ExplainMetric, Filter, UploadKey, FrustrationRow, HeatmapResponse, HoursResponse,
   UptimeCheck, UptimeCheckInput, UptimeResults, UptimeRunResult, CostsResponse, TriggerPreview, ErrorSuppression, ErrorSuppressionInput, Budget, BudgetInput,
   RecordingsResponse, RecordingResponse, RecordingSettings, RecordingSettingsResponse, RecordingFilters, ProjectSite,
   Dashboard, DashboardInput, DashboardSummary, DashboardTile, MeasureNames, QueryResult, QuerySpec,
@@ -29,7 +29,7 @@ export function useMe() {
 
 // which filter scope (URL param) applies to each endpoint
 const SCOPE: Record<string, FilterScope | undefined> = {
-  stats: 'events', totals: 'events', clicks: 'events', frustration: 'events', heatmap: 'events', pages: 'events', errors: 'events', 'http-errors': 'events', breakdown: 'events',
+  stats: 'events', hours: 'events', totals: 'events', clicks: 'events', frustration: 'events', heatmap: 'events', pages: 'events', errors: 'events', 'http-errors': 'events', breakdown: 'events',
   vitals: 'events', geo: 'events', conversions: 'events', releases: 'events', explain: 'events', services: 'spans', traces: 'spans',
 };
 
@@ -44,6 +44,9 @@ function q<T>(pid: string, name: string, r: TimeRange, path: string, extra: Reco
 }
 // the comparison window comes from usePreviousTotals, which refreshes far less often
 export const useStats = (pid: string, r: TimeRange) => useQuery(q<StatsResponse>(pid, 'stats', r, 'stats', { compare: 0 }));
+/** Traffic per hour of the day in the viewer's time zone. */
+export const useHours = (pid: string, r: TimeRange) =>
+  useQuery(q<HoursResponse>(pid, 'hours', r, 'hours', { tz: Intl.DateTimeFormat().resolvedOptions().timeZone }));
 export function usePreviousTotals(pid: string, r: TimeRange) {
   const w = previousWindow(r);
   return useQuery({ ...q<Totals>(pid, 'totals', { ...r, ...w }, 'totals'), queryKey: ['totals', pid, w.from, w.to, filtersParam('events'), botsParam()] as const, staleTime: 10 * 60_000 });
