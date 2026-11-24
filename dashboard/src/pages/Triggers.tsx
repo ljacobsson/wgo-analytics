@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { BellRing, Check, Copy, Hash, Pencil, Plus, Send, Slack, Trash2, Webhook } from 'lucide-react';
+import { BellRing, Check, Copy, Hash, MessageSquareText, Pencil, Plus, Send, Slack, Trash2, Webhook } from 'lucide-react';
 import { SLACK_BOT_SCOPES } from '../api/contract';
-import type { Destination, DestinationLevel, Filter, FilterScope, Trigger, TriggerAgg, TriggerCondition, TriggerDestination, TriggerInput, TriggerKind, TriggerMetric } from '../api/contract';
+import type { Destination, DestinationLevel, Filter, FilterScope, SlackTemplate, Trigger, TriggerAgg, TriggerCondition, TriggerDestination, TriggerInput, TriggerKind, TriggerMetric } from '../api/contract';
 import { useDeleteDestination, useDeleteTrigger, useDestinations, useDisconnectSlackWorkspace, useRemoveSlackApp, useSaveDestination, useSaveTrigger, useSlackSetup, useTestDestination, useTestTrigger, useTriggerPreview, useTriggers } from '../api/hooks';
 import { SlackAppSetup, SlackChannelDialog } from './SlackConnect';
+import { SlackMessageEditor } from './SlackMessageEditor';
 import { cn, relTime } from '../lib/format';
 import { describeFilter, FILTER_PARAM, SCOPE_LABEL } from '../lib/filters';
 import { suggestName } from '../lib/naming';
@@ -40,6 +41,10 @@ const destinationOf = (key: string, url: string): TriggerDestination | null =>
   key === 'url' ? (url.trim() ? { type: 'webhook', url: url.trim() } : null)
     : key.startsWith('slack:') ? { type: 'slack', integrationId: key.slice(6) }
     : { type: 'saved', destinationId: key.slice(6) };
+/** Whether a destination gets a Slack message: a Slack channel, or a webhook URL on hooks.slack.com. */
+function isSlackUrl(url: string): boolean {
+  try { return new URL(url.trim()).hostname === 'hooks.slack.com'; } catch { return false; }
+}
 const optionLabel = (d: Pick<Destination, 'type' | 'name' | 'detail'>) => `${d.type === 'slack' ? 'Slack ' : ''}${d.name}${d.detail ? ` · ${d.detail}` : ''}`;
 
 interface Prefill { scope: FilterScope; filters: Filter[] }
@@ -104,6 +109,8 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
   const [value, setValue] = useState('10');
   const [direction, setDirection] = useState<'up' | 'down' | 'either'>('up');
   const [sensitivity, setSensitivity] = useState<'low' | 'medium' | 'high'>('medium');
+  const [slackTemplate, setSlackTemplate] = useState<SlackTemplate | null>(null);
+  const [designing, setDesigning] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -117,6 +124,7 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
     setDestKey(d ? keyOf(d) : first ? keyOf(first.ref) : 'url');
     setUrl(d?.type === 'webhook' ? d.url : '');
     setCooldown(initial?.cooldownSeconds ?? 300);
+    setSlackTemplate(initial?.slackTemplate ?? null);
     setKind(initial?.kind ?? 'match');
     setAgg(initial?.metric?.agg ?? 'count');
     setField(initial?.metric?.field ?? '');
@@ -158,10 +166,17 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
   const keptKey = initial?.destination.type === 'saved' && !destinations.data?.some((d) => keyOf(d.ref) === keyOf(initial.destination)) ? keyOf(initial.destination) : null;
   const kept = keptKey ? initial?.destinationLabel ?? null : null;
   const valid = name.trim() && (filters.length || kind !== 'match') && destination && aggregateValid;
+  const slackBound = (key: string) =>
+    key === 'url' ? isSlackUrl(url)
+      : key.startsWith('slack:') ? true
+      : (destinations.data?.find((d) => keyOf(d.ref) === key)?.type ?? (key === keptKey ? kept?.type : undefined)) === 'slack';
+  const toSlack = slackBound(destKey);
+  // "Send test" in the designer goes through the saved trigger, so only when that already posts to Slack
+  const savedToSlack = !!initial && slackBound(keyOf(initial.destination));
   const submit = async () => {
     if (!valid) return;
     setError('');
-    const input: TriggerInput = { name: name.trim(), ...(initial ? {} : { scope, kind }), filters, destination: destination!, cooldownSeconds: cooldown, enabled: initial?.enabled ?? true, ...(aggregate ?? {}) };
+    const input: TriggerInput = { name: name.trim(), ...(initial ? {} : { scope, kind }), filters, destination: destination!, cooldownSeconds: cooldown, enabled: initial?.enabled ?? true, ...(aggregate ?? {}), slackTemplate };
     try {
       await save.mutateAsync({ id: initial?.id, input });
       toast({ title: initial ? 'Trigger updated' : 'Trigger created', body: name.trim(), tone: 'good' });
@@ -268,6 +283,18 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
           {destinations.data && !destinations.data.length && (
             <p className="mt-1.5 text-[11.5px] text-faint">Connect Slack channels and save webhooks under Destinations on this page to reuse them in any trigger.</p>
           )}
+          {toSlack && (
+            <div className="mt-2.5 flex items-center gap-3 rounded-lg border border-line px-3 py-2.5">
+              <MessageSquareText size={16} className="shrink-0 text-faint" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[12.5px] font-medium">{slackTemplate ? 'Your own Slack message' : 'Default Slack message'}</div>
+                <div className="text-[11.5px] text-faint">
+                  {slackTemplate ? `${slackTemplate.blocks.length} block${slackTemplate.blocks.length === 1 ? '' : 's'}, with the trigger’s details filled in` : 'Trigger name, a summary, the latest matches and a link to WGO'}
+                </div>
+              </div>
+              <Button size="sm" onClick={() => setDesigning(true)}><Pencil size={12} />{slackTemplate ? 'Edit message' : 'Design message'}</Button>
+            </div>
+          )}
         </div>
         <Field label="At most once per" hint={kind === 'match' ? 'Matches in between are counted and reported with the next notification' : 'If it keeps flapping, it notifies about firing at most this often'}>
           <select className="field" value={cooldown} onChange={(e) => setCooldown(Number(e.target.value))}>
@@ -276,6 +303,8 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
         </Field>
         {error && <p className="rounded-lg bg-bad/10 px-3 py-2 text-[12.5px] text-bad">{error}</p>}
       </div>
+      <SlackMessageEditor open={designing} value={slackTemplate} onClose={() => setDesigning(false)} onSave={setSlackTemplate}
+        ctx={{ name, kind, scope, metric: aggregate?.metric ?? null, condition: aggregate?.condition ?? null, windowMinutes: aggregate?.windowMinutes ?? null, testTriggerId: savedToSlack ? initial!.id : undefined }} />
     </Dialog>
   );
 }
@@ -321,7 +350,7 @@ function TriggerRow({ t, onEdit }: { t: Trigger; onEdit: () => void }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="text-[13.5px] font-semibold">{t.name}</span>
           {t.scope !== 'events' && <Badge tone="accent">{SCOPE_LABEL[t.scope]}</Badge>}
-          <span className="text-[12px] text-muted"><DestinationLabel t={t} /></span>
+          <span className="text-[12px] text-muted"><DestinationLabel t={t} />{t.slackTemplate && <span className="text-faint">, own message</span>}</span>
           <span className="text-[11.5px] text-faint">at most every {cooldownLabel(t.cooldownSeconds).toLowerCase().replace('every match', 'match')}</span>
         </div>
         {t.kind !== 'match' && <div className="text-[12.5px] text-muted">{describeAggregate(t)}</div>}

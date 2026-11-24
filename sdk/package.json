@@ -12,12 +12,8 @@
       "import": "./dist/index.mjs"
     }
   },
-  "bin": {
-    "wgo-sourcemaps": "./bin/wgo-sourcemaps.mjs"
-  },
   "files": [
     "dist",
-    "bin",
     "README.md"
   ],
   "sideEffects": false,

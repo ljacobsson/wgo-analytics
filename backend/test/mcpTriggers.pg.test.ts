@@ -109,6 +109,52 @@ d('MCP trigger tools (PostgreSQL)', async () => {
     expect(fetchMock).toHaveBeenCalledWith('https://example.com/hook', expect.objectContaining({ method: 'POST' }));
   });
 
+  const design = { blocks: [
+    { type: 'header', text: { type: 'plain_text', text: '{{headline}}' } },
+    { type: 'section', text: { type: 'mrkdwn', text: 'Now *{{value}}* in {{project.name}}' } },
+  ] };
+  const slackBodies = (m: ReturnType<typeof vi.fn>) => m.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string) as { text: string; blocks: Array<{ text?: { text: string } }> });
+
+  it('saves a Slack message design, sends it, and clears it with null', async () => {
+    const t = JSON.parse((await callTool('update_trigger', { projectId: pid, triggerId: slackId, slackTemplate: design })).text);
+    expect(t.slackTemplate).toEqual(design);
+    expect((await listTriggers(pid)).find((x) => x.id === slackId)?.slackTemplate).toEqual(design);
+    const fetchMock = vi.fn(async () => new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(JSON.parse((await callTool('test_trigger', { projectId: pid, triggerId: slackId })).text)).toEqual({ ok: true, status: '200' });
+    const [msg] = slackBodies(fetchMock);
+    expect(msg.blocks.map((b) => b.text?.text)).toEqual(['[test] 🔔 No traffic', 'Now *0* in shop.example.com']);
+    expect(msg.text).toMatch(/^\[test\] 🔔 No traffic: Count in the last 30 minutes is 0/);
+    const cleared = JSON.parse((await callTool('update_trigger', { projectId: pid, triggerId: slackId, slackTemplate: null })).text);
+    expect(cleared.slackTemplate).toBeNull();
+  });
+
+  it('tries a design before saving it', async () => {
+    const fetchMock = vi.fn(async () => new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await callTool('test_trigger', { projectId: pid, triggerId: slackId, slackTemplate: { blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'Draft {{state}}' } }] } });
+    expect(slackBodies(fetchMock)[0].blocks).toEqual([{ type: 'section', text: { type: 'mrkdwn', text: 'Draft firing' } }]);
+    expect((await listTriggers(pid)).find((x) => x.id === slackId)?.slackTemplate).toBeNull();
+  });
+
+  it('sends the default message when Slack rejects the design, and says so', async () => {
+    await callTool('update_trigger', { projectId: pid, triggerId: slackId, slackTemplate: design });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('invalid_blocks', { status: 400 }))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(JSON.parse((await callTool('test_trigger', { projectId: pid, triggerId: slackId })).text)).toEqual({ ok: false, status: '200 (custom message rejected: invalid_blocks)' });
+    const [, fallback] = slackBodies(fetchMock);
+    expect(fallback.blocks[0].text?.text).toBe('[test] 🔔 No traffic');
+    expect(fallback.blocks.map((b) => (b as { type: string }).type)).toEqual(['header', 'section', 'section']); // the default: header, summary, explanation (no dashboard link here)
+  });
+
+  it('rejects a broken design', async () => {
+    const bad = (slackTemplate: unknown) => callTool('update_trigger', { projectId: pid, triggerId: slackId, slackTemplate });
+    expect((await bad({ blocks: [] })).isError).toBe(true);
+    expect(await bad({ blocks: [{ type: 'modal' }] })).toEqual({ isError: true, text: 'Block 1: "modal" blocks aren\'t supported (use header, section, context, divider, actions, image, rich_text)' });
+  });
+
   it('only answers for project members', async () => {
     const stranger = 'stranger@example.com';
     expect(await callTool('list_triggers', { projectId: pid }, stranger)).toEqual({ isError: true, text: 'Project not found' });

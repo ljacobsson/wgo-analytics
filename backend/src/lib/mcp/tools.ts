@@ -8,7 +8,7 @@ import * as FR from '../frustration';
 import * as C from '../cohorts';
 import * as G from '../goals';
 import * as GF from '../funnel';
-import { TRIGGER_WINDOWS, type Dashboard, type Project, type Trigger } from '../../contract';
+import { SLACK_TEMPLATE_VARIABLES, TRIGGER_WINDOWS, type Dashboard, type Project, type Trigger } from '../../contract';
 import { OPS } from '../filters';
 import * as M from '../monitor';
 import * as DST from '../destinations';
@@ -62,6 +62,7 @@ Triggers (alerts) notify a webhook or a connected Slack channel: on every new ma
 (kind "match"), when a number over a window crosses a value ("threshold"), or when it's unusual for the time of
 day ("anomaly"). list_triggers shows them and the Slack channels you can send to; preview_trigger shows what a
 threshold/anomaly trigger would see right now; create_trigger saves one; test_trigger sends a sample notification.
+A trigger can design its own Slack message (slackTemplate: Block Kit blocks with {{variables}}).
 Any number across all of it (web events, Web Vitals, goals, spans, logs, OpenTelemetry metrics, uptime checks), as a
 total, over time or split by a field: query_measures. To keep a set of them in view, build a custom dashboard:
 create_dashboard with tiles (each tile is a query_measures measure plus how to show it), add_dashboard_tile to an
@@ -135,6 +136,12 @@ const anyFilter = filterOf(
   `events scope: ${EVENT_FIELDS}. logs scope: body, service, severityText, severityNumber (17+ = error), traceId, attributes.<key>, resource.<key>. spans scope: name, service, durationMs, statusCode (2 = error), statusMessage, kind, traceId, attributes.<key> (e.g. attributes.http.route), resource.<key>`,
 );
 
+const slackTemplate = z.object({
+  blocks: z.array(z.record(z.string(), z.unknown())).min(1).max(50).describe(
+    `Slack Block Kit blocks (header, section, context, divider, actions, image, rich_text), as in Slack's Block Kit Builder. Any string may contain {{variables}}: ${SLACK_TEMPLATE_VARIABLES.map((v) => `${v.name} (${v.description}${v.kinds ? `; ${v.kinds.join('/')} triggers` : ''})`).join('; ')}. Values are escaped in mrkdwn text; {{summary}} and {{matches_list}} keep their bold and bullets. Blocks whose text comes out empty are left out. If Slack rejects the blocks, the default message is sent and the status says so: check with test_trigger.`,
+  ),
+}).describe('A Slack message design');
+
 const triggerShape = {
   name: z.string().min(1).max(120).describe('Trigger name, 1-120 characters'),
   filters: z.array(anyFilter).max(20).describe('Rows to watch, all filters must match. At least one for match triggers; threshold/anomaly may pass [] to watch every row of the scope'),
@@ -154,6 +161,7 @@ const triggerShape = {
     z.object({ direction: z.enum(['up', 'down', 'either']), sensitivity: z.enum(['low', 'medium', 'high']) }),
   ]).optional().describe('threshold: {op, value}, e.g. {op: "below", value: 1} = nothing arrived. anomaly: {direction, sensitivity}'),
   windowMinutes: z.number().int().optional().describe(`threshold/anomaly only: one of ${TRIGGER_WINDOWS.join(', ')}`),
+  slackTemplate: slackTemplate.nullable().optional().describe('Its own Slack message, used when it notifies Slack; omit (or null) for the default message'),
 };
 const triggerScope = z.enum(['events', 'logs', 'spans']).optional().describe('What it watches (default events): product events, OpenTelemetry logs or spans');
 const triggerKind = z.enum(['match', 'threshold', 'anomaly']).optional().describe('Default match');
@@ -562,6 +570,7 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
       metric: triggerShape.metric,
       condition: triggerShape.condition,
       windowMinutes: triggerShape.windowMinutes,
+      slackTemplate: triggerShape.slackTemplate.describe('Its own Slack message; null goes back to the default message'),
     },
     async (pid, { triggerId, ...body }) => publicTrigger(await T.updateTrigger(pid, email, triggerId, body as never, origin)),
     TRIGGER_WRITE,
@@ -582,9 +591,9 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
   projectTool(
     'test_trigger',
     'Send a test notification',
-    'Sends a sample notification from a trigger (id from list_triggers) to its destination now, marked as a test, and returns whether it was delivered and the status (HTTP status, or the Slack error).',
-    { triggerId: z.string().describe('Trigger id from list_triggers') },
-    (pid, a) => T.testTrigger(pid, a.triggerId),
+    'Sends a sample notification from a trigger (id from list_triggers) to its destination now, marked as a test, and returns whether it was delivered and the status (HTTP status, or the Slack error). Pass slackTemplate to try a Slack message design before saving it.',
+    { triggerId: z.string().describe('Trigger id from list_triggers'), slackTemplate: slackTemplate.optional().describe('A Slack message design to try instead of the saved one') },
+    (pid, a) => T.testTrigger(pid, a.triggerId, a.slackTemplate ? { slackTemplate: a.slackTemplate } : undefined),
     SEND,
   );
 

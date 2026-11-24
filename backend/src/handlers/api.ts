@@ -209,7 +209,7 @@ async function route(method: string, parts: string[], q: Q, email: string, event
       if (!id && method === 'GET') return T.listTriggers(pid);
       if (!id && method === 'POST') return T.createTrigger(pid, email, jsonBody(event), event.headers?.origin);
       if (id === 'preview' && !action && method === 'POST') return M.previewTrigger(pid, jsonBody(event));
-      if (id && action === 'test' && method === 'POST') return T.testTrigger(pid, id);
+      if (id && action === 'test' && method === 'POST') return T.testTrigger(pid, id, jsonBody(event));
       if (id && !action && method === 'PATCH') return T.updateTrigger(pid, email, id, jsonBody(event), event.headers?.origin);
       if (id && !action && method === 'DELETE') { await T.deleteTrigger(pid, id); return { ok: true }; }
     }

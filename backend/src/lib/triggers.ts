@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
-import type { AnalyticsEvent, Filter, FilterScope, LogRecord, Span, Trigger, TriggerCondition, TriggerDestination, TriggerInput, TriggerKind, TriggerMetric, TriggerStatus, TriggerTestResult, TriggerWebhookPayload } from '../contract';
+import type { AnalyticsEvent, Filter, FilterScope, LogRecord, SlackTemplate, Span, Trigger, TriggerCondition, TriggerDestination, TriggerInput, TriggerKind, TriggerMetric, TriggerStatus, TriggerTestResult, TriggerWebhookPayload } from '../contract';
 import { TRIGGER_WINDOWS } from '../contract';
 import { query } from './db';
 import { matchesAll, type MatchRow } from './filterMatch';
@@ -10,6 +10,9 @@ import { canPick, labelsFor, savedTarget, type Target } from './destinations';
 import { HttpError } from './http';
 import { isUuid } from './projects';
 import { channelTarget, postToSlack, type SlackChannelConfig } from './slack';
+import { sampleAggregate, sampleEvent, sampleRows, slackMessage, slackTemplateProblem } from './slackTemplate';
+
+export { describeAggregate, slackMessage } from './slackTemplate';
 
 // ---------------------------------------------------------------- validation
 
@@ -149,6 +152,13 @@ const cooldown = (v: unknown) => {
   if (!Number.isInteger(n) || n < 0 || n > 86400) throw new HttpError(400, 'cooldownSeconds must be 0-86400');
   return n;
 };
+/** A trigger's Slack message design: null clears it (the default message). */
+export function validateSlackTemplate(v: unknown): SlackTemplate | null {
+  if (v === null) return null;
+  const problem = slackTemplateProblem(v);
+  if (problem) throw new HttpError(400, problem);
+  return { blocks: (v as SlackTemplate).blocks };
+}
 const triggerName = (v: unknown) => {
   const n = typeof v === 'string' ? v.trim() : '';
   if (!n || n.length > 120) throw new HttpError(400, 'Trigger name must be 1-120 characters');
@@ -164,6 +174,7 @@ interface TriggerRow {
   kind: TriggerKind | null; metric: TriggerMetric | null; condition: TriggerCondition | null; window_minutes: number | null;
   state: 'ok' | 'firing' | null; state_since: Date | null; last_value: number | null; last_evaluated_at: Date | null;
   baseline: { median: number; low: number; high: number; days: number; hour?: number; at?: string } | null;
+  slack_template: SlackTemplate | null;
 }
 export type { TriggerRow };
 
@@ -180,7 +191,7 @@ const toTrigger = (r: TriggerRow): Trigger => ({
   signingSecret: r.signing_secret, createdBy: r.created_by, createdAt: r.created_at.toISOString(),
   lastFiredAt: r.last_fired_at?.toISOString() ?? null, fireCount: r.fire_count, lastStatus: r.last_status,
   kind: kindOf(r), metric: r.metric, condition: r.condition, windowMinutes: r.window_minutes,
-  status: statusOf(r), destinationLabel: null,
+  status: statusOf(r), destinationLabel: null, slackTemplate: r.slack_template ?? null,
 });
 
 /** Triggers as returned by the API: with the labels of the saved destinations they use. */
@@ -207,15 +218,18 @@ export async function createTrigger(pid: string, email: string, body: Partial<Tr
   const agg = validateAggregate(kind, scope, body);
   await query(
     `INSERT INTO triggers (project_id, id, name, scope, filters, destination, cooldown_seconds, enabled, signing_secret, created_by, dashboard_url,
-                           kind, metric, condition, window_minutes)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)`,
+                           kind, metric, condition, window_minutes, slack_template)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16::jsonb)`,
     [pid, id, triggerName(body.name), scope, JSON.stringify(validateFilters(body.filters, scope, kind)), JSON.stringify(await validateDestination(pid, email, body.destination)),
       cooldown(body.cooldownSeconds), body.enabled !== false, 'whsec_' + randomBytes(24).toString('base64url'), email, dashboardOrigin(origin),
-      kind === 'match' ? null : kind, agg.metric && JSON.stringify(agg.metric), agg.condition && JSON.stringify(agg.condition), agg.windowMinutes],
+      kind === 'match' ? null : kind, agg.metric && JSON.stringify(agg.metric), agg.condition && JSON.stringify(agg.condition), agg.windowMinutes,
+      jsonOrNull(body.slackTemplate === undefined ? null : validateSlackTemplate(body.slackTemplate))],
   );
   cache.delete(pid);
   return (await withLabels([await getTrigger(pid, id)]))[0];
 }
+
+const jsonOrNull = (v: unknown) => (v == null ? null : JSON.stringify(v));
 
 export async function updateTrigger(pid: string, email: string, id: string, body: Partial<TriggerInput>, origin?: string): Promise<Trigger> {
   const cur = await getTrigger(pid, id);
@@ -229,7 +243,8 @@ export async function updateTrigger(pid: string, email: string, id: string, body
   const changed = kind !== 'match' && (body.metric !== undefined || body.condition !== undefined || body.windowMinutes !== undefined || body.filters !== undefined);
   await query(
     `UPDATE triggers SET name = $3, filters = $4::jsonb, destination = $5::jsonb, cooldown_seconds = $6, enabled = $7,
-            dashboard_url = COALESCE($8, dashboard_url), metric = $9::jsonb, condition = $10::jsonb, window_minutes = $11
+            dashboard_url = COALESCE($8, dashboard_url), metric = $9::jsonb, condition = $10::jsonb, window_minutes = $11,
+            slack_template = $12::jsonb
             ${changed ? ', state = NULL, state_since = NULL, last_value = NULL, baseline = NULL' : ''}
       WHERE project_id = $1 AND id = $2`,
     [pid, id,
@@ -238,7 +253,8 @@ export async function updateTrigger(pid: string, email: string, id: string, body
       JSON.stringify(body.destination !== undefined ? await validateDestination(pid, email, body.destination, cur.destination) : cur.destination),
       body.cooldownSeconds !== undefined ? cooldown(body.cooldownSeconds) : cur.cooldown_seconds,
       body.enabled !== undefined ? body.enabled === true : cur.enabled, dashboardOrigin(origin),
-      agg.metric && JSON.stringify(agg.metric), agg.condition && JSON.stringify(agg.condition), agg.windowMinutes],
+      agg.metric && JSON.stringify(agg.metric), agg.condition && JSON.stringify(agg.condition), agg.windowMinutes,
+      jsonOrNull(body.slackTemplate !== undefined ? validateSlackTemplate(body.slackTemplate) : cur.slack_template)],
   );
   cache.delete(pid);
   return (await withLabels([await getTrigger(pid, id)]))[0];
@@ -332,90 +348,6 @@ export function matchesLink(dashboard: string | null, pid: string, filters: Filt
 
 export const sign = (secret: string, body: string) => 'sha256=' + createHmac('sha256', secret).update(body).digest('hex');
 
-function describe(e: AnalyticsEvent): string {
-  const where = [e.path, e.city && e.country ? `${e.city}, ${e.country}` : e.country].filter(Boolean).join(' · ');
-  const what =
-    e.type === 'click' ? `click “${e.trackName || e.elementText || e.selector || '?'}”`
-    : e.type === 'error' ? `error: ${e.errorMessage ?? ''}`
-    : e.type === 'http_error' ? `${e.httpMethod} ${e.httpRoute ?? e.httpUrl} → ${e.httpStatus}`
-    : e.type === 'custom' ? `${e.name}`
-    : e.type === 'pageview' ? `pageview ${e.path ?? ''}`
-    : e.type;
-  return where ? `${what}  (${where})` : what;
-}
-
-const SEVERITY: Array<[number, string]> = [[21, 'FATAL'], [17, 'ERROR'], [13, 'WARN'], [9, 'INFO'], [5, 'DEBUG'], [0, 'TRACE']];
-const severityName = (n: number) => SEVERITY.find(([min]) => n >= min)![1];
-
-function describeLog(l: LogRecord): string {
-  return `[${l.severityText || severityName(l.severityNumber)}] ${l.service}: ${l.body.replace(/\s+/g, ' ')}`;
-}
-
-function describeSpan(s: Span): string {
-  const ms = s.durationMs >= 1000 ? `${(s.durationMs / 1000).toFixed(2)} s` : `${Math.round(s.durationMs)} ms`;
-  return `${s.service}: ${s.name} · ${ms}${s.statusCode === 2 ? ` · error${s.statusMessage ? `: ${s.statusMessage}` : ''}` : ''}`;
-}
-
-const NOUN: Record<FilterScope, string> = { events: 'event', logs: 'log record', spans: 'span' };
-
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-const AGG_LABEL: Record<TriggerMetric['agg'], string> = {
-  count: 'Count', sessions: 'Sessions', session_rate: 'Share of sessions', avg: 'Average', p75: 'p75', p95: 'p95',
-};
-const fmtValue = (v: number | null | undefined, m?: TriggerMetric) => {
-  if (v == null) return 'no data';
-  if (m?.agg === 'session_rate') return `${(v * 100).toFixed(1)}%`;
-  if (m?.field && /duration|ms$|lcp|inp|fcp|ttfb/i.test(m.field)) return v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${Math.round(v)} ms`;
-  return Number.isInteger(v) ? v.toLocaleString('en-US') : v.toFixed(2);
-};
-const windowText = (min?: number) => (!min ? '' : min < 60 ? `${min} minutes` : min === 60 ? 'hour' : min < 1440 ? `${min / 60} hours` : '24 hours');
-
-/** "Count in the last 15 minutes is 34, above 20" / "… is 3, unusually low (usually 9–15)" / "… is back to normal: 12". */
-export function describeAggregate(p: Pick<TriggerWebhookPayload, 'kind' | 'state' | 'value' | 'metric' | 'condition' | 'windowMinutes' | 'baseline'>): string {
-  const m = p.metric;
-  const what = `${m ? AGG_LABEL[m.agg] : 'Value'}${m?.field ? ` of ${m.field}` : ''} in the last ${windowText(p.windowMinutes)}`;
-  const v = fmtValue(p.value, m);
-  if (p.state === 'resolved') return `${what} is back to normal: ${v}.`;
-  const c = p.condition;
-  if (c && 'op' in c) return `${what} is ${v}, ${c.op} ${fmtValue(c.value, m)}.`;
-  const b = p.baseline;
-  const usual = b ? ` (usually ${fmtValue(b.low, m)} to ${fmtValue(b.high, m)})` : '';
-  const dir = b && p.value != null && p.value < b.median ? 'low' : 'high';
-  return `${what} is ${v}, unusually ${dir}${usual}.`;
-}
-
-/** Slack Block Kit message for a notification, with a text fallback (for chat.postMessage and incoming webhooks). */
-export function slackMessage(p: TriggerWebhookPayload): object {
-  if (p.kind && p.kind !== 'match') {
-    const head = `${p.test ? '[test] ' : ''}${p.state === 'resolved' ? '✅ Resolved' : '🔔'} ${p.trigger.name}`;
-    const line = describeAggregate(p);
-    return {
-      text: `${head}: ${line}`,
-      blocks: [
-        { type: 'header', text: { type: 'plain_text', text: head.slice(0, 150), emoji: true } },
-        { type: 'section', text: { type: 'mrkdwn', text: `${esc(line)} Project *${esc(p.project.name)}*.` } },
-        ...(p.explanation && p.state !== 'resolved' ? [{ type: 'section', text: { type: 'mrkdwn', text: esc(p.explanation).slice(0, 2900) } }] : []),
-        ...(p.url.startsWith('http') ? [{ type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Open in WGO' }, url: p.url }] }] : []),
-      ],
-    };
-  }
-  const head = `${p.test ? '[test] ' : ''}${p.trigger.name}`;
-  const what = `${p.matches} matching ${NOUN[p.scope ?? 'events']}${p.matches === 1 ? '' : 's'}`;
-  const summary = `${what} in *${esc(p.project.name)}*`;
-  const described = p.logs ? p.logs.map(describeLog) : p.spans ? p.spans.map(describeSpan) : p.events.map(describe);
-  const lines = described.slice(-5).reverse().map((d) => `• ${esc(d).slice(0, 180)}`);
-  return {
-    text: `🔔 ${head}: ${what}`,
-    blocks: [
-      { type: 'header', text: { type: 'plain_text', text: `🔔 ${head}`.slice(0, 150), emoji: true } },
-      { type: 'section', text: { type: 'mrkdwn', text: summary } },
-      ...(lines.length ? [{ type: 'section', text: { type: 'mrkdwn', text: lines.join('\n').slice(0, 2900) } }] : []),
-      ...(p.url.startsWith('http') ? [{ type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Open in WGO' }, url: p.url }] }] : []),
-    ],
-  };
-}
-
 /** Where a trigger sends, or why it can't (returned as its delivery status). */
 async function targetFor(t: TriggerRow): Promise<Target | string> {
   const d = t.destination;
@@ -429,37 +361,65 @@ async function targetFor(t: TriggerRow): Promise<Target | string> {
 
 async function send(t: TriggerRow, payload: TriggerWebhookPayload): Promise<string> {
   const target = await targetFor(t);
-  return typeof target === 'string' ? target : postNotification(target, payload, t.id);
+  return typeof target === 'string' ? target : postNotification(target, payload, t.id, t.slack_template);
 }
 
-/**
- * Send a notification. Slack channels, and webhook URLs on hooks.slack.com, get a Slack message; other webhooks the
- * documented JSON payload, signed with the target's secret. Returns the delivery status.
- */
-export async function postNotification(target: Target, payload: TriggerWebhookPayload, triggerId?: string): Promise<string> {
-  if ('token' in target) return postToSlack(target, slackMessage(payload));
+/** Slack refused a trigger's own design: what to call it in the delivery status, or null for other failures. */
+const rejectedDesign = (status: string): string | null => {
+  const m = /^(?:slack: (invalid_blocks\w*|invalid_arguments|msg_too_long)|400(?: (.*))?)$/.exec(status);
+  return m ? m[1] ?? m[2] ?? 'invalid_blocks' : null;
+};
+
+/** Whether a target gets a Slack message: a Slack channel, or an incoming webhook on hooks.slack.com. */
+function isSlack(target: Target): boolean {
+  if ('token' in target || target.slack) return true;
+  try {
+    return new URL(target.url).hostname === 'hooks.slack.com';
+  } catch {
+    return false;
+  }
+}
+
+/** POST a body to a webhook URL (public https unless it's a Slack channel's own webhook). Returns the delivery status. */
+async function post(target: Extract<Target, { url: string }>, body: string, headers: Record<string, string> = {}): Promise<string> {
   let url: string;
-  let body: string;
-  const headers: Record<string, string> = { 'content-type': 'application/json', 'user-agent': 'WGO-Webhook/1' };
   try {
     url = target.slack ? target.url : assertPublicHttpsUrl(target.url).toString();
   } catch (err) {
     return `error: ${(err as Error).message}`.slice(0, 120);
   }
-  if (target.slack || new URL(url).hostname === 'hooks.slack.com') body = JSON.stringify(slackMessage(payload));
-  else {
-    body = JSON.stringify(payload);
-    if (target.secret) headers['x-wgo-signature'] = sign(target.secret, body);
-    if (triggerId) headers['x-wgo-trigger'] = triggerId;
-    if (target.id) headers['x-wgo-destination'] = target.id;
-  }
   try {
-    const res = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(8000), redirect: 'manual' });
+    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'WGO-Webhook/1', ...headers }, body, signal: AbortSignal.timeout(8000), redirect: 'manual' });
     const text = res.ok ? '' : (await res.text().catch(() => '')).slice(0, 80);
     return res.ok ? String(res.status) : `${res.status}${text ? ' ' + text : ''}`;
   } catch (err) {
     return (err as Error).name === 'TimeoutError' ? 'timeout' : `error: ${(err as Error).message}`.slice(0, 120);
   }
+}
+
+const postSlack = (target: Target, message: object): Promise<string> =>
+  'token' in target ? postToSlack(target, message) : post(target, JSON.stringify(message));
+
+/**
+ * Send a notification. Slack channels, and webhook URLs on hooks.slack.com, get a Slack message (the trigger's own
+ * design when it has one); other webhooks the documented JSON payload, signed with the target's secret. When Slack
+ * rejects a trigger's design, the default message is sent instead and the status says so. Returns the delivery status.
+ */
+export async function postNotification(target: Target, payload: TriggerWebhookPayload, triggerId?: string, template?: SlackTemplate | null): Promise<string> {
+  if ('token' in target || isSlack(target)) {
+    if (!template) return postSlack(target, slackMessage(payload));
+    const status = await postSlack(target, slackMessage(payload, template));
+    const why = rejectedDesign(status);
+    if (!why) return status;
+    const fallback = await postSlack(target, slackMessage(payload));
+    return /^2\d\d$/.test(fallback) ? `${fallback} (custom message rejected: ${why})`.slice(0, 200) : fallback;
+  }
+  const body = JSON.stringify(payload);
+  const headers: Record<string, string> = {};
+  if (target.secret) headers['x-wgo-signature'] = sign(target.secret, body);
+  if (triggerId) headers['x-wgo-trigger'] = triggerId;
+  if (target.id) headers['x-wgo-destination'] = target.id;
+  return post(target, body, headers);
 }
 
 type Matched = Pick<DeliveryRequest, 'events' | 'logs' | 'spans'>;
@@ -533,13 +493,6 @@ export async function notifyAggregate(t: TriggerRow, state: 'firing' | 'resolved
   return 'sent';
 }
 
-const sampleEvent = (): AnalyticsEvent => ({
-  id: randomUUID(), type: 'click', ts: new Date().toISOString(), sessionId: 'test', anonId: null, userId: null, url: null, path: '/example',
-  title: null, referrer: null, selector: 'button#example', elementText: 'Example button', elementTag: 'button', trackName: 'example',
-  errorMessage: null, errorStack: null, errorSource: null, fingerprint: null, httpMethod: null, httpUrl: null, httpRoute: null, httpStatus: null,
-  durationMs: null, name: null, props: {}, browser: 'Chrome', os: 'macOS', device: 'desktop', country: 'SE', region: null, city: 'Stockholm', lat: null, lon: null, bot: null,
-});
-
 /** The payload of a destination's "Send test": one example click, marked as a test. */
 export function samplePayload(pid: string, projectName: string | null): TriggerWebhookPayload {
   return {
@@ -548,25 +501,17 @@ export function samplePayload(pid: string, projectName: string | null): TriggerW
   };
 }
 
-/** "Send test": a sample notification right now, bypassing the cooldown and leaving the counters alone. */
-export async function testTrigger(pid: string, id: string): Promise<TriggerTestResult> {
+/**
+ * "Send test": a sample notification right now, bypassing the cooldown and leaving the counters alone. `body` may
+ * carry a Slack message design to try before saving it (the designer's "Send test").
+ */
+export async function testTrigger(pid: string, id: string, body?: { slackTemplate?: unknown }): Promise<TriggerTestResult> {
   const t = await getTrigger(pid, id);
-  const sample = sampleEvent();
-  const now = new Date().toISOString();
+  const draft = body?.slackTemplate !== undefined ? validateSlackTemplate(body.slackTemplate) : t.slack_template;
   const scope = scopeOf(t);
-  const rows: Matched =
-    scope === 'logs' ? { events: [], logs: [{ id: randomUUID(), ts: now, severityNumber: 17, severityText: 'ERROR', body: 'Example log message', service: 'example-service', traceId: null, spanId: null, attributes: {}, resource: {} }] }
-    : scope === 'spans' ? { events: [], spans: [{ traceId: '0'.repeat(32), spanId: '0'.repeat(16), parentSpanId: null, name: 'GET /example', kind: 2, service: 'example-service', start: now, end: now, durationMs: 1234, statusCode: 2, statusMessage: 'Example failure', attributes: {}, resource: {}, events: [] }] }
-    : { events: [sample] };
-  let payload = await payloadFor(t, rows, 1, true);
-  if (kindOf(t) !== 'match') {
-    const c = t.condition;
-    const value = c && 'op' in c ? (c.op === 'above' ? c.value * 1.5 || 1 : 0) : 42;
-    payload = { ...payload, events: [], logs: undefined, spans: undefined, kind: kindOf(t), state: 'firing', value, metric: t.metric ?? undefined, condition: c ?? undefined,
-      windowMinutes: t.window_minutes ?? 60, baseline: c && 'op' in c ? null : { median: 12, low: 8, high: 17, days: 7 },
-      ...(scopeOf(t) === 'events' ? { explanation: 'Example: 80% of the increase is on /checkout, which was 10% of the total before. It started around 14:05 UTC, 2 minutes after release 1.4.2 was first seen.' } : {}) };
-  }
-  const status = await send(t, payload);
+  let payload = await payloadFor(t, sampleRows(scope), 1, true);
+  if (kindOf(t) !== 'match') payload = { ...payload, ...sampleAggregate({ kind: kindOf(t), scope, metric: t.metric, condition: t.condition, windowMinutes: t.window_minutes }) };
+  const status = await send({ ...t, slack_template: draft }, payload);
   await query('UPDATE triggers SET last_status = $3 WHERE project_id = $1 AND id = $2', [pid, id, `test: ${status}`]);
   return { ok: /^2\d\d$/.test(status), status };
 }

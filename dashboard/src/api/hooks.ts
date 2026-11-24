@@ -3,7 +3,7 @@ import { api } from './client';
 import type {
   Device, DeviceCreated, Kiosk, KioskConfig,
   BreakdownRow, ClickRow, ErrorGroup, EventsResponse, GeoResponse, HttpErrorGroup, LogsResponse, Me, Member, MetricInfo,
-  MetricSeriesResponse, PageRow, Project, ServiceRow, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse, FieldsResponse, FieldValuesResponse, FilterScope, SlackIntegration, SlackChannel, Destination, DestinationInput, DestinationLevel, Trigger, TriggerInput, TriggerTestResult, SlackSetup,
+  MetricSeriesResponse, PageRow, Project, ServiceRow, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse, FieldsResponse, FieldValuesResponse, FilterScope, SlackIntegration, SlackChannel, Destination, DestinationInput, DestinationLevel, Trigger, TriggerInput, TriggerTestResult, SlackSetup, SlackTemplate,
   SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, ConversionsResponse, ClickAlias, RetentionResponse,
   ReleasesResponse, Explanation, ExplainMetric, Filter, UploadKey, FrustrationRow, HeatmapResponse, HoursResponse,
   UptimeCheck, UptimeCheckInput, UptimeResults, UptimeRunResult, CostsResponse, TriggerPreview, ErrorSuppression, ErrorSuppressionInput, Budget, BudgetInput,
@@ -382,7 +382,11 @@ export function useTriggerPreview(pid: string, input: Partial<TriggerInput> | nu
 export function useTestTrigger(pid: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api<TriggerTestResult>(`${base(pid)}/triggers/${id}/test`, { method: 'POST' }),
+    // slackTemplate: try a Slack message design before saving it
+    mutationFn: (a: string | { id: string; slackTemplate?: SlackTemplate | null }) => {
+      const { id, slackTemplate } = typeof a === 'string' ? { id: a, slackTemplate: undefined } : a;
+      return api<TriggerTestResult>(`${base(pid)}/triggers/${id}/test`, { method: 'POST', ...(slackTemplate ? { body: { slackTemplate } } : {}) });
+    },
     onSettled: () => qc.invalidateQueries({ queryKey: triggersKey(pid) }),
   });
 }

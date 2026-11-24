@@ -260,6 +260,32 @@ export type TriggerCondition =
   | { direction: 'up' | 'down' | 'either'; sensitivity: 'low' | 'medium' | 'high' }; // anomaly
 export const TRIGGER_WINDOWS = [5, 15, 30, 60, 360, 1440] as const;
 
+// A trigger's own Slack message: Slack Block Kit blocks (https://api.slack.com/block-kit, max 50; header, section,
+// context, divider, actions, image, rich_text) in which any string may contain {{variables}} (SLACK_TEMPLATE_VARIABLES).
+// Used when the trigger notifies Slack (a channel, or a hooks.slack.com webhook); other webhooks get the JSON payload.
+// If Slack rejects the blocks, the default message is sent instead and the status says so.
+export interface SlackTemplate {
+  blocks: Array<Record<string, unknown>>;
+}
+/** Variables of a Slack template. `kinds`: the trigger kinds that have it (all when absent). */
+export const SLACK_TEMPLATE_VARIABLES: ReadonlyArray<{ name: string; description: string; kinds?: TriggerKind[] }> = [
+  { name: 'headline', description: 'The default header: 🔔 and the trigger name (✅ Resolved when it resolves, [test] for tests)' },
+  { name: 'summary', description: 'The default summary: "3 matching events in Shop", or what a threshold/anomaly trigger measured' },
+  { name: 'matches_list', description: 'The most recent matches (up to 5), one bullet each', kinds: ['match'] },
+  { name: 'trigger.name', description: 'Trigger name' },
+  { name: 'project.name', description: 'Project name' },
+  { name: 'matches', description: 'Number of matching rows, including ones held back by the cooldown', kinds: ['match'] },
+  { name: 'url', description: 'Dashboard link to the matching rows' },
+  { name: 'time', description: 'When it fired, in each reader’s own time zone, e.g. “Today 14:05” (in UTC in plain text such as headers)' },
+  { name: 'firedAt', description: 'When it fired (ISO 8601, UTC)' },
+  { name: 'state', description: 'firing or resolved', kinds: ['threshold', 'anomaly'] },
+  { name: 'value', description: 'The measured value, formatted', kinds: ['threshold', 'anomaly'] },
+  { name: 'explanation', description: 'What the change comes from, when known', kinds: ['threshold', 'anomaly'] },
+  { name: 'event.<field>', description: 'A field of the most recent matching event, e.g. event.path, event.errorMessage, event.props.plan', kinds: ['match'] },
+  { name: 'log.<field>', description: 'A field of the most recent matching log record, e.g. log.body, log.service, log.attributes.user_id', kinds: ['match'] },
+  { name: 'span.<field>', description: 'A field of the most recent matching span, e.g. span.name, span.durationMs, span.attributes.http.route', kinds: ['match'] },
+];
+
 export interface TriggerInput {
   name: string;
   scope?: FilterScope; // what it watches; default 'events'. Can't be changed after creation.
@@ -271,6 +297,7 @@ export interface TriggerInput {
   metric?: TriggerMetric; // threshold/anomaly
   condition?: TriggerCondition; // threshold/anomaly
   windowMinutes?: number; // threshold/anomaly: one of TRIGGER_WINDOWS
+  slackTemplate?: SlackTemplate | null; // the Slack message's design; null or absent: the default message
 }
 
 /** Current state of a threshold/anomaly trigger. */
@@ -291,7 +318,8 @@ export interface TriggerPreview {
   note?: string; // e.g. "Not enough history yet: anomaly triggers need 3 days of data"
 }
 
-export interface Trigger extends Required<Omit<TriggerInput, 'metric' | 'condition' | 'windowMinutes'>> {
+export interface Trigger extends Required<Omit<TriggerInput, 'metric' | 'condition' | 'windowMinutes' | 'slackTemplate'>> {
+  slackTemplate: SlackTemplate | null;
   metric: TriggerMetric | null; // null for match triggers
   condition: TriggerCondition | null;
   windowMinutes: number | null;

@@ -198,6 +198,8 @@ input, select, textarea { color: inherit; }
 .field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .field::placeholder { color: var(--faint); }
 select.field option { background: var(--raised); color: var(--fg); }
+/* group labels ("This project", "Yours…"): without this, the browser draws them light grey on white in the dark theme */
+select.field optgroup { background: var(--raised); color: var(--muted); font-style: normal; font-weight: 600; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }

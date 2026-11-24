@@ -1,0 +1,42 @@
+{
+  "name": "wgo-sourcemaps",
+  "version": "0.1.0",
+  "description": "Upload source maps to WGO so JavaScript error stacks show your original code",
+  "keywords": [
+    "wgo",
+    "sourcemaps",
+    "source-maps",
+    "errors",
+    "analytics",
+    "observability",
+    "cli"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/ljacobsson/wgo-analytics/tree/main/sourcemaps#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ljacobsson/wgo-analytics.git",
+    "directory": "sourcemaps"
+  },
+  "bugs": "https://github.com/ljacobsson/wgo-analytics/issues",
+  "type": "module",
+  "bin": {
+    "wgo-sourcemaps": "./bin/wgo-sourcemaps.mjs"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "prepack": "cp ../LICENSE LICENSE",
+    "prepublishOnly": "npm test"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

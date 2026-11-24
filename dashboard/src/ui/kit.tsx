@@ -113,15 +113,26 @@ export function CopyButton({ text, label, className }: { text: string; label?: s
 }
 
 // ---------- Drawer & Dialog ----------
-function useEsc(fn: () => void) {
+/** Open dialogs and drawers, innermost last: Escape closes only the one on top (e.g. a dialog opened from a dialog). */
+const escStack: Array<{ current: () => void }> = [];
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !escStack.length) return;
+    e.stopPropagation();
+    escStack[escStack.length - 1].current();
+  }, true);
+}
+export function useEsc(fn: () => void, active: boolean) {
+  const ref = useRef(fn);
+  useEffect(() => { ref.current = fn; });
   useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); fn(); } };
-    window.addEventListener('keydown', h, true);
-    return () => window.removeEventListener('keydown', h, true);
-  }, [fn]);
+    if (!active) return;
+    escStack.push(ref);
+    return () => { const i = escStack.lastIndexOf(ref); if (i >= 0) escStack.splice(i, 1); };
+  }, [active]);
 }
 export function Drawer({ open, onClose, title, children, width = 640 }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; width?: number }) {
-  useEsc(onClose);
+  useEsc(onClose, open);
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-50">
@@ -136,7 +147,7 @@ export function Drawer({ open, onClose, title, children, width = 640 }: { open: 
     </div>, document.body);
 }
 export function Dialog({ open, onClose, title, children, footer, width = 460 }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; width?: number }) {
-  useEsc(onClose);
+  useEsc(onClose, open);
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-[60] overflow-y-auto">

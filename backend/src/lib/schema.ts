@@ -468,4 +468,6 @@ export const SCHEMA_STATEMENTS: string[] = [
      updated_at timestamptz NOT NULL DEFAULT now(),
      PRIMARY KEY (project_id, id)
    )`,
+  // a trigger's own Slack message (SlackTemplate: Block Kit blocks with {{variables}}); NULL = the default message
+  `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS slack_template jsonb`,
 ];

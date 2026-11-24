@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { useEsc } from './kit';
 
 /**
  * A floating panel anchored to an element, rendered in a portal so table cards with overflow clipping don't cut
@@ -10,6 +11,7 @@ export function Popover({ anchor, open, onClose, children, align = 'end', width 
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number; maxH: number } | null>(null);
+  useEsc(onClose, open); // closes just this panel, not a dialog it's in
 
   useLayoutEffect(() => {
     if (!open) { setPos(null); return; }
@@ -34,15 +36,12 @@ export function Popover({ anchor, open, onClose, children, align = 'end', width 
       const t = e.target as Node;
       if (!panel.current?.contains(t) && !anchor.current?.contains(t)) onClose();
     };
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     const scroll = (e: Event) => { if (!panel.current?.contains(e.target as Node)) onClose(); };
     document.addEventListener('mousedown', down);
-    document.addEventListener('keydown', key, true);
     window.addEventListener('scroll', scroll, true);
     window.addEventListener('resize', onClose);
     return () => {
       document.removeEventListener('mousedown', down);
-      document.removeEventListener('keydown', key, true);
       window.removeEventListener('scroll', scroll, true);
       window.removeEventListener('resize', onClose);
     };

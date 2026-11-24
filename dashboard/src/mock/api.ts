@@ -285,7 +285,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
           createdBy: email, createdAt: new Date().toISOString(), lastFiredAt: null, fireCount: 0, lastStatus: null,
           kind: input.kind ?? 'match', metric: input.metric ?? null, condition: input.condition ?? null, windowMinutes: input.windowMinutes ?? null,
           status: input.kind && input.kind !== 'match' ? { state: 'ok', since: new Date().toISOString(), lastValue: 3, lastEvaluatedAt: new Date().toISOString(), baseline: input.kind === 'anomaly' ? { median: 4, low: 0, high: 10, days: 7 } : null } : null,
-          destinationLabel: labelOf(db, input.destination!),
+          destinationLabel: labelOf(db, input.destination!), slackTemplate: input.slackTemplate ?? null,
         };
         list.push(t); save(db); return t;
       }

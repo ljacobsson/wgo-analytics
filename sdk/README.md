@@ -213,7 +213,7 @@ Minified stacks are hard to read. Upload your source maps and the dashboard (and
 
 1. Build with hidden source maps, so the bundles don't point to them: Vite `build: { sourcemap: 'hidden' }`, webpack `devtool: 'hidden-source-map'`.
 2. Set `release` in `init()` (or `data-release`) to something unique per deploy, such as the git sha.
-3. After the build, upload the maps with the CLI that ships in this package. The upload key is in the dashboard under Settings, Source maps (owners only) and is a CI secret, not the write key:
+3. After the build, upload the maps with the [`wgo-sourcemaps`](../sourcemaps/README.md) CLI. The upload key is in the dashboard under Settings, Source maps (owners only) and is a CI secret, not the write key:
 
 ```sh
 npx wgo-sourcemaps --endpoint https://wgo.example.com --key uk_... --release 1.4.0 dist/
