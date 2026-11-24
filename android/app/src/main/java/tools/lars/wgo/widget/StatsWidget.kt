@@ -313,7 +313,7 @@ private fun ColumnScope.OverviewRowView(ui: Ui, row: OverviewRow, cols: Int, col
     val lead = row.stats.firstOrNull()
     Row(
         GlanceModifier.fillMaxWidth().then(sizing).background(pal.tile).cornerRadius(14.dp).padding(horizontal = 10.dp)
-            .clickable(ui.open(lead?.page ?: "overview", row.project.id, row.accountId)),
+            .clickable(ui.open("overview", row.project.id, row.accountId)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(GlanceModifier.defaultWeight()) {
