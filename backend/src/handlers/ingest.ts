@@ -13,8 +13,8 @@ import { storeEvents, storeReplays } from '../lib/store/queue';
 import { evaluateTriggers } from '../lib/triggers';
 
 /**
- * Deployed, SDK batches never reach a Lambda function in the request path: API Gateway writes each one to an SQS
- * queue and answers 202 straight away (no cold starts on the page's side), and `queueHandler` processes them.
+ * Deployed, SDK batches don't wait for this code: the intake function (handlers/intake.ts) writes each one to an
+ * SQS queue and answers 202 straight away, and `queueHandler` processes them.
  * `handler` serves POST /ingest synchronously for the local dev server and the tests.
  */
 
@@ -58,7 +58,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 }
 
 /**
- * An SQS message written by the API Gateway integration (template.yaml, IntakeApi /ingest): the body is the request
+ * An SQS message written by the intake function (handlers/intake.ts, POST /ingest): the body is the request
  * body, base64-encoded; the `meta` attribute holds `name=value` lines with the write key from the query string (`k`)
  * and the request headers that matter (user agent, CloudFront geolocation, edge secret), lower-cased.
  */
@@ -87,7 +87,7 @@ async function processRecord(record: SQSRecord): Promise<void> {
   const projectId = await projectIdForWriteKey(batch?.k ?? req.queryKey);
   if (!projectId) return drop('missing or unknown write key');
   fillMissingIds(batch, record.messageId);
-  // when API Gateway queued it, not when we got to it: clock-skew correction and the age limits depend on it
+  // when the intake queued it, not when we got to it: clock-skew correction and the age limits depend on it
   const receivedAt = Number(record.attributes?.SentTimestamp) || Date.now();
   await ingestBatch(projectId, batch, receivedAt, req.userAgent, req.geo);
 }

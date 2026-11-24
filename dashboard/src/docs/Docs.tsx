@@ -410,10 +410,10 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
           <Section id="architecture" title="How it works">
             <div className="glass overflow-hidden p-3 sm:p-5">
               <ThemedImg dark="docs/architecture-dark.svg" light="docs/architecture-light.svg" w={1530} h={770}
-                alt="WGO architecture: web apps and OpenTelemetry services send data through CloudFront to API Gateway, which queues it in SQS; Lambdas write Parquet to S3; a maintenance Lambda compacts it and rolls it up into Aurora DSQL; the dashboard, widget, kiosks and MCP clients query it through Lambdas running DuckDB, and get live events over a WebSocket API" />
+                alt="WGO architecture: web apps and OpenTelemetry services send data through CloudFront to an intake Lambda, which queues it in SQS; Lambdas write Parquet to S3; a maintenance Lambda compacts it and rolls it up into Aurora DSQL; the dashboard, widget, kiosks and MCP clients query it through Lambdas running DuckDB, and get live events over a WebSocket API" />
             </div>
             <List items={[
-              <><B>Ingest.</B> API Gateway writes SDK batches and OTLP requests straight to SQS, with no Lambda in the request path. Lambdas behind the queue write each batch to S3 as Parquet and, in parallel, push matching events to live watches over a WebSocket.</>,
+              <><B>Ingest.</B> A small Lambda behind CloudFront writes SDK batches and OTLP requests to SQS and answers straight away. Lambdas behind the queue write each batch to S3 as Parquet and, in parallel, push matching events to live watches over a WebSocket.</>,
               <><B>Raw data.</B> Events, spans, logs and metric points live in the <C>DataBucket</C> as <C>{'{table}/project_id={id}/dt={YYYY-MM-DD}/*.parquet'}</C>. The API runs an in-process DuckDB and reads only the project's files for the days in range. You can point DuckDB, Athena or Spark at the bucket yourself.</>,
               <><B>Configuration.</B> Aurora DSQL is serverless and PostgreSQL-compatible, so you can query it with <C>psql</C> and IAM auth. It holds projects, members, goals, triggers, kiosks, error stacks and the hourly rollups.</>,
               <><B>Maintenance.</B> Every 15 minutes a Lambda compacts small files, builds hourly rollups (with HyperLogLog sketches for sessions and users) and applies retention.</>,

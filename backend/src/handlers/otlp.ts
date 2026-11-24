@@ -5,8 +5,8 @@ import { projectIdForWriteKey } from '../lib/projects';
 import { collectionPaused } from '../lib/budgets';
 
 /**
- * Deployed, OTLP requests never reach a Lambda function: API Gateway writes each one to an SQS queue and
- * answers straight away (no cold starts on the senders' side), and `queueHandler` stores them.
+ * Deployed, OTLP senders don't wait for this code: the intake function (handlers/intake.ts) writes each request
+ * to an SQS queue and answers straight away, and `queueHandler` stores them.
  * `handler` serves the same paths synchronously for the local dev server and the tests.
  */
 
@@ -32,7 +32,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 }
 
 /**
- * An SQS message written by the API Gateway integration (template.yaml, IntakeApi /v1/{signal}): the body is the request
+ * An SQS message written by the intake function (handlers/intake.ts, POST /v1/{signal}): the body is the request
  * body, base64-encoded; the `meta` attribute holds `name=value` lines with the signal (from the path), the
  * write key (`key` from the query string) and the request headers that matter, lower-cased.
  */

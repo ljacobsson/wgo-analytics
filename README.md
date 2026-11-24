@@ -549,11 +549,11 @@ schema, ask for a command's options only when they use it, and can trim results 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="dashboard/public/docs/architecture-dark.svg">
-  <img alt="WGO architecture: web apps and OpenTelemetry services send data through CloudFront to API Gateway, which queues it in SQS; Lambdas process it and write Parquet to S3; a maintenance Lambda compacts it and rolls it up into Aurora DSQL; the dashboard, widget, kiosks and MCP clients query it through Lambdas running DuckDB, and get live events over a WebSocket API" src="dashboard/public/docs/architecture-light.svg">
+  <img alt="WGO architecture: web apps and OpenTelemetry services send data through CloudFront to an intake Lambda, which queues it in SQS; Lambdas process it and write Parquet to S3; a maintenance Lambda compacts it and rolls it up into Aurora DSQL; the dashboard, widget, kiosks and MCP clients query it through Lambdas running DuckDB, and get live events over a WebSocket API" src="dashboard/public/docs/architecture-light.svg">
 </picture>
 
-The SDK and OTLP intake answer as soon as the data is queued (API Gateway writes SDK batches and OTLP requests
-straight to SQS, with no Lambda in the request path, so pages and exporters never wait for a cold start);
+The SDK and OTLP intake answer as soon as the data is queued (a small Lambda behind CloudFront, on a function URL,
+writes SDK batches and OTLP requests to SQS, so pages and exporters never wait for the database or storage);
 Lambdas behind SQS write each batch to S3 as Parquet. Write keys are checked behind the queue: data sent with
 a wrong key is accepted, then dropped and logged. Queries run
 DuckDB inside the Lambda against only the project's files for the days in range, and long ranges use the
@@ -605,7 +605,7 @@ dashboard. CloudFront looks up each viewer's IP at the edge, at no extra cost, a
 `CloudFront-Viewer-{Country,City,Latitude,Longitude,…}` headers. Ingest stores country, region, city and
 coordinates rounded to 0.1° (~11 km). **The backend never sees or stores IP addresses.** CloudFront adds a
 stack-specific secret header, and geo headers without it are ignored, so locations can't be forged by calling
-API Gateway directly. The accuracy is city-level: mobile networks and VPNs show where traffic leaves the
+the API directly. The intake rejects requests without it. The accuracy is city-level: mobile networks and VPNs show where traffic leaves the
 network. The map uses OpenStreetMap vector tiles from [OpenFreeMap](https://openfreemap.org) (free, no API
 key) rendered with MapLibre GL. It clusters places and can show callouts with the latest events per dot. To
 use another tile source, set `mapStyleUrl`/`mapStyleUrlLight` in `config.json`.

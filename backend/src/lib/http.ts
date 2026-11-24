@@ -35,7 +35,7 @@ export function gunzipIfNeeded(buf: Buffer): Buffer {
 }
 
 /**
- * The `meta` attribute of a message that an API Gateway → SQS mapping template (template.yaml) wrote: `name=value`
+ * The `meta` attribute of a message the intake function (handlers/intake.ts) queued: `name=value`
  * lines, names lower-cased. The first value of a name wins.
  */
 export function metaFields(meta: string | undefined): Map<string, string> {

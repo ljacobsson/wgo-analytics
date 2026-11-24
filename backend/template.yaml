@@ -88,24 +88,6 @@ Mappings:
       CachingDisabled: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
       AllViewerExceptHostHeader: b689b0a8-53d0-40ab-baf2-68738e2966ac
       SecurityHeaders: 67f7725c-6f97-4210-82d7-5512b31e9d03
-  # API Gateway mapping templates for IntakeApi. Kept on one line: a newline would end up in the SQS form
-  # body or in the response. The request body arrives base64-encoded (binary media type */*).
-  OtlpVtl:
-    Request:
-      # SendMessage: body = base64 request body; attribute `meta` = name=value lines (signal, write key,
-      # content type), parsed by parseQueuedRequest in src/handlers/otlp.ts
-      Template: >-
-        Action=SendMessage&MessageBody=$util.urlEncode($input.body)&MessageAttribute.1.Name=meta&MessageAttribute.1.Value.DataType=String&MessageAttribute.1.Value.StringValue=signal%3D$util.urlEncode($input.params().path.get('signal'))#foreach($n in $input.params().header.keySet())#set($ln = $n.toLowerCase())#if($ln == 'content-type' || $ln == 'x-wgo-key' || $ln == 'authorization')%0A$util.urlEncode($ln)%3D$util.urlEncode($input.params().header.get($n))#end#end#set($qk = $input.params().querystring.get('key'))#if("$!qk" != '')%0Akey%3D$util.urlEncode($qk)#end
-    Accepted:
-      # OTLP: answer in the request's encoding; an empty protobuf response is zero bytes
-      Template: >-
-        #set($proto = false)#foreach($n in $input.params().header.keySet())#if($n.toLowerCase() == 'content-type' && $input.params().header.get($n).toLowerCase().contains('protobuf'))#set($proto = true)#end#end#if($proto)#set($context.responseOverride.header["Content-Type"] = 'application/x-protobuf')#{else}{}#{end}
-  IngestVtl:
-    Request:
-      # SendMessage: body = base64 request body; attribute `meta` = name=value lines (write key `k` from the query
-      # string, user agent, CloudFront geolocation, edge secret), parsed by parseQueuedBatch in src/handlers/ingest.ts
-      Template: >-
-        Action=SendMessage&MessageBody=$util.urlEncode($input.body)&MessageAttribute.1.Name=meta&MessageAttribute.1.Value.DataType=String&MessageAttribute.1.Value.StringValue=source%3Dsdk#foreach($n in $input.params().header.keySet())#set($ln = $n.toLowerCase())#if($ln == 'user-agent' || $ln == 'x-wgo-edge' || $ln.startsWith('cloudfront-viewer-'))%0A$util.urlEncode($ln)%3D$util.urlEncode($input.params().header.get($n))#end#end#set($qk = $input.params().querystring.get('k'))#if("$!qk" != '')%0Ak%3D$util.urlEncode($qk)#end
 
 Globals:
   Function:
@@ -481,11 +463,11 @@ Resources:
         External: [pg-native, '@duckdb/node-api']
         EntryPoints: [src/handlers/otlp.ts]
 
-  # ---------------------------------------------------------------- intake: SDK + OTLP (no Lambda in the request path)
-  # API Gateway (IntakeApi) writes each SDK batch and OTLP request to SQS and answers right away, so senders never
-  # wait for a cold start or for DSQL. For OTLP this matters most for Lambda senders, which export before every
-  # invocation returns. IngestFunction and OtlpFunction process the messages. The write key is checked there:
-  # requests with an unknown key are accepted and then dropped (logged), not rejected with 401.
+  # ---------------------------------------------------------------- intake: SDK + OTLP
+  # CloudFront sends each SDK batch and OTLP request to IntakeFunction (a function URL), which writes it to SQS and
+  # answers right away, so senders never wait for DSQL or S3. For OTLP this matters most for Lambda senders, which
+  # export before every invocation returns. IngestFunction and OtlpFunction process the messages. The write key is
+  # checked there: requests with an unknown key are accepted and then dropped (logged), not rejected with 401.
   IngestQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -522,207 +504,43 @@ Resources:
       MessageRetentionPeriod: 1209600 # 14 days
       SqsManagedSseEnabled: true
 
-  IntakeApiRole:
-    Type: AWS::IAM::Role
+  # A function URL rather than API Gateway: a fraction of the cost per request. CloudFront's origin access control
+  # can't sign the POST bodies browsers send, so the URL is public and the function only accepts requests carrying
+  # the secret header CloudFront adds (X-WGO-Edge).
+  IntakeFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: { Service: apigateway.amazonaws.com }
-            Action: sts:AssumeRole
+      CodeUri: ./
+      Handler: intake.handler
+      MemorySize: 256
+      Timeout: 10
+      Environment:
+        Variables:
+          INGEST_QUEUE_URL: !Ref IngestQueue
+          OTLP_QUEUE_URL: !Ref OtlpQueue
+          EDGE_SECRET: !Select [2, !Split ['/', !Ref AWS::StackId]]
       Policies:
-        - PolicyName: send-to-intake-queues
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: sqs:SendMessage
-                Resource: [!GetAtt OtlpQueue.Arn, !GetAtt IngestQueue.Arn]
+        - SQSSendMessagePolicy: { QueueName: !GetAtt IngestQueue.QueueName }
+        - SQSSendMessagePolicy: { QueueName: !GetAtt OtlpQueue.QueueName }
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: BUFFERED
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        EntryPoints: [src/handlers/intake.ts]
 
-  IntakeApi:
-    Type: AWS::Serverless::Api
+  # A public function URL needs lambda:InvokeFunction for calls through the URL as well (SAM adds InvokeFunctionUrl)
+  IntakeFunctionUrlInvokePermission:
+    Type: AWS::Lambda::Permission
     Properties:
-      StageName: intake
-      OpenApiVersion: '3.0'
-      EndpointConfiguration: { Type: REGIONAL }
-      MethodSettings:
-        - ResourcePath: '/*'
-          HttpMethod: '*'
-          ThrottlingBurstLimit: 5000
-          ThrottlingRateLimit: 2000
-      DefinitionBody:
-        openapi: '3.0.1'
-        info: { title: !Sub '${AWS::StackName}-intake', version: '1' }
-        # every body is binary: protobuf, JSON and gzipped JSON all reach the template as base64
-        x-amazon-apigateway-binary-media-types: ['*/*']
-        paths:
-          # SDK batches. The SDK sends text/plain (no CORS preflight), or application/octet-stream when gzipped.
-          /ingest:
-            post:
-              responses:
-                '202':
-                  description: Queued
-                  headers:
-                    Content-Type: { schema: { type: string } }
-                    Access-Control-Allow-Origin: { schema: { type: string } }
-                '400':
-                  description: Rejected by SQS (empty, or over the message size limit)
-                  headers:
-                    Content-Type: { schema: { type: string } }
-                    Access-Control-Allow-Origin: { schema: { type: string } }
-                '503':
-                  description: Could not queue, retry
-                  headers:
-                    Content-Type: { schema: { type: string } }
-                    Access-Control-Allow-Origin: { schema: { type: string } }
-              x-amazon-apigateway-integration:
-                type: aws
-                httpMethod: POST
-                uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:sqs:path/${AWS::AccountId}/${IngestQueue.QueueName}'
-                credentials: !GetAtt IntakeApiRole.Arn
-                contentHandling: CONVERT_TO_TEXT
-                passthroughBehavior: never
-                requestParameters:
-                  integration.request.header.Content-Type: "'application/x-www-form-urlencoded'"
-                requestTemplates:
-                  text/plain: !FindInMap [IngestVtl, Request, Template]
-                  application/octet-stream: !FindInMap [IngestVtl, Request, Template]
-                  application/json: !FindInMap [IngestVtl, Request, Template]
-                responses:
-                  default:
-                    statusCode: '202'
-                    contentHandling: CONVERT_TO_TEXT
-                    responseParameters:
-                      method.response.header.Content-Type: "'application/json'"
-                      method.response.header.Access-Control-Allow-Origin: "'*'"
-                    responseTemplates:
-                      application/json: '{}'
-                  '4\d{2}':
-                    statusCode: '400'
-                    contentHandling: CONVERT_TO_TEXT
-                    responseParameters:
-                      method.response.header.Content-Type: "'application/json'"
-                      method.response.header.Access-Control-Allow-Origin: "'*'"
-                    responseTemplates:
-                      application/json: '{"error":"Request rejected: empty, or larger than the queue accepts"}'
-                  '5\d{2}':
-                    statusCode: '503'
-                    contentHandling: CONVERT_TO_TEXT
-                    responseParameters:
-                      method.response.header.Content-Type: "'application/json'"
-                      method.response.header.Access-Control-Allow-Origin: "'*'"
-                    responseTemplates:
-                      application/json: '{"error":"Could not queue the request, please retry"}'
-            # CORS preflight for gzipped batches
-            options:
-              responses:
-                '204':
-                  description: CORS preflight
-                  headers:
-                    Access-Control-Allow-Origin: { schema: { type: string } }
-                    Access-Control-Allow-Methods: { schema: { type: string } }
-                    Access-Control-Allow-Headers: { schema: { type: string } }
-                    Access-Control-Max-Age: { schema: { type: string } }
-              x-amazon-apigateway-integration:
-                type: mock
-                contentHandling: CONVERT_TO_TEXT # binary media type */* would otherwise break the mock template
-                passthroughBehavior: when_no_match
-                requestTemplates:
-                  application/json: '{"statusCode": 204}'
-                responses:
-                  default:
-                    statusCode: '204'
-                    responseParameters:
-                      method.response.header.Access-Control-Allow-Origin: "'*'"
-                      method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
-                      method.response.header.Access-Control-Allow-Headers: "'content-type,content-encoding,x-wgo-key'"
-                      method.response.header.Access-Control-Max-Age: "'86400'"
-          /v1/{signal}:
-            post:
-              parameters:
-                - { name: signal, in: path, required: true, schema: { type: string } }
-              responses:
-                '200':
-                  description: Queued
-                  headers:
-                    Content-Type: { schema: { type: string } }
-                    Access-Control-Allow-Origin: { schema: { type: string } }
-                '400':
-                  description: Rejected by SQS (empty, or over the message size limit)
-                  headers:
-                    Content-Type: { schema: { type: string } }
-                    Access-Control-Allow-Origin: { schema: { type: string } }
-                '503':
-                  description: Could not queue, retry
-                  headers:
-                    Content-Type: { schema: { type: string } }
-                    Access-Control-Allow-Origin: { schema: { type: string } }
-              x-amazon-apigateway-integration:
-                type: aws
-                httpMethod: POST
-                uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:sqs:path/${AWS::AccountId}/${OtlpQueue.QueueName}'
-                credentials: !GetAtt IntakeApiRole.Arn
-                contentHandling: CONVERT_TO_TEXT
-                passthroughBehavior: never
-                requestParameters:
-                  integration.request.header.Content-Type: "'application/x-www-form-urlencoded'"
-                requestTemplates:
-                  application/x-protobuf: !FindInMap [OtlpVtl, Request, Template]
-                  application/protobuf: !FindInMap [OtlpVtl, Request, Template]
-                  application/json: !FindInMap [OtlpVtl, Request, Template]
-                responses:
-                  default:
-                    statusCode: '200'
-                    contentHandling: CONVERT_TO_TEXT
-                    responseParameters:
-                      method.response.header.Content-Type: "'application/json'"
-                      method.response.header.Access-Control-Allow-Origin: "'*'"
-                    responseTemplates:
-                      application/json: !FindInMap [OtlpVtl, Accepted, Template]
-                      application/x-protobuf: !FindInMap [OtlpVtl, Accepted, Template]
-                  '4\d{2}':
-                    statusCode: '400'
-                    contentHandling: CONVERT_TO_TEXT
-                    responseParameters:
-                      method.response.header.Content-Type: "'application/json'"
-                      method.response.header.Access-Control-Allow-Origin: "'*'"
-                    responseTemplates:
-                      application/json: '{"error":"Request rejected: empty, or larger than the queue accepts"}'
-                  '5\d{2}':
-                    statusCode: '503'
-                    contentHandling: CONVERT_TO_TEXT
-                    responseParameters:
-                      method.response.header.Content-Type: "'application/json'"
-                      method.response.header.Access-Control-Allow-Origin: "'*'"
-                    responseTemplates:
-                      application/json: '{"error":"Could not queue the request, please retry"}'
-            # CORS preflight for browser exporters
-            options:
-              parameters:
-                - { name: signal, in: path, required: true, schema: { type: string } }
-              responses:
-                '204':
-                  description: CORS preflight
-                  headers:
-                    Access-Control-Allow-Origin: { schema: { type: string } }
-                    Access-Control-Allow-Methods: { schema: { type: string } }
-                    Access-Control-Allow-Headers: { schema: { type: string } }
-                    Access-Control-Max-Age: { schema: { type: string } }
-              x-amazon-apigateway-integration:
-                type: mock
-                contentHandling: CONVERT_TO_TEXT # binary media type */* would otherwise break the mock template
-                passthroughBehavior: when_no_match
-                requestTemplates:
-                  application/json: '{"statusCode": 204}'
-                responses:
-                  default:
-                    statusCode: '204'
-                    responseParameters:
-                      method.response.header.Access-Control-Allow-Origin: "'*'"
-                      method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
-                      method.response.header.Access-Control-Allow-Headers: "'content-type,content-encoding,x-wgo-key'"
-                      method.response.header.Access-Control-Max-Age: "'86400'"
+      FunctionName: !Ref IntakeFunction
+      Action: lambda:InvokeFunction
+      Principal: '*'
+      InvokedViaFunctionUrl: true
 
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -1402,8 +1220,7 @@ Resources:
               - HeaderName: X-WGO-Edge
                 HeaderValue: !Select [2, !Split ['/', !Ref AWS::StackId]]
           - Id: intake
-            DomainName: !Sub '${IntakeApi}.execute-api.${AWS::Region}.amazonaws.com'
-            OriginPath: /intake
+            DomainName: !Select [2, !Split ['/', !GetAtt IntakeFunctionUrl.FunctionUrl]]
             CustomOriginConfig:
               OriginProtocolPolicy: https-only
               OriginSSLProtocols: [TLSv1.2]

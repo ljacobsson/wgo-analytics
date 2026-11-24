@@ -26,6 +26,7 @@ export interface SplitShares { lambda: Shares; dsql: Shares }
  */
 export const FUNCTIONS: Record<string, { category: CostCategory; memoryMb: number }> = {
   IngestFunction: { category: 'ingestion', memoryMb: 512 },
+  IntakeFunction: { category: 'ingestion', memoryMb: 256 },
   OtlpFunction: { category: 'ingestion', memoryMb: 1024 },
   EventsWriterFunction: { category: 'ingestion', memoryMb: 1024 },
   ReplayFunction: { category: 'ingestion', memoryMb: 512 },

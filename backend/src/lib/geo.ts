@@ -3,7 +3,7 @@
  * CloudFront derives them from the viewer IP; we never see or store the IP itself.
  *
  * The headers are only trusted when the request carries the secret header our CloudFront
- * distribution adds on the way to the origin. Otherwise anyone calling API Gateway directly
+ * distribution adds on the way to the origin. Otherwise anyone calling an origin directly
  * could forge locations. Without EDGE_SECRET (local dev) the headers are trusted as-is.
  */
 export interface Geo {

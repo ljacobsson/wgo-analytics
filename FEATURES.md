@@ -204,7 +204,7 @@ services never wait for it to be processed.
 flowchart LR
   B["🌐 Your web app<br/>WGO SDK"] --> CF["CloudFront<br/>your domain"]
   S["⚙️ Your services<br/>OpenTelemetry"] --> CF
-  CF --> API["API Gateway"]
+  CF --> API["Lambda<br/>intake"]
   API --> Q["SQS"]
   Q --> L["Lambda"]
   L --> D[("S3 (Parquet)<br/>+ Aurora DSQL")]

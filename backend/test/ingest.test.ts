@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseQueuedBatch } from '../src/handlers/ingest';
 import { fillMissingIds, type WireBatch } from '../src/lib/events';
 
-describe('parseQueuedBatch (SDK batch queued by API Gateway)', () => {
+describe('parseQueuedBatch (SDK batch queued by the intake function)', () => {
   const batch = { k: 'wk_body', a: 'anon', sentAt: 1, e: [] };
 
   it('reads plain and gzipped bodies, the query key, user agent and geolocation', () => {
