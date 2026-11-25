@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { requireAdmin } from './admins';
 import type { Budget, BudgetDestination, BudgetInput, BudgetStatus, CostsResponse } from '../contract';
-import { eventsThisMonth, getCosts } from './costs';
+import { getCosts, projectShare, signalsThisMonth } from './costs';
 import { query } from './db';
 import { HttpError } from './http';
 import * as P from './projects';
@@ -10,8 +10,9 @@ import { channelTarget, postToSlack, type SlackChannelConfig } from './slack';
 
 /**
  * Monthly cost budgets for the whole install or one project. Spend comes from Cost Explorer (lib/costs.ts, cached
- * for hours and up to a day behind AWS); a project's spend is the install's spend times the project's share of this
- * month's events. Each budget alerts at its thresholds and on the forecast once a month, and can pause collection:
+ * for hours and up to a day behind AWS); a project's spend is the install's spend times the project's share of what
+ * came in this month: its share of the events and of the OpenTelemetry items, weighted by what taking each in cost
+ * (costs.ts projectShare). Each budget alerts at its thresholds and on the forecast once a month, and can pause collection:
  * ingest then drops the project's (or every project's) data until the month ends, the limit is raised or someone
  * resumes it. Pausing can't stop every charge: requests still reach API Gateway and stored data still costs.
  */
@@ -221,12 +222,13 @@ export async function checkBudgets(opts: { ids?: string[]; now?: number; costs?:
     : await query<Row>('SELECT * FROM budgets');
   if (!rows.length) return { checked: 0, notified: 0 };
   const costs = await (opts.costs ?? (() => getCosts(undefined, now)))();
-  const total = costs.setup ? 0 : await eventsThisMonth(now);
+  // a project's share: what it took in out of the whole install's, weighted by what taking in events and OpenTelemetry cost
+  const all = costs.setup ? null : await signalsThisMonth(now);
   let notified = 0;
   for (const r of rows) {
     let spent: number | null = null, forecast: number | null = null;
     if (!costs.setup) {
-      const share = r.scope === 'install' ? 1 : total ? Math.min(1, (await eventsThisMonth(now, r.project_id!)) / total) : 0;
+      const share = r.scope === 'install' ? 1 : projectShare(all!, await signalsThisMonth(now, r.project_id!), costs.ingestionPaths);
       spent = Math.round(costs.monthToDate * share * 100) / 100;
       forecast = costs.forecast !== undefined ? Math.round(costs.forecast * share * 100) / 100 : null;
     }
@@ -248,7 +250,7 @@ const money = (n: number | null) => (n === null ? '?' : `$${n.toFixed(2)}`);
 
 export function budgetMessage(r: Pick<Row, 'scope' | 'monthly_limit'>, name: string, s: BudgetStatus, event: Event, percent: number | null): string {
   const what = r.scope === 'install' ? 'The WGO install' : `Project ${name}`;
-  const est = s.estimated ? ' (estimated from its share of events)' : '';
+  const est = s.estimated ? ' (estimated from its share of the data taken in)' : '';
   switch (event) {
     case 'threshold': return `${what} has spent ${money(s.spent)}${est} this month: ${percent}% of its ${money(r.monthly_limit)} budget.`;
     case 'forecast': return `${what} is on track to spend ${money(s.forecast)}${est} this month, over its ${money(r.monthly_limit)} budget (${money(s.spent)} so far).`;

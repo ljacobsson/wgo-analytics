@@ -228,6 +228,11 @@ async function route(method: string, parts: string[], q: Q, email: string, event
     if (sub === 'slack') {
       const domain = event.requestContext.domainName;
       if (!id && method === 'GET') return S.setupStatus(pid, domain, email);
+      // connect a workspace with a bot token: for the project (any member) or for yourself
+      if (id === 'workspaces' && !action && method === 'POST') {
+        const b = jsonBody<{ token?: unknown; level?: unknown }>(event);
+        return S.connectWithToken(pid, email, b.token, b.level === 'account' ? 'account' : 'project');
+      }
       // workspaces/{wid}[/channels]: the project's or your own
       if (id === 'workspaces' && action) {
         const more = rest[2];
@@ -236,20 +241,6 @@ async function route(method: string, parts: string[], q: Q, email: string, event
         if (!more && method === 'DELETE') { await S.disconnectWorkspace(pid, email, action); return S.setupStatus(pid, domain, email); }
       }
       if (id === 'install' && method === 'GET') return { url: await S.installUrl(pid, email, domain, T.dashboardOrigin(event.headers?.origin), q.level === 'account' ? 'account' : 'project') };
-      // the project's app (owners) or your own (anyone, used in all your projects)
-      if (id === 'app' && method === 'POST') {
-        const b = jsonBody<{ clientId?: unknown; clientSecret?: unknown; level?: unknown }>(event);
-        const level = b.level === 'account' ? 'account' : 'project';
-        if (level === 'project') await P.requireOwner(email, pid);
-        await S.saveApp(pid, email, b.clientId, b.clientSecret, level);
-        return S.setupStatus(pid, domain, email);
-      }
-      if (id === 'app' && method === 'DELETE') {
-        const level = q.level === 'account' ? 'account' : 'project';
-        if (level === 'project') await P.requireOwner(email, pid);
-        await S.removeApp(pid, email, level);
-        return S.setupStatus(pid, domain, email);
-      }
     }
     throw new HttpError(405, 'Method not allowed');
   }

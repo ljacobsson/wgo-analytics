@@ -361,35 +361,29 @@ export interface TriggerWebhookPayload {
   explanation?: string; // events count metrics: what the change comes from (see GET /explain)
 }
 
-// Slack. "Add to Slack" connects a workspace (WGO's bot joins it); channels are then picked from a list, as often as
-// you like, without going back to Slack. A workspace and its channels are a project's (any member uses and manages
-// them) or your own (only you; your channels are your account destinations, usable in all your projects).
+// Slack. A connected workspace (WGO's bot is in it) lets you pick channels from a list, as often as you like, without
+// going back to Slack. A workspace and its channels are a project's (any member uses and manages them) or your own
+// (only you; your channels are your account destinations, usable in all your projects).
 // Channels connected before workspaces existed post through an incoming webhook and keep working.
+// A workspace is connected with a bot token: create the WGO Slack app from createAppUrl (pre-filled), click Install
+// to Workspace and paste its Bot User OAuth Token. When the instance has a Slack app of its own (SLACK_CLIENT_ID/SECRET
+// at deploy time, `addToSlack`), "Add to Slack" connects one without creating an app.
 // GET    /api/projects/{pid}/integrations              -> SlackIntegration[]   the project's channels
 // DELETE /api/projects/{pid}/integrations/{id}         -> { ok: true }
-// GET    /api/projects/{pid}/slack/install?level=project|account -> { url }  open it: Slack asks for the workspace,
-//        then redirects back to the dashboard (#/p/{pid}/triggers?slack=connected|cancelled|scopes|error&slack_level=…).
-//        `scopes`: the Slack app lacks bot scopes (see SLACK_BOT_SCOPES). 409 until a Slack app is set up.
+// GET    /api/projects/{pid}/slack                     -> SlackSetup   (for the caller)
+// POST   /api/projects/{pid}/slack/workspaces {token, level?: 'project'|'account'} -> SlackWorkspace   checked with
+//        Slack (auth.test); 400 for a token that isn't a bot token, expires or lacks SLACK_BOT_SCOPES. Connecting a
+//        workspace again updates its token.
+// GET    /api/projects/{pid}/slack/install?level=project|account -> { url }  (addToSlack only) open it: Slack asks for
+//        the workspace, then redirects back to the dashboard
+//        (#/p/{pid}/triggers?slack=connected|cancelled|scopes|error&slack_level=…). 409 without an instance app.
 // GET    /api/projects/{pid}/slack/workspaces/{wid}/channels -> SlackChannel[]   public channels, and private ones
 //        WGO's bot was invited to
 // POST   /api/projects/{pid}/slack/workspaces/{wid}/channels {channelId} -> Destination   at the workspace's level
 // DELETE /api/projects/{pid}/slack/workspaces/{wid}    -> SlackSetup   409 while channels use it
-//
-// Slack ties "Add to Slack" to a Slack app. One app works for every project of an install, so it's created once:
-// from the dashboard for a project (owners; everyone in the project uses it) or for yourself (used in every project
-// you're a member of that has none), or instance-wide with SLACK_CLIENT_ID/SECRET at deploy time.
-// Order: the project's, then yours, then the instance's.
-// GET    /api/projects/{pid}/slack                     -> SlackSetup   (for the caller)
-// POST   /api/projects/{pid}/slack/app  {clientId, clientSecret, level?: 'project'|'account'} -> SlackSetup
-//        (checked with Slack; project: owners only; account: your own app)
-// DELETE /api/projects/{pid}/slack/app?level=project|account -> SlackSetup   (project: owner)
 export const SLACK_BOT_SCOPES = ['chat:write', 'chat:write.public', 'channels:read', 'groups:read'] as const;
 export interface SlackSetup {
-  configured: boolean; // "Add to Slack" works for you in this project
-  source: 'project' | 'account' | 'instance' | null; // whose app it uses: the project's, your own or the instance's
-  clientId: string | null; // the app in use, unless it's the instance's; the secret is never returned
-  accountClientId: string | null; // your own app, if you set one up (used where a project has none)
-  redirectUrl: string; // the app's OAuth redirect URL (already in the manifest behind createAppUrl)
+  addToSlack: boolean; // the instance has a Slack app: "Add to Slack" (GET …/slack/install) connects a workspace
   createAppUrl: string; // opens Slack's "create app" with everything pre-filled; you only pick the workspace
   workspaces: SlackWorkspace[]; // the project's, then your own
 }
@@ -1256,6 +1250,13 @@ export interface UptimeResults {
 // (the dashboard, MCP, widgets, kiosks and live view reading them) and other (background jobs, sign-in, logs).
 // Lambda and DSQL compute are shared, so they are divided by CloudWatch metrics (lib/costSplit.ts): estimates.
 export type CostCategory = 'storage' | 'ingestion' | 'querying' | 'other';
+// What came in, counted from the hourly rollups (complete hours only): browser events (bots and suppressed errors not
+// counted) and OpenTelemetry spans, log records and metric points. Signals sent before they were counted (or older
+// than raw retention when counting started) are 0.
+export interface SignalCounts { events: number; spans: number; logs: number; metricPoints: number }
+// The ingestion cost by what was taken in (backend lib/costSplit.ts): browser events, and OpenTelemetry spans, logs and
+// metric points together. Recordings and source maps are in neither. Estimates; 0 while CloudWatch has no numbers.
+export interface IngestionPaths { events: number; otel: number }
 export interface CostsResponse {
   setup: boolean;
   reason?: string; // set with `setup`: why there are no numbers
@@ -1263,13 +1264,20 @@ export interface CostsResponse {
   monthToDate: number;
   lastMonth: number;
   forecast?: number; // month-to-date projected linearly to the end of the month
-  daily: Array<{ day: string; amount: number; byCategory: Record<CostCategory, number> }>; // last 30 days
+  // last 30 days; `signals`: what the whole install took in that UTC day (absent only with `setup`)
+  daily: Array<{ day: string; amount: number; byCategory: Record<CostCategory, number>; ingestion?: IngestionPaths; signals?: SignalCounts }>;
   services: Array<{ service: string; amount: number }>; // month to date, largest first
   // month to date, in the order storage, ingestion, querying, other; each with its services, largest first
   categories: Array<{ category: CostCategory; amount: number; services: Array<{ service: string; amount: number }> }>;
+  ingestionPaths?: IngestionPaths; // month to date (absent with `setup`)
   usage: {
-    eventsThisMonth: number;
+    eventsThisMonth: number; // = signalsThisMonth.events
     projectEventsThisMonth?: number; // with `pid`
+    signalsThisMonth?: SignalCounts; // whole install (absent only with `setup`)
+    projectSignalsThisMonth?: SignalCounts; // with `pid`
+    // with `pid`: the project's estimated share of the cost (0-1): its share of the events and of the OpenTelemetry
+    // items, weighted by what taking each in cost (without that split: its share of everything that came in)
+    projectShare?: number;
     dataBucketBytes: number | null;
     dsqlStorageBytes: number | null;
   };

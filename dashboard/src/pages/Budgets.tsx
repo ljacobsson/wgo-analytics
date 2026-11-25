@@ -17,7 +17,7 @@ export function CostDisclaimer() {
         caps on this page are estimates provided as they are, without any warranty. The authors of WGO accept no responsibility or liability for any
         AWS charges, whatever this page shows or does.</p>
       <p className="mt-1.5">Costs come from AWS Cost Explorer, which can be a day behind. A project's cost is estimated from its share of this month's
-        events. Stopping collection limits what WGO stores, but requests still reach AWS and stored data still costs. For alerts on your whole AWS account
+        events and OpenTelemetry items, weighted by what taking each in cost. Stopping collection limits what WGO stores, but requests still reach AWS and stored data still costs. For alerts on your whole AWS account
         that don't depend on WGO, also set up <a className="text-accent hover:underline" href="https://console.aws.amazon.com/billing/home#/budgets" target="_blank" rel="noreferrer">AWS Budgets</a>.</p>
     </div>
   );

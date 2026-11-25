@@ -137,20 +137,18 @@ all its attributes, and click one to filter by it.
 
 **Triggers** notify you when new events match a filter. Create one from the current filters (**Create
 trigger** in the filter bar), from any event (**Create trigger from this event**), or on the Triggers page.
-- **Slack:** click **Slack channel**, connect your workspace once (Slack asks which one), then pick channels
-  from a list, as many as you like, without going back to Slack. Private channels show up once you
-  `/invite @WGO` there. A workspace is connected for the project (any member adds its channels) or for
-  yourself (your own channels, usable in all your projects). Slack ties every
-  "Add to Slack" button to a Slack app, so a self-hosted WGO needs its own, created once. The Triggers
-  page walks you through it in about a minute: **Create the WGO Slack app** opens Slack pre-filled (you only
-  pick the workspace), then paste the Client ID and Secret, and WGO checks them with Slack. One app works for
-  every project. Save it **for yourself**, and it works in all your projects. A project owner can save it
-  **for the project** instead, so every member there can use it. To set it up for everyone at once, put
-  `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` in `deploy.env`. WGO uses the project's app first, then yours,
-  then the one in `deploy.env`. The app needs the bot token scopes `chat:write`, `chat:write.public`,
-  `channels:read` and `groups:read` (the pre-filled app has them). An app created before WGO used a bot only
-  has `incoming-webhook`: add those scopes under **OAuth & Permissions**, then connect the workspace. Channels
-  connected the old way keep working.
+- **Slack:** click **Slack channel**, connect your workspace once, then pick channels from a list, as many
+  as you like, without going back to Slack. Private channels show up once you `/invite @WGO` there. A
+  workspace is connected for the project (any member adds its channels) or for yourself (your own channels,
+  usable in all your projects). WGO posts as a Slack app, which you create once per workspace. The dialog
+  walks you through it in about a minute: **Create the WGO Slack app** opens Slack pre-filled (you only pick
+  the workspace), then click **Install to** your workspace under **OAuth & Permissions** and paste the **Bot
+  User OAuth Token** (`xoxb-…`). WGO checks it with Slack. To skip that for everyone, put the Client ID and
+  Secret of a distributed Slack app in `deploy.env` (`SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`): **Slack
+  channel** then connects a workspace with "Add to Slack". The app needs the bot token scopes `chat:write`,
+  `chat:write.public`, `channels:read` and `groups:read` (the pre-filled app has them) and token rotation
+  turned off. An app created before WGO used a bot only has `incoming-webhook`: add those scopes under
+  **OAuth & Permissions**, reinstall it and paste its token. Channels connected the old way keep working.
 - **Webhooks:** an HTTPS POST of JSON with `trigger`, `project`, `matches`, `events` and `url`. It's signed
   with `X-WGO-Signature: sha256=<HMAC-SHA256 of the body>` using the saved webhook's signing secret (named in
   `X-WGO-Destination`), or the trigger's own for a one-off URL. Private and internal addresses are refused.
@@ -286,7 +284,7 @@ change them later by re-running the deploy.
 | `CLUSTER_METRICS_PROJECT_ID` | none | Project that receives hourly Aurora DSQL storage and DPU numbers, as metrics and as a `wgo.cluster` event you can create triggers on |
 | `BUILD_ANDROID` | `false` | `true` = rebuild the Android app (needs JDK 17 and the Android SDK) instead of deploying the prebuilt APK from the repo |
 | `UPDATE_CHECK` | `true` | The dashboard checks GitHub every few hours and shows a dismissable note with the update command when `main` has commits newer than your install. The request goes from the signed-in user's browser to `api.github.com`; `false` turns it off |
-| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` | none | One Slack app for "Add to Slack" in every project's [triggers](#filters-and-triggers), for everyone; otherwise people set up their own (for all their projects) or a project's on the Triggers page |
+| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` | none | One Slack app for "Add to Slack" in every project's [triggers](#filters-and-triggers), for everyone; otherwise people create their own WGO Slack app and paste its bot token on the Triggers page |
 | `PARAMS` | none | Extra raw `sam deploy --parameter-overrides` |
 
 **Custom domain.** With `CUSTOM_DOMAIN=wgo.example.com`:

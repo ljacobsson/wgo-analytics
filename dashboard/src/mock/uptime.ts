@@ -99,7 +99,15 @@ export function mockCosts(pid: string, now: number, setup: boolean): CostsRespon
     const querying = 0.016 + rnd(11, k) * rnd(13, k) * 0.03;
     const other = 0.008 + rnd(17, k) * 0.002;
     const byCategory = { storage: r3(storage), ingestion: r3(ingestion), querying: r3(querying), other: r3(other) };
-    return { day: new Date(t).toISOString().slice(0, 10), amount: r3(storage + ingestion + querying + other), byCategory };
+    // browser traffic dips on weekends, backend telemetry doesn't
+    const weekday = [0, 6].includes(new Date(t).getUTCDay()) ? 0.6 : 1;
+    const signals = {
+      events: Math.round((38_000 + rnd(7, k) * 12_000) * weekday),
+      spans: Math.round(95_000 + rnd(19, k) * 30_000), logs: Math.round(22_000 + rnd(23, k) * 9_000), metricPoints: 64_800,
+    };
+    // about 45% of ingestion takes in browser events, 40% OpenTelemetry, the rest recordings and source maps
+    const split = { events: r3(ingestion * 0.45), otel: r3(ingestion * 0.4) };
+    return { day: new Date(t).toISOString().slice(0, 10), amount: r3(storage + ingestion + querying + other), byCategory, ingestion: split, signals };
   });
   const monthPrefix = new Date(now).toISOString().slice(0, 7);
   const month = daily.filter((x) => x.day.startsWith(monthPrefix));
@@ -117,13 +125,22 @@ export function mockCosts(pid: string, now: number, setup: boolean): CostsRespon
   }));
   const services = new Map<string, number>();
   for (const c of categories) for (const s of c.services) services.set(s.service, (services.get(s.service) ?? 0) + s.amount);
-  const eventsThisMonth = 1_240_000;
-  const projectEvents = pid === 'prj_demo' ? 472_000 : 150_000;
+  const signalsThisMonth = month.reduce((a, b) => ({ events: a.events + b.signals.events, spans: a.spans + b.signals.spans, logs: a.logs + b.signals.logs, metricPoints: a.metricPoints + b.signals.metricPoints }), { events: 0, spans: 0, logs: 0, metricPoints: 0 });
+  const eventsThisMonth = signalsThisMonth.events;
+  // the demo project sends the backend telemetry too
+  const part = pid === 'prj_demo' ? 0.38 : 0.12;
+  const projectSignals = { events: Math.round(eventsThisMonth * part), spans: pid === 'prj_demo' ? signalsThisMonth.spans : 0, logs: pid === 'prj_demo' ? signalsThisMonth.logs : 0, metricPoints: pid === 'prj_demo' ? signalsThisMonth.metricPoints : 0 };
+  const projectEvents = projectSignals.events;
+  const ingestionPaths = { events: r2(month.reduce((a, b) => a + b.ingestion.events, 0)), otel: r2(month.reduce((a, b) => a + b.ingestion.otel, 0)) };
+  const otelOf = (c: typeof signalsThisMonth) => c.spans + c.logs + c.metricPoints;
+  // as the backend: the shares of events and OpenTelemetry items, weighted by what taking each in cost
+  const projectShare = (ingestionPaths.events * (projectSignals.events / signalsThisMonth.events) + ingestionPaths.otel * (otelOf(projectSignals) / otelOf(signalsThisMonth)))
+    / (ingestionPaths.events + ingestionPaths.otel);
   return {
     setup: false, currency: 'USD', monthToDate, lastMonth: 3.12,
     forecast: Math.round((monthToDate / Math.max(1, dom)) * new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate() * 100) / 100,
-    daily, categories,
+    daily, categories, ingestionPaths,
     services: [...services].sort((a, b) => b[1] - a[1]).map(([service, amount]) => ({ service, amount: r2(amount) })),
-    usage: { eventsThisMonth, projectEventsThisMonth: projectEvents, dataBucketBytes: 3.4e9, dsqlStorageBytes: 0.21e9 }, fetchedAt,
+    usage: { eventsThisMonth, projectEventsThisMonth: projectEvents, signalsThisMonth, projectSignalsThisMonth: projectSignals, projectShare: Math.round(projectShare * 10_000) / 10_000, dataBucketBytes: 3.4e9, dsqlStorageBytes: 0.21e9 }, fetchedAt,
   };
 }

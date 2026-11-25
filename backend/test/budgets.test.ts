@@ -42,7 +42,7 @@ describe('budgetMessage', () => {
   it('says what happened in plain words', () => {
     const s = nextState(budget(), 104.5, null, true, NOV).state;
     expect(budgetMessage({ scope: 'project', monthly_limit: 100 }, 'Shop', s, 'paused', null))
-      .toBe('Project Shop reached its $100.00 budget ($104.50 (estimated from its share of events)). WGO has stopped storing new data for it until next month. Raise the limit or resume on the Costs page to collect again.');
+      .toBe('Project Shop reached its $100.00 budget ($104.50 (estimated from its share of the data taken in)). WGO has stopped storing new data for it until next month. Raise the limit or resume on the Costs page to collect again.');
     expect(budgetMessage({ scope: 'install', monthly_limit: 20 }, '', { ...s, estimated: false, spent: 10 }, 'threshold', 50))
       .toBe('The WGO install has spent $10.00 this month: 50% of its $20.00 budget.');
   });

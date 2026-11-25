@@ -1,8 +1,8 @@
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { CostExplorerClient, GetCostAndUsageCommand, type GetCostAndUsageCommandOutput, type ResultByTime } from '@aws-sdk/client-cost-explorer';
-import type { CostCategory, CostsResponse } from '../contract';
+import type { CostCategory, CostsResponse, IngestionPaths, SignalCounts } from '../contract';
 import { readClusterStats } from './cluster';
-import { CATEGORIES, classify, readShares, type SplitShares } from './costSplit';
+import { CATEGORIES, classify, ingestPaths, readShares, type IngestPath, type SplitShares } from './costSplit';
 import { query } from './db';
 import { isUuid } from './projects';
 
@@ -32,6 +32,7 @@ const daysInMonth = (t: number) => { const d = new Date(t); return new Date(Date
 const round = (n: number) => Math.round(n * 10_000) / 10_000;
 const noShares = (): SplitShares => ({ lambda: new Map(), dsql: new Map() });
 const zeros = (): Record<CostCategory, number> => ({ storage: 0, ingestion: 0, querying: 0, other: 0 });
+const roundPaths = (p: IngestionPaths): IngestionPaths => ({ events: round(p.events), otel: round(p.otel) });
 /** The first day the report covers: the daily series (30 days) and the month so far. */
 const windowStart = (now: number) => Math.min(monthStart(now), now - 30 * DAY);
 
@@ -51,6 +52,8 @@ export function shapeCosts(results: ResultByTime[], now: number, shares: SplitSh
   const since = dayStr(now - 30 * DAY);
   let mtd = 0, prev = 0;
   const daily = new Map<string, Record<CostCategory, number>>();
+  const dailyPaths = new Map<string, IngestionPaths>();
+  const monthPaths: IngestionPaths = { events: 0, otel: 0 };
   const services = new Map<string, number>();
   const categories = new Map<CostCategory, Map<string, number>>(CATEGORIES.map((c) => [c, new Map()]));
   const monthDays = new Set<string>();
@@ -61,6 +64,7 @@ export function shapeCosts(results: ResultByTime[], now: number, shares: SplitSh
     const groups = r.Groups?.length ? r.Groups : r.Total?.UnblendedCost ? [{ Keys: ['Total'], Metrics: r.Total }] : [];
     let total = 0;
     const byCategory = daily.get(day) ?? zeros();
+    const paths = dailyPaths.get(day) ?? { events: 0, otel: 0 };
     for (const g of groups) {
       const m = g.Metrics?.UnblendedCost;
       const amount = Number(m?.Amount ?? 0);
@@ -74,12 +78,21 @@ export function shapeCosts(results: ResultByTime[], now: number, shares: SplitSh
         const part = weight > 0 ? (amount * w) / weight : 0;
         byCategory[c] += part;
         if (day >= thisMonth) categories.get(c)!.set(service, (categories.get(c)!.get(service) ?? 0) + part);
+        if (c !== 'ingestion' || !(part > 0)) continue;
+        // ingestion once more, by what was taken in
+        const by = ingestPaths(service, day, shares);
+        const total = Object.values(by).reduce((a, b) => a + (b ?? 0), 0);
+        for (const [p, pw] of Object.entries(by) as Array<[IngestPath, number]>) {
+          if (p === 'other' || !(total > 0)) continue;
+          paths[p] += (part * pw) / total;
+          if (day >= thisMonth) monthPaths[p] += (part * pw) / total;
+        }
       }
       if (day >= thisMonth) services.set(service, (services.get(service) ?? 0) + amount);
     }
     if (day >= thisMonth) { mtd += total; monthDays.add(day); }
     else if (day >= lastMonth) prev += total;
-    if (day >= since) daily.set(day, byCategory);
+    if (day >= since) { daily.set(day, byCategory); dailyPaths.set(day, paths); }
   }
   const sorted = (m: Map<string, number>) => [...m].filter(([, a]) => round(a) > 0).sort((a, b) => b[1] - a[1]).map(([service, amount]) => ({ service, amount: round(amount) }));
   if (mtd === 0 && prev === 0) return setupResponse('Cost Explorer returned no costs for this stack yet.', now);
@@ -94,12 +107,14 @@ export function shapeCosts(results: ResultByTime[], now: number, shares: SplitSh
       day,
       amount: round(CATEGORIES.reduce((a, k) => a + c[k], 0)),
       byCategory: Object.fromEntries(CATEGORIES.map((k) => [k, round(c[k])])) as Record<CostCategory, number>,
+      ingestion: roundPaths(dailyPaths.get(day)!),
     })),
     services: sorted(services),
     categories: CATEGORIES.map((category) => {
       const list = sorted(categories.get(category)!);
       return { category, amount: round([...categories.get(category)!.values()].reduce((a, b) => a + b, 0)), services: list };
     }),
+    ingestionPaths: roundPaths(monthPaths),
     usage: { ...emptyUsage },
     fetchedAt: new Date(now).toISOString(),
   };
@@ -143,11 +158,58 @@ async function readUsage(now: number): Promise<Pick<CostsResponse['usage'], 'dat
   return { dataBucketBytes, dsqlStorageBytes };
 }
 
-export async function eventsThisMonth(now: number, pid?: string): Promise<number> {
-  const params: unknown[] = [new Date(monthStart(now))];
+export const noSignals = (): SignalCounts => ({ events: 0, spans: 0, logs: 0, metricPoints: 0 });
+/** Everything in `c`: what a project's share of the cost is measured in. */
+export const signalTotal = (c: SignalCounts) => c.events + c.spans + c.logs + c.metricPoints;
+const SIGNAL_FIELD: Record<string, keyof SignalCounts> = { events: 'events', spans: 'spans', logs: 'logs', metric_points: 'metricPoints' };
+
+/**
+ * What the install (or project `pid`) took in per UTC day (YYYY-MM-DD) from `since` on, from the hourly rollups:
+ * browser events (dim 'type') and spans, logs and metric points (dim 'signal', rollups.ts runSignalCounts).
+ */
+async function signalsByDay(since: number, pid?: string): Promise<Map<string, SignalCounts>> {
+  const params: unknown[] = [new Date(since)];
   if (pid) params.push(pid);
-  const [row] = await query<{ n: string | null }>(`SELECT sum(events) AS n FROM rollups WHERE dim = 'type' AND hour >= $1${pid ? ' AND project_id = $2' : ''}`, params);
-  return Number(row?.n ?? 0);
+  const rows = await query<{ hour: Date; k: string; n: string }>(
+    `SELECT hour, CASE WHEN dim = 'type' THEN 'events' ELSE key END AS k, sum(events) AS n FROM rollups
+      WHERE dim IN ('type', 'signal') AND hour >= $1${pid ? ' AND project_id = $2' : ''} GROUP BY 1, 2`,
+    params,
+  );
+  const out = new Map<string, SignalCounts>();
+  for (const r of rows) {
+    const field = SIGNAL_FIELD[r.k];
+    if (!field) continue;
+    const day = dayStr(r.hour.getTime());
+    const c = out.get(day) ?? noSignals();
+    c[field] += Number(r.n);
+    out.set(day, c);
+  }
+  return out;
+}
+
+const sumSignals = (days: Iterable<SignalCounts>) => {
+  const out = noSignals();
+  for (const d of days) for (const k of Object.keys(out) as Array<keyof SignalCounts>) out[k] += d[k];
+  return out;
+};
+
+/**
+ * A project's share of the install's cost (0-1): its share of the events and of the OpenTelemetry items, weighted by
+ * what taking each in cost this month (`paths`). Without that split, its share of everything that came in.
+ */
+export function projectShare(all: SignalCounts, project: SignalCounts, paths?: IngestionPaths): number {
+  const otel = (c: SignalCounts) => c.spans + c.logs + c.metricPoints;
+  const parts: Array<[number, number, number]> = [[paths?.events ?? 0, project.events, all.events], [paths?.otel ?? 0, otel(project), otel(all)]];
+  const weighted = parts.filter(([cost, , n]) => cost > 0 && n > 0);
+  const weight = weighted.reduce((a, [cost]) => a + cost, 0);
+  if (weight > 0) return Math.min(1, weighted.reduce((a, [cost, p, n]) => a + (cost * p) / n, 0) / weight);
+  const total = signalTotal(all);
+  return total > 0 ? Math.min(1, signalTotal(project) / total) : 0;
+}
+
+/** What the install (or project `pid`) took in this month. */
+export async function signalsThisMonth(now: number, pid?: string): Promise<SignalCounts> {
+  return sumSignals((await signalsByDay(monthStart(now), pid)).values());
 }
 
 async function readCache(): Promise<CostsResponse | null> {
@@ -163,12 +225,12 @@ async function writeCache(data: CostsResponse, now: number): Promise<void> {
   );
 }
 
-/** The cost report, from the cache while it is fresh. `pid` adds that project's events this month. */
+/** The cost report, from the cache while it is fresh, with what came in. `pid` adds what that project took in this month. */
 export async function getCosts(pid: string | undefined, now = Date.now(), deps: CostDeps = {}): Promise<CostsResponse> {
   let base = await readCache();
   const age = base ? now - new Date(base.fetchedAt).getTime() : Infinity;
-  // a report cached before the category split (no `categories`) is refetched
-  if (!base || age >= (base.setup ? SETUP_CACHE_MS : CACHE_MS) || age < 0 || (!base.setup && !base.categories)) {
+  // a report cached before the category split (no `categories`) or the ingestion split (no `ingestionPaths`) is refetched
+  if (!base || age >= (base.setup ? SETUP_CACHE_MS : CACHE_MS) || age < 0 || (!base.setup && (!base.categories || !base.ingestionPaths))) {
     try {
       const stack = process.env.STACK_NAME;
       if (!stack) throw new Error('STACK_NAME is not set');
@@ -181,14 +243,27 @@ export async function getCosts(pid: string | undefined, now = Date.now(), deps: 
       console.warn('cost explorer failed', err);
       base = setupResponse(`Cost Explorer could not be read: ${(err as Error).message}`, now);
     }
-    if (!base.setup) {
-      const [events, usage] = await Promise.all([eventsThisMonth(now), (deps.usage ?? readUsage)(now)]);
-      base.usage = { eventsThisMonth: events, ...usage };
-    }
+    if (!base.setup) base.usage = { eventsThisMonth: 0, ...(await (deps.usage ?? readUsage)(now)) };
     base.fetchedAt = new Date(now).toISOString();
     await writeCache(base, now);
   }
   const out: CostsResponse = { ...base, usage: { ...base.usage } };
-  if (pid && isUuid(pid) && !out.setup) out.usage.projectEventsThisMonth = await eventsThisMonth(now, pid);
+  if (out.setup) return out;
+  // what came in is read on every request (a few thousand rollup rows), so it is never older than the rollups
+  const thisMonth = dayStr(monthStart(now));
+  const first = out.daily[0]?.day ?? thisMonth;
+  const [days, project] = await Promise.all([
+    signalsByDay(Date.parse(`${first < thisMonth ? first : thisMonth}T00:00:00Z`)),
+    pid && isUuid(pid) ? signalsThisMonth(now, pid) : undefined,
+  ]);
+  out.daily = out.daily.map((d) => ({ ...d, signals: days.get(d.day) ?? noSignals() }));
+  const month = sumSignals([...days].filter(([day]) => day >= thisMonth).map(([, c]) => c));
+  out.usage.signalsThisMonth = month;
+  out.usage.eventsThisMonth = month.events;
+  if (project) {
+    out.usage.projectSignalsThisMonth = project;
+    out.usage.projectEventsThisMonth = project.events;
+    out.usage.projectShare = Math.round(projectShare(month, project, out.ingestionPaths) * 10_000) / 10_000;
+  }
   return out;
 }

@@ -1,6 +1,6 @@
 import { execute, query } from './db';
 import { getJobState, setJobState } from './jobState';
-import { ROLLUP_RETENTION_DAYS } from './rollups';
+import { ROLLUP_RETENTION_DAYS, SIGNAL_TABLES } from './rollups';
 import { deleteExpired } from './store/maintain';
 
 /**
@@ -45,7 +45,7 @@ async function deleteSimple(sql: string, params: unknown[], batch: number, deadl
  * Daily cleanup. Raw events are only deleted once rolled up (`rolledUntil`), so a stalled rollup job
  * never loses data (and likewise for `visitorsUntil`, the visitor_days watermark). Returns false when it ran out of time (the next run continues).
  */
-export async function runRetention(deadline: number, rolledUntil: number, now = Date.now(), visitorsUntil = Infinity): Promise<{ done: boolean; deleted: Record<string, number> }> {
+export async function runRetention(deadline: number, rolledUntil: number, now = Date.now(), visitorsUntil = Infinity, signalsUntil = Infinity): Promise<{ done: boolean; deleted: Record<string, number> }> {
   const last = await getJobState('retention');
   const deleted: Record<string, number> = {};
   if (last && now - last.getTime() < 20 * 3600_000) return { done: true, deleted };
@@ -57,7 +57,9 @@ export async function runRetention(deadline: number, rolledUntil: number, now = 
     if (table === 'replays') return Math.max(cutoff, now - RECORDING_RETENTION_DAYS * DAY);
     // visitor_days (lib/visitors.ts) outlive raw events, like rollups; events wait until their day became visitor_days
     if (table === 'visitor_days') return now - ROLLUP_RETENTION_DAYS * DAY;
-    return table === 'events' ? Math.min(cutoff, rolledUntil, visitorsUntil) : cutoff;
+    if (table === 'events') return Math.min(cutoff, rolledUntil, visitorsUntil);
+    // spans, logs and metric points wait until they are counted (rollups.ts runSignalCounts)
+    return table in SIGNAL_TABLES ? Math.min(cutoff, signalsUntil) : cutoff;
   }, deadline);
   Object.assign(deleted, raw.deleted);
   if (!raw.done) return { done: false, deleted };

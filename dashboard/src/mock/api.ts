@@ -11,13 +11,13 @@ import type { Budget, BudgetInput, ErrorSuppression, ErrorSuppressionInput } fro
 import * as EX from './explain';
 import { retention as mockRetention } from './retention';
 
-interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; recordingSettings?: Record<string, RecordingSettings>; uploadKeys?: Record<string, string> }
+interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; recordingSettings?: Record<string, RecordingSettings>; uploadKeys?: Record<string, string> }
 import * as UP from './uptime';
 import * as QY from './query';
 import type { Dashboard, DashboardInput, DashboardSummary, DashboardTile } from '../api/contract';
 import { mockSite, mockSiteImage } from './site';
 
-interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; slackApps?: Record<string, string>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; uptime?: Record<string, UP.MockCheck[]>; recordingSettings?: Record<string, RecordingSettings>; destinations?: MockDestination[]; accountSlackApps?: Record<string, string> }
+interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; uptime?: Record<string, UP.MockCheck[]>; recordingSettings?: Record<string, RecordingSettings>; destinations?: MockDestination[] }
 /** A saved destination: a project's (projectId) or an account's (owner). Slack channels note their workspace. */
 type MockDestination = Destination & { projectId: string | null; workspaceId?: string };
 /** A connected Slack workspace: a project's (projectId) or someone's own (owner). */
@@ -126,9 +126,9 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     if (!id && method === 'POST') {
       const i = body as BudgetInput;
       if (!i.acknowledged) throw new MockHttpError(400, 'Confirm that cost figures are estimates and that the AWS bill is yours');
-      // the same figures the mock Costs page shows: a project gets its share of the events
+      // the same figures the mock Costs page shows: a project gets its share of what came in
       const c = UP.mockCosts(i.projectId ?? '', Date.now(), false);
-      const share = i.scope === 'install' || !c.usage.eventsThisMonth ? 1 : (c.usage.projectEventsThisMonth ?? 0) / c.usage.eventsThisMonth;
+      const share = i.scope === 'install' ? 1 : c.usage.projectShare ?? 0;
       const spent = Math.round(c.monthToDate * share * 100) / 100;
       const pct = (spent / i.monthlyLimit) * 100;
       const paused = i.pauseAtLimit && pct >= 100;
@@ -164,7 +164,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     if (method === 'DELETE') {
       if (project.role !== 'owner') throw new MockHttpError(403, 'Only project owners can do that');
       db.projects = db.projects.filter((p) => p.id !== pid);
-      for (const m of [db.members, db.triggers, db.integrations, db.slackApps, db.kiosks, db.views, db.goals, db.clickAliases, db.recordingSettings]) if (m) delete m[pid];
+      for (const m of [db.members, db.triggers, db.integrations, db.kiosks, db.views, db.goals, db.clickAliases, db.recordingSettings]) if (m) delete m[pid];
       save(db);
       return { ok: true };
     }
@@ -334,13 +334,9 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       return list;
     }
     case 'slack': {
-      const apps = (db.slackApps ??= {});
-      const own = (db.accountSlackApps ??= {});
-      // like the API: the project's app, then the user's own
+      // like a WGO without an instance Slack app: workspaces are connected with a bot token
       const status = () => ({
-        configured: !!(apps[pid] ?? own[email]), source: apps[pid] ? 'project' : own[email] ? 'account' : null, clientId: apps[pid] ?? own[email] ?? null,
-        accountClientId: own[email] ?? null,
-        redirectUrl: 'https://abc123.execute-api.eu-west-1.amazonaws.com/slack/callback', createAppUrl: 'https://api.slack.com/apps?new_app=1',
+        addToSlack: false, createAppUrl: 'https://api.slack.com/apps?new_app=1',
         workspaces: (db.slackWorkspaces ?? []).filter((w) => w.projectId === pid || (!w.projectId && w.owner === email))
           .sort((a, b) => Number(!a.projectId) - Number(!b.projectId) || a.createdAt.localeCompare(b.createdAt))
           .map((w) => ({
@@ -349,18 +345,19 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
           })),
       });
       if (!parts[3]) return status();
-      if (parts[3] === 'app') {
-        const level = method === 'DELETE' ? url.searchParams.get('level') : (body as { level?: string } | null)?.level;
-        const target = level === 'account' ? own : apps;
-        const key = level === 'account' ? email : pid;
-        if (method === 'DELETE') { delete target[key]; save(db); return status(); }
-        const { clientId = '', clientSecret = '' } = (body ?? {}) as { clientId?: string; clientSecret?: string };
-        if (!/^\d+\.\d+$/.test(clientId.trim())) throw new Error('That doesn’t look like a Slack Client ID (digits.digits, under Basic Information)');
-        if (!/^[0-9a-f]{32}$/i.test(clientSecret.trim())) throw new Error('That doesn’t look like a Slack Client Secret (32 hex characters; click Show next to it)');
-        target[key] = clientId.trim(); save(db); return status();
-      }
       const wss = (db.slackWorkspaces ??= []);
       const ints = ((db.integrations ??= {})[pid] ??= []) as Array<SlackIntegration & { workspaceId?: string }>;
+      if (parts[3] === 'workspaces' && !parts[4] && method === 'POST') {
+        const { token = '', level } = (body ?? {}) as { token?: string; level?: string };
+        if (/^xoxp-/.test(token.trim())) throw new MockHttpError(400, 'That’s a user token. Copy the Bot User OAuth Token instead (it starts with xoxb-)');
+        if (!/^xoxb-[\w-]{10,}$/.test(token.trim())) throw new MockHttpError(400, 'That doesn’t look like a Slack bot token. Copy the Bot User OAuth Token from OAuth & Permissions (it starts with xoxb-)');
+        const account = level === 'account';
+        const mine = (x: MockWorkspace) => (account ? !x.projectId && x.owner === email : x.projectId === pid);
+        let w = wss.find(mine);
+        if (!w) wss.push(w = { id: crypto.randomUUID(), projectId: account ? null : pid, owner: account ? email : null, teamName: 'Acme', createdBy: email, createdAt: new Date().toISOString() });
+        save(db);
+        return status().workspaces.find((x) => x.id === w.id);
+      }
       if (parts[3] === 'workspaces') {
         const w = wss.find((x) => x.id === parts[4] && (x.projectId === pid || (!x.projectId && x.owner === email)));
         if (!w) throw new MockHttpError(404, 'Slack workspace not found');
@@ -386,7 +383,6 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
         ints.push(i); save(db);
         return { id: i.id, level: 'project', type: 'slack', name: i.channel, detail: i.teamName, owner: null, editable: true, ref: { type: 'slack', integrationId: i.id }, createdBy: email, createdAt: at };
       }
-      if (!apps[pid] && !own[email]) throw new Error('Set up a Slack app first: for this project, or your own for all your projects');
       // mock "Add to Slack": connect the workspace right away and bounce back like Slack would
       const level = url.searchParams.get('level') === 'account' ? 'account' : 'project';
       const mine = (x: MockWorkspace) => (level === 'account' ? !x.projectId && x.owner === email : x.projectId === pid);

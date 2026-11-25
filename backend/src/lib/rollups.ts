@@ -33,8 +33,11 @@ export const floorHour = (t: number) => Math.floor(t / HOUR) * HOUR;
 
 export const BREAKDOWN_DIMS = ['browser', 'os', 'device', 'referrer', 'country', 'city'] as const;
 export type BreakdownDim = (typeof BREAKDOWN_DIMS)[number];
-/** 'bot': key = detection reason, sessions = distinct bot sessions in the hour (the only non-human rows) */
-export type RollupDim = 'type' | 'page' | 'bot' | BreakdownDim;
+/**
+ * 'bot': key = detection reason, sessions = distinct bot sessions in the hour (the only non-human rows)
+ * 'signal': key = spans | logs | metric_points, events = rows stored in the hour (runSignalCounts)
+ */
+export type RollupDim = 'type' | 'page' | 'bot' | 'signal' | BreakdownDim;
 /** Key used when a session has no value for a dimension (matches the raw breakdown query). */
 export const MISSING_KEY = (dim: BreakdownDim) => (dim === 'referrer' ? '(direct)' : 'Unknown');
 
@@ -171,6 +174,54 @@ export async function runRollups(deadline: number, now = Date.now()): Promise<{ 
     await setJobState(STATE, new Date(wm));
   }
   return { until: wm, caughtUp: wm >= target, hours };
+}
+
+// ---------------------------------------------------------------- OpenTelemetry counts
+
+/** Raw tables counted per hour as dim 'signal' rows, with the column that places a row in time. */
+export const SIGNAL_TABLES = { spans: 'start_time', logs: 'ts', metric_points: 'ts' } as const;
+export type SignalTable = keyof typeof SIGNAL_TABLES;
+const SIGNAL_STATE = 'rollup:signals';
+/** Hours counted per query (one project and table): a first run backfills a day at a time. */
+const SIGNAL_STEP = 24 * HOUR;
+
+/**
+ * Counts the spans, log records and metric points each project stored per hour, for the Costs page: rollup rows
+ * with dim 'signal'. Their own watermark (`job_state` 'rollup:signals'), so a first run backfills what raw data is
+ * still stored (up to 92 days) without touching the event rollups. Each pass counts the hour before the watermark
+ * again, for late batches. Returns the new watermark and whether it reached the latest complete hour.
+ */
+export async function runSignalCounts(deadline: number, now = Date.now()): Promise<{ until: number; caughtUp: boolean }> {
+  const target = floorHour(now - SETTLE_MS);
+  const ids = await query<{ id: string }>('SELECT id FROM projects');
+  const tables = Object.keys(SIGNAL_TABLES) as SignalTable[];
+  // each project's tables that have data, from their first stored day
+  const stored = (await Promise.all(ids.flatMap(({ id }) => tables.map(async (table) => {
+    const day = await firstDay(table, id);
+    return day ? { pid: id, table, first: new Date(day).getTime() } : null;
+  })))).filter((x) => x !== null);
+  const saved = await getJobState(SIGNAL_STATE);
+  const oldest = Math.min(target, ...stored.map((x) => x.first));
+  let wm = Math.max(saved?.getTime() ?? floorHour(oldest), target - BACKFILL_MS);
+  while (wm < target && Date.now() < deadline) {
+    const w = { from: new Date(wm - HOUR), to: new Date(Math.min(target, wm + SIGNAL_STEP)) };
+    await pool(stored.filter((x) => x.first < w.to.getTime()), 4, async ({ pid, table }) => {
+      const col = SIGNAL_TABLES[table];
+      const counts = await rawQuery<{ h: number; n: string }>(pid, w,
+        `SELECT (floor(extract(epoch from ${col}) / 3600) * 3600000)::BIGINT AS h, count(*) AS n FROM ${table}
+          WHERE project_id = $1 AND ${col} >= $2 AND ${col} < $3 GROUP BY 1`,
+        [pid, w.from, w.to],
+      );
+      if (!counts.length) return;
+      const { sql, params } = buildInsert('rollups', ['project_id', 'dim', 'hour', 'key', 'events', 'sessions'],
+        counts.map((c) => [pid, 'signal', new Date(Number(c.h)), table, Number(c.n), 0]), {},
+        'ON CONFLICT (project_id, dim, hour, key) DO UPDATE SET events = EXCLUDED.events');
+      await query(sql, params);
+    });
+    wm = w.to.getTime();
+    await setJobState(SIGNAL_STATE, new Date(wm));
+  }
+  return { until: wm, caughtUp: wm >= target };
 }
 
 // ---------------------------------------------------------------- readers

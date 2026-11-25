@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, Hash, Lock, Slack } from 'lucide-react';
-import type { DestinationLevel, SlackChannel } from '../api/contract';
-import { startSlackInstall, useAddSlackChannel, useSaveSlackApp, useSlackChannels, useSlackSetup } from '../api/hooks';
+import type { DestinationLevel, SlackChannel, SlackWorkspace } from '../api/contract';
+import { startSlackInstall, useAddSlackChannel, useConnectSlackToken, useSlackChannels, useSlackSetup } from '../api/hooks';
 import { useProject } from '../lib/project';
 import { Button, Dialog, Skeleton, useToast } from '../ui/kit';
 
 /**
- * Slack on a self-hosted WGO: Slack ties every "Add to Slack" button to a Slack app, so the first time, someone
- * creates the WGO app (pre-filled; Slack only asks which workspace) and pastes its credentials (SlackAppSetup).
- * "Add to Slack" then connects a workspace, and channels are picked from a list (SlackChannelDialog), as often as
- * you like, without going back to Slack.
+ * Slack channels are picked from a list of a connected workspace (SlackChannelDialog), as often as you like, without
+ * going back to Slack. A workspace is connected once: with the bot token of a WGO Slack app you create from a
+ * pre-filled manifest (SlackTokenSetup), or, when the instance has a Slack app of its own, with "Add to Slack".
  */
 
 /** Go to Slack's consent screen to connect a workspace, for the project or (`account`) for the user's own channels. */
@@ -45,16 +44,19 @@ export function SlackChannelDialog({ level, onClose }: { level: DestinationLevel
   const [wid, setWid] = useState<string | null>(null);
   const [find, setFind] = useState('');
   const [error, setError] = useState('');
+  const [another, setAnother] = useState(false); // connecting another workspace with a token
   useEffect(() => {
     if (!open) return;
     setFind(''); setError(''); reset();
     setWid((cur) => (workspaces.some((w) => w.id === cur) ? cur : workspaces[0]?.id ?? null));
   }, [open, workspaces]);
+  useEffect(() => { if (!open) setAnother(false); }, [open]);
   const channels = useSlackChannels(project.id, open ? wid : null);
   const add = useAddSlackChannel(project.id);
   const toast = useToast();
   const { connect, busy, error: connectError, reset } = useConnectWorkspace(level ?? 'project');
-  const configured = !!setup.data?.configured;
+  const addToSlack = !!setup.data?.addToSlack;
+  const connected = (w: SlackWorkspace) => { setWid(w.id); setAnother(false); };
 
   const shown = useMemo(() => {
     const q = find.trim().replace(/^#/, '').toLowerCase();
@@ -73,26 +75,32 @@ export function SlackChannelDialog({ level, onClose }: { level: DestinationLevel
 
   const title = level === 'account' ? 'Add a Slack channel of your own' : 'Add a Slack channel to this project';
   if (setup.isPending) return <Dialog open={open} onClose={onClose} title={title}><Skeleton className="h-24" /></Dialog>;
-  if (!workspaces.length) {
+  if (!workspaces.length && addToSlack) {
     return (
-      <Dialog open={open} onClose={onClose} title={title} width={configured ? 460 : 560}
-        footer={configured ? <><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy} onClick={() => void connect()}><Slack size={14} />Connect Slack</Button></> : undefined}>
-        {configured ? (
-          <div className="space-y-2 text-[12.5px] text-muted">
-            <p>
-              First connect a Slack workspace{level === 'account' ? ' for your own channels' : ' for this project'}. Slack asks which
-              workspace to add WGO to; back here, you pick channels from a list, as many as you like.
-            </p>
-            {connectError && <p className="text-bad">{connectError}</p>}
-          </div>
-        ) : <SlackAppSetup />}
+      <Dialog open={open} onClose={onClose} title={title} width={460}
+        footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy} onClick={() => void connect()}><Slack size={14} />Connect Slack</Button></>}>
+        <div className="space-y-2 text-[12.5px] text-muted">
+          <p>
+            First connect a Slack workspace{level === 'account' ? ' for your own channels' : ' for this project'}. Slack asks which
+            workspace to add WGO to; back here, you pick channels from a list, as many as you like.
+          </p>
+          {connectError && <p className="text-bad">{connectError}</p>}
+        </div>
+      </Dialog>
+    );
+  }
+  if (!workspaces.length || another) {
+    return (
+      <Dialog open={open} onClose={onClose} title={workspaces.length ? 'Connect another Slack workspace' : title} width={580}
+        footer={workspaces.length ? <Button variant="ghost" onClick={() => setAnother(false)}>Back to channels</Button> : <Button variant="ghost" onClick={onClose}>Cancel</Button>}>
+        <SlackTokenSetup level={level ?? 'project'} onConnected={connected} />
       </Dialog>
     );
   }
   return (
     <Dialog open={open} onClose={onClose} title={title} width={500}
       footer={<>
-        {configured && <Button variant="ghost" className="mr-auto" disabled={busy} onClick={() => void connect()}><Slack size={14} />Another workspace</Button>}
+        <Button variant="ghost" className="mr-auto" disabled={busy} onClick={() => (addToSlack ? void connect() : setAnother(true))}><Slack size={14} />Another workspace</Button>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
       </>}>
       <div className="space-y-3 text-[12.5px]">
@@ -121,22 +129,22 @@ export function SlackChannelDialog({ level, onClose }: { level: DestinationLevel
   );
 }
 
-/** Create the WGO Slack app on Slack and save its credentials: as your own, or (owners) for this project. */
-export function SlackAppSetup({ onDone }: { onDone?: () => void }) {
+/**
+ * Connect a workspace with the bot token of a WGO Slack app: created from a pre-filled manifest, installed from its
+ * own page. The token field is plain text with password managers told to leave it alone: a password field makes
+ * browsers treat the form as a login and fill in your WGO credentials.
+ */
+export function SlackTokenSetup({ level, onConnected }: { level: DestinationLevel; onConnected: (w: SlackWorkspace) => void }) {
   const { project } = useProject();
   const setup = useSlackSetup(project.id);
-  const save = useSaveSlackApp(project.id);
-  const owner = project.role === 'owner';
-  const [clientId, setClientId] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
-  const [where, setWhere] = useState<DestinationLevel>('account');
+  const save = useConnectSlackToken(project.id);
+  const [token, setToken] = useState('');
   const [error, setError] = useState('');
 
-  const saveCreds = async () => {
+  const submit = async () => {
     setError('');
     try {
-      await save.mutateAsync({ clientId, clientSecret, level: owner ? where : 'account' });
-      onDone?.();
+      onConnected(await save.mutateAsync({ token: token.trim(), level }));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -144,10 +152,10 @@ export function SlackAppSetup({ onDone }: { onDone?: () => void }) {
   const step = 'flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/20 text-[11px] font-semibold text-accent';
   if (!setup.data) return <Skeleton className="h-40" />;
   return (
-    <div className="space-y-3 rounded-lg border border-line bg-[var(--hl)] p-3.5 text-[12.5px]">
+    <div className="space-y-3 text-[12.5px]">
       <p className="text-muted">
-        One-time setup. Slack connects “Add to Slack” to an app, so WGO needs its own. One app works for all your
-        projects: set it up once, then connect a workspace and pick its channels anywhere.
+        WGO posts to Slack as an app of yours. Create it once per Slack workspace, then pick channels from a list here,
+        as many as you like. {level === 'account' ? 'The workspace is yours: only you add its channels, in any of your projects.' : `Any member of ${project.name} can add its channels.`}
       </p>
       <div className="flex gap-2.5">
         <span className={step}>1</span>
@@ -161,43 +169,21 @@ export function SlackAppSetup({ onDone }: { onDone?: () => void }) {
       </div>
       <div className="flex gap-2.5">
         <span className={step}>2</span>
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <p className="text-muted">On the app’s <b>Basic Information</b> page, copy the <b>Client ID</b> and <b>Client Secret</b> (click Show) here:</p>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <input className="field font-mono !text-[12px]" placeholder="Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} />
-            <input className="field font-mono !text-[12px]" placeholder="Client Secret" type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
-          </div>
-          {error && <p className="text-bad">{error}</p>}
-        </div>
+        <p className="text-muted">In the app, open <b>OAuth &amp; Permissions</b>, click <b>Install to</b> your workspace, then <b>Allow</b>.</p>
       </div>
       <div className="flex gap-2.5">
         <span className={step}>3</span>
-        <div className="min-w-0 flex-1 space-y-2">
-          {owner && (
-            <div className="space-y-1">
-              <label className="flex cursor-pointer items-start gap-2">
-                <input type="radio" className="mt-0.5" checked={where === 'account'} onChange={() => setWhere('account')} />
-                <span><b>For me, in all my projects.</b> <span className="text-faint">Only you use it, in every project you’re a member of that has no app of its own.</span></span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2">
-                <input type="radio" className="mt-0.5" checked={where === 'project'} onChange={() => setWhere('project')} />
-                <span><b>For everyone in {project.name}.</b> <span className="text-faint">Any member can connect channels with it here.</span></span>
-              </label>
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-2.5">
-            <Button variant="primary" size="sm" disabled={!clientId.trim() || !clientSecret.trim() || save.isPending} onClick={() => void saveCreds()}>
-              {save.isPending ? 'Checking with Slack…' : 'Save'}
-            </Button>
-            <span className="text-faint">
-              {owner ? 'Then' : 'It’s saved as your own app, for all your projects. Then'} connect your Slack workspace and pick channels from a list.
-            </span>
+        <form className="min-w-0 flex-1 space-y-1.5" autoComplete="off" onSubmit={(e) => { e.preventDefault(); if (token.trim() && !save.isPending) void submit(); }}>
+          <p className="text-muted">Copy the <b>Bot User OAuth Token</b> on that page and paste it here:</p>
+          <div className="flex gap-2">
+            <input className="field min-w-0 flex-1 font-mono !text-[12px]" placeholder="xoxb-…" type="text" name="slack-bot-token" autoComplete="off"
+              spellCheck={false} data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other"
+              value={token} onChange={(e) => setToken(e.target.value)} />
+            <Button variant="primary" size="sm" type="submit" disabled={!token.trim() || save.isPending}>{save.isPending ? 'Checking with Slack…' : 'Connect'}</Button>
           </div>
-        </div>
+          {error && <p className="text-bad">{error}</p>}
+        </form>
       </div>
-      <p className="border-t border-line pt-2.5 text-[11.5px] text-faint">
-        Want channels in more than one Slack workspace? In the app’s settings, turn on <b>Manage Distribution</b>.
-      </p>
     </div>
   );
 }

@@ -284,6 +284,11 @@ d('triggers (PostgreSQL)', async () => {
         return Response.json({ ok: true, access_token: `xoxb-${n}`, token_type: 'bot', scope: opts.scopes ?? 'chat:write,chat:write.public,channels:read,groups:read', bot_user_id: 'UBOT', team: { id: 'T1', name: 'Acme' } });
       }
       if (!auth.startsWith('Bearer xoxb-')) return Response.json({ ok: false, error: 'not_authed' });
+      if (url === 'https://slack.com/api/auth.test') {
+        if (auth.includes('revoked')) return Response.json({ ok: false, error: 'invalid_auth' });
+        const scopes = auth.includes('old') ? 'incoming-webhook' : 'chat:write,chat:write.public,channels:read,groups:read';
+        return Response.json({ ok: true, team: 'Acme', team_id: 'T1', user_id: 'UBOT', bot_id: 'B1' }, { headers: { 'x-oauth-scopes': scopes } });
+      }
       if (url === 'https://slack.com/api/conversations.list') {
         const f = new URLSearchParams(String(init?.body));
         expect(f.get('types')).toBe('public_channel,private_channel');
@@ -307,44 +312,43 @@ d('triggers (PostgreSQL)', async () => {
     return new Response('ok', { status: 200 });
   });
 
-  it('sets up your own Slack app once and connects workspaces for a project or for yourself', async () => {
+  it('connects Slack workspaces with a bot token, for a project or for yourself', async () => {
     const S = await import('../src/lib/slack');
     const DST = await import('../src/lib/destinations');
-    const { handler: callback } = await import('../src/handlers/slack');
     const domain = 'abc.execute-api.eu-west-1.amazonaws.com';
-    const ID = '1111111111.2222222222', SECRET = 'c'.repeat(32), ME = 'own-app@x.test';
+    const ME = 'own-app@x.test', TOKEN = 'xoxb-1111-2222-abcdefghijkl';
     const [p1, p2] = [randomUUID(), randomUUID()];
     for (const p of [p1, p2]) {
       await query('INSERT INTO projects (id, name, write_key) VALUES ($1, $2, $3)', [p, 'P', `wk_ownapp${p.slice(0, 8)}`]);
       await query(`INSERT INTO project_members (project_id, email, role) VALUES ($1, $2, 'owner')`, [p, ME]);
     }
     const posts: Array<{ auth: string; body: Record<string, unknown> }> = [];
-    fetchMock.mockImplementation(fakeSlack(ID, SECRET, { posts }));
-    const ev = (qs: Record<string, string>) => ({ queryStringParameters: qs, requestContext: { domainName: domain } }) as never;
-    const connect = async (pid: string, level: 'project' | 'account') => {
-      const url = new URL(await S.installUrl(pid, ME, domain, 'https://wgo.example.com', level));
-      expect(url.searchParams.get('client_id')).toBe(ID);
-      const res = (await callback(ev({ code: 'real-code', state: url.searchParams.get('state')! }))) as { headers: Record<string, string> };
-      expect(res.headers.location).toBe(`https://wgo.example.com/#/p/${pid}/triggers?slack=connected&slack_level=${level}`);
-    };
+    fetchMock.mockImplementation(fakeSlack('', '', { posts }));
     try {
-      expect(await S.setupStatus(p1, domain, ME)).toMatchObject({ configured: false, accountClientId: null, workspaces: [] });
-      await S.saveApp(p1, ME, ID, SECRET, 'account');
-      // nothing was saved to the project: it's mine, and works in both projects
-      expect(await query(`SELECT 1 FROM integrations WHERE project_id = $1 AND type = 'slack_app'`, [p1])).toHaveLength(0);
-      for (const p of [p1, p2]) expect(await S.setupStatus(p, domain, ME)).toMatchObject({ configured: true, source: 'account', clientId: ID, accountClientId: ID });
-      // others in those projects don't get it
-      expect((await S.setupStatus(p1, domain, 'someone@x.test')).configured).toBe(false);
+      expect(await S.setupStatus(p1, domain, ME)).toEqual({ addToSlack: false, createAppUrl: S.createAppUrl(domain), workspaces: [] });
+      // without an instance app there's no "Add to Slack"
+      await expect(S.installUrl(p1, ME, domain, null)).rejects.toMatchObject({ status: 409 });
 
-      await connect(p1, 'project');
-      await connect(p2, 'account');
+      // only a bot token that doesn't expire and has WGO's scopes
+      await expect(S.connectWithToken(p1, ME, 'me@x.test')).rejects.toThrow(/xoxb-/);
+      await expect(S.connectWithToken(p1, ME, 'xoxp-1111-2222-abcdefghijkl')).rejects.toThrow(/user token/);
+      await expect(S.connectWithToken(p1, ME, 'xoxe.xoxb-1-abcdefghijkl')).rejects.toThrow(/token rotation/);
+      await expect(S.connectWithToken(p1, ME, 'xoxb-revoked-abcdefghijkl')).rejects.toThrow(/doesn’t accept/);
+      await expect(S.connectWithToken(p1, ME, 'xoxb-old-abcdefghijkl')).rejects.toThrow(/chat:write, chat:write.public, channels:read, groups:read/);
+      expect(await S.listWorkspaces(p1, ME)).toEqual([]);
+
+      const ws = await S.connectWithToken(p1, ME, ` ${TOKEN} `);
+      expect(ws).toMatchObject({ level: 'project', teamName: 'Acme', channels: 0, createdBy: ME });
+      await S.connectWithToken(p2, ME, TOKEN, 'account');
       // my own workspace shows up in every project; the project's only in its own
       expect((await S.listWorkspaces(p1, ME)).map((w) => [w.level, w.teamName])).toEqual([['project', 'Acme'], ['account', 'Acme']]);
       expect((await S.listWorkspaces(p2, ME)).map((w) => w.level)).toEqual(['account']);
       expect(await S.listWorkspaces(p2, 'someone@x.test')).toEqual([]);
+      // any member uses the project's workspace
+      expect(await S.listWorkspaces(p1, 'someone@x.test')).toHaveLength(1);
       // connecting the same workspace again updates its token instead of adding another
-      await connect(p1, 'project');
-      expect(await query('SELECT bot_token FROM slack_workspaces WHERE project_id = $1', [p1])).toEqual([{ bot_token: 'xoxb-3' }]);
+      expect(await S.connectWithToken(p1, ME, 'xoxb-1111-3333-abcdefghijkl')).toMatchObject({ id: ws.id });
+      expect(await query('SELECT bot_token FROM slack_workspaces WHERE project_id = $1', [p1])).toEqual([{ bot_token: 'xoxb-1111-3333-abcdefghijkl' }]);
       // tokens never leave the server
       expect(JSON.stringify(await S.setupStatus(p1, domain, ME))).not.toContain('xoxb');
 
@@ -357,18 +361,13 @@ d('triggers (PostgreSQL)', async () => {
       // someone else can't use my workspace
       await expect(S.addChannel(p2, 'someone@x.test', mine.id, 'C2')).rejects.toMatchObject({ status: 404 });
       expect((await DST.testDestination({ level: 'account', email: ME }, dest.id, null)).ok).toBe(true);
-      expect(posts.at(-1)).toMatchObject({ auth: 'Bearer xoxb-2', body: { channel: 'C1', text: expect.stringContaining('[test]') } });
-
-      // removing the app keeps the connected workspaces
-      await S.removeApp(p1, ME, 'account');
-      expect((await S.setupStatus(p2, domain, ME)).configured).toBe(false);
-      expect(await S.listWorkspaces(p1, ME)).toHaveLength(2);
+      expect(posts.at(-1)).toMatchObject({ auth: `Bearer ${TOKEN}`, body: { channel: 'C1', text: expect.stringContaining('[test]') } });
     } finally {
       resetFetch();
     }
   });
 
-  it('sets up a Slack app from the dashboard, connects a workspace and picks its channels', async () => {
+  it('connects a workspace with "Add to Slack" when the instance has a Slack app, and picks its channels', async () => {
     const S = await import('../src/lib/slack');
     const { SLACK_BOT_SCOPES } = await import('../src/contract');
     const { handler: callback } = await import('../src/handlers/slack');
@@ -377,15 +376,9 @@ d('triggers (PostgreSQL)', async () => {
     const posts: Array<{ auth: string; body: Record<string, unknown> }> = [];
     const slack = { scopes: 'incoming-webhook', posts, postError: undefined as string | undefined };
     fetchMock.mockImplementation((u, init) => fakeSlack(ID, SECRET, slack)(u, init));
+    Object.assign(process.env, { SLACK_CLIENT_ID: ID, SLACK_CLIENT_SECRET: SECRET });
     try {
-      expect(await S.setupStatus(pid, domain)).toMatchObject({ configured: false, source: null, redirectUrl: `https://${domain}/slack/callback` });
-      await expect(S.installUrl(pid, ME, domain, null)).rejects.toMatchObject({ status: 409 });
-
-      await expect(S.saveApp(pid, ME, 'nope', SECRET)).rejects.toThrow(/Client ID/);
-      await expect(S.saveApp(pid, ME, ID, 'short')).rejects.toThrow(/Client Secret/);
-      await expect(S.saveApp(pid, ME, ID, 'b'.repeat(32))).rejects.toThrow(/doesn’t match/);
-      await S.saveApp(pid, ME, ID, SECRET);
-      expect(await S.setupStatus(pid, domain)).toMatchObject({ configured: true, source: 'project', clientId: ID });
+      expect(await S.setupStatus(pid, domain)).toMatchObject({ addToSlack: true, workspaces: [] });
 
       const url = new URL(await S.installUrl(pid, ME, domain, 'https://wgo.example.com'));
       expect(url.origin + url.pathname).toBe('https://slack.com/oauth/v2/authorize');
@@ -438,10 +431,9 @@ d('triggers (PostgreSQL)', async () => {
       expect(cancelled.headers.location).toContain('slack=cancelled');
       const forged = (await callback(ev({ code: 'real-code', state: state.split('.')[0] + '.AAAA' }))) as { statusCode: number };
       expect(forged.statusCode).toBe(400);
-
-      await S.removeApp(pid);
-      expect((await S.setupStatus(pid, domain)).configured).toBe(false);
     } finally {
+      delete process.env.SLACK_CLIENT_ID;
+      delete process.env.SLACK_CLIENT_SECRET;
       resetFetch();
     }
   });

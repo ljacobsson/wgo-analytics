@@ -21,11 +21,13 @@ interface Props {
   axisFormat?: (n: number) => string;
   /** drag across the chart to zoom the page's time range to the selection (default on; off for charts not on the page's range) */
   zoom?: boolean;
+  /** more rows for the tooltip of bucket `i`, below the series */
+  tipRows?: (i: number) => Array<{ label: string; value: string }>;
 }
 
 const M = { l: 42, r: 10, t: 10, b: 22 };
 
-export function TimeChart({ times, series, mode, height = 260, format = compact, legend = true, markers, bucketMs, axisFormat = compact, zoom = true }: Props) {
+export function TimeChart({ times, series, mode, height = 260, format = compact, legend = true, markers, bucketMs, axisFormat = compact, zoom = true, tipRows }: Props) {
   const [ref, w] = useSize<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const gid = useId();
@@ -142,6 +144,7 @@ export function TimeChart({ times, series, mode, height = 260, format = compact,
           const px = M.l + x(hover);
           const left = px > w * 0.62;
           const total = series.reduce((s, k) => s + (k.values[hover] ?? 0), 0);
+          const extra = tipRows?.(hover) ?? [];
           return (
             <div className="pointer-events-none absolute top-2 z-10 min-w-[150px] rounded-lg border border-line bg-[var(--raised)] px-3 py-2 text-[12px] shadow-xl" style={{ left: left ? undefined : px + 14, right: left ? w - px + 14 : undefined }}>
               <div className="mb-1 font-medium text-fg tnum">{fmtTipTime(times[hover], span)}</div>
@@ -152,6 +155,11 @@ export function TimeChart({ times, series, mode, height = 260, format = compact,
                 </div>
               ))}
               {stacked && series.length > 1 && <div className="mt-1 flex justify-between border-t border-line pt-1 text-muted"><span>Total</span><span className="tnum text-fg">{format(total)}</span></div>}
+              {extra.length > 0 && (
+                <div className="mt-1 border-t border-line pt-1">
+                  {extra.map((r) => <div key={r.label} className="flex justify-between gap-4 py-[1px] text-muted"><span>{r.label}</span><span className="tnum text-fg">{r.value}</span></div>)}
+                </div>
+              )}
             </div>
           );
         })()}

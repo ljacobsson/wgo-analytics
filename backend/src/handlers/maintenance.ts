@@ -4,7 +4,7 @@ import { reportCluster } from '../lib/cluster';
 import { purgeDeletedProjects } from '../lib/purge';
 import { runRetention } from '../lib/retention';
 import { detectSites } from '../lib/sites';
-import { runRerolls, runRollups } from '../lib/rollups';
+import { runRerolls, runRollups, runSignalCounts } from '../lib/rollups';
 import { moveLegacyRows, runCompaction } from '../lib/store/maintain';
 import { runVisitorDays } from '../lib/visitors';
 
@@ -22,6 +22,8 @@ export async function handler(_event: unknown, context: Context): Promise<object
   // merging gets a share of the run, so rollups and retention always get time too
   const compaction = await runCompaction(Math.min(deadline, Date.now() + 4 * 60_000));
   const rollups = await runRollups(deadline);
+  // spans, logs and metric points per hour (the Costs page); a first run backfills a day per pass, with a share of the run
+  const signals = await runSignalCounts(Math.min(deadline, Date.now() + 3 * 60_000));
   const cluster = await reportCluster().catch((err) => {
     console.warn('cluster metrics failed', err);
     return null;
@@ -41,8 +43,8 @@ export async function handler(_event: unknown, context: Context): Promise<object
     return null;
   });
   // raw events are only deleted after they are rolled up (and turned into visitor_days); retention waits until rollups have caught up
-  const retention = rollups.caughtUp ? await runRetention(deadline, rollups.until, Date.now(), visitors?.until) : { done: false, deleted: {} };
-  const result = { legacy, purge, compaction, rollups, rerolls, budgets, visitors, sites, cluster, retention };
+  const retention = rollups.caughtUp ? await runRetention(deadline, rollups.until, Date.now(), visitors?.until, signals.until) : { done: false, deleted: {} };
+  const result = { legacy, purge, compaction, rollups, signals, rerolls, budgets, visitors, sites, cluster, retention };
   console.log(JSON.stringify(result));
   return result;
 }

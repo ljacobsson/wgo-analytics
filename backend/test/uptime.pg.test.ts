@@ -127,9 +127,22 @@ d('uptime checks and costs (PostgreSQL)', async () => {
 
     it('caches a result for 12 hours, then asks again', async () => {
       await query('INSERT INTO rollups (project_id, dim, hour, key, events, sessions) VALUES ($1, $2, $3, $4, $5, $6)', [pid, 'type', new Date(now - 3600e3), 'pageview', 1200, 0]);
+      // last month's last hour: counted on its UTC day in the daily series, not in this month's events
+      await query('INSERT INTO rollups (project_id, dim, hour, key, events, sessions) VALUES ($1, $2, $3, $4, $5, $6)', [pid, 'type', new Date('2026-10-31T23:00:00Z'), 'pageview', 300, 0]);
+      // spans, logs and metric points (rollups.ts runSignalCounts), summed per UTC day next to events
+      for (const [hour, key, n] of [['2026-10-31T22:00:00Z', 'spans', 40], ['2026-11-01T00:00:00Z', 'spans', 7], ['2026-11-01T05:00:00Z', 'logs', 5], ['2026-11-01T05:00:00Z', 'metric_points', 9]] as const) {
+        await query('INSERT INTO rollups (project_id, dim, hour, key, events, sessions) VALUES ($1, $2, $3, $4, $5, 0)', [pid, 'signal', new Date(hour), key, n]);
+      }
       const a = await C.getCosts(pid, now, { ce: ce(false), usage, shares });
       expect(a).toMatchObject({ setup: false, monthToDate: 0.8, lastMonth: 1.5, usage: { eventsThisMonth: 1200, projectEventsThisMonth: 1200, dataBucketBytes: 123, dsqlStorageBytes: 456 } });
       expect(a.categories.map((c) => [c.category, c.amount])).toEqual([['storage', 0], ['ingestion', 0.6], ['querying', 0.2], ['other', 0]]);
+      expect(a.daily.map((x) => [x.day, x.signals])).toEqual([
+        ['2026-10-31', { events: 300, spans: 40, logs: 0, metricPoints: 0 }],
+        ['2026-11-01', { events: 0, spans: 7, logs: 5, metricPoints: 9 }],
+      ]);
+      expect(a.usage.signalsThisMonth).toEqual({ events: 1200, spans: 7, logs: 5, metricPoints: 9 });
+      expect(a.usage.projectSignalsThisMonth).toEqual({ events: 1200, spans: 7, logs: 5, metricPoints: 9 });
+      expect(a.usage.projectShare).toBe(1);
       expect(calls).toBe(1);
       const [{ n }] = await query<{ n: string }>('SELECT count(*) AS n FROM cost_cache');
       expect(Number(n)).toBe(1);

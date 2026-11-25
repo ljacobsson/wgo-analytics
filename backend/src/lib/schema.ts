@@ -434,13 +434,10 @@ export const SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX ASYNC IF NOT EXISTS destinations_project_idx ON destinations (project_id)`,
   `CREATE INDEX ASYNC IF NOT EXISTS destinations_owner_idx ON destinations (owner_email)`,
 
-  // a person's own Slack app (lib/slack.ts): "Add to Slack" in every project they're a member of that has none
-  `CREATE TABLE IF NOT EXISTS slack_apps (
-     owner_email text PRIMARY KEY,
-     client_id text NOT NULL,
-     client_secret text NOT NULL,
-     created_at timestamptz NOT NULL DEFAULT now()
-   )`,
+  // Slack apps' client ids and secrets, a person's (slack_apps) or a project's (integrations of type slack_app), are no
+  // longer used: workspaces are connected with a bot token (lib/slack.ts). Don't keep the secrets around.
+  `DROP TABLE IF EXISTS slack_apps`,
+  `DELETE FROM integrations WHERE type = 'slack_app'`,
 
   // Slack workspaces connected with a bot token (lib/slack.ts): a project's (project_id set) or a person's own
   // (owner_email set). Channels picked from them are stored like other Slack channels, with config.workspaceId.

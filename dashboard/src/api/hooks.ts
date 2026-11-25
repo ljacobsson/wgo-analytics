@@ -3,7 +3,7 @@ import { api } from './client';
 import type {
   Device, DeviceCreated, Kiosk, KioskConfig,
   BreakdownRow, ClickRow, ErrorGroup, EventsResponse, GeoResponse, HttpErrorGroup, LogsResponse, Me, Member, MetricInfo,
-  MetricSeriesResponse, PageRow, Project, ServiceRow, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse, FieldsResponse, FieldValuesResponse, FilterScope, SlackIntegration, SlackChannel, Destination, DestinationInput, DestinationLevel, Trigger, TriggerInput, TriggerTestResult, SlackSetup, SlackTemplate,
+  MetricSeriesResponse, PageRow, Project, ServiceRow, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse, FieldsResponse, FieldValuesResponse, FilterScope, SlackIntegration, SlackChannel, Destination, DestinationInput, DestinationLevel, Trigger, TriggerInput, TriggerTestResult, SlackSetup, SlackTemplate, SlackWorkspace,
   SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, ConversionsResponse, ClickAlias, RetentionResponse,
   ReleasesResponse, Explanation, ExplainMetric, Filter, UploadKey, FrustrationRow, HeatmapResponse, HoursResponse,
   UptimeCheck, UptimeCheckInput, UptimeResults, UptimeRunResult, CostsResponse, TriggerPreview, ErrorSuppression, ErrorSuppressionInput, Budget, BudgetInput,
@@ -441,15 +441,15 @@ export const useTestDestination = (pid: string) =>
 const slackKey = (pid: string) => ['slack-setup', pid] as const;
 export const useSlackSetup = (pid: string) =>
   useQuery({ queryKey: slackKey(pid), queryFn: () => api<SlackSetup>(`${base(pid)}/slack`), staleTime: 60_000 });
-/** Saves Slack app credentials: the project's (owners), or your own (`account`), used in all your projects. */
-export function useSaveSlackApp(pid: string) {
+/**
+ * Connects a Slack workspace with a bot token: the project's, or your own (`account`). Resolves once the setup is
+ * refetched, so the new workspace is in it.
+ */
+export function useConnectSlackToken(pid: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (creds: { clientId: string; clientSecret: string; level: DestinationLevel }) => api<SlackSetup>(`${base(pid)}/slack/app`, { method: 'POST', body: creds }),
-    onSuccess: (data, v) => {
-      qc.setQueryData(slackKey(pid), data);
-      if (v.level === 'account') void qc.invalidateQueries({ queryKey: ['slack-setup'] }); // every project's status changes
-    },
+    mutationFn: (input: { token: string; level: DestinationLevel }) => api<SlackWorkspace>(`${base(pid)}/slack/workspaces`, { method: 'POST', body: input }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['slack-setup'] }), // your own workspaces show in every project
   });
 }
 /** Channels WGO can post to in a connected workspace (public ones, and private ones its bot was invited to). */
@@ -472,16 +472,6 @@ export function useDisconnectSlackWorkspace(pid: string) {
   return useMutation({
     mutationFn: (workspaceId: string) => api<SlackSetup>(`${base(pid)}/slack/workspaces/${workspaceId}`, { method: 'DELETE' }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['slack-setup'] }), // your own workspaces show in every project
-  });
-}
-export function useRemoveSlackApp(pid: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (level: DestinationLevel) => api<SlackSetup>(`${base(pid)}/slack/app`, { method: 'DELETE', params: { level } }),
-    onSuccess: (data, level) => {
-      qc.setQueryData(slackKey(pid), data);
-      if (level === 'account') void qc.invalidateQueries({ queryKey: ['slack-setup'] });
-    },
   });
 }
 

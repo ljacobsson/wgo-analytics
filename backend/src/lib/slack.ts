@@ -7,57 +7,31 @@ import { HttpError } from './http';
 import { isUuid } from './projects';
 
 /**
- * "Add to Slack" connects a workspace: WGO's bot joins it and we keep its token (slack_workspaces), for the project
- * or for the person who connected it. Channels are then picked from a list and posted to with chat.postMessage.
- * Channels connected before that (with the incoming-webhook scope) have a webhook URL of their own and keep using it.
+ * A Slack workspace is connected with WGO's bot token (slack_workspaces), for the project or for the person who
+ * connected it. Channels are then picked from a list and posted to with chat.postMessage. Channels connected before
+ * that (with the incoming-webhook scope) have a webhook URL of their own and keep using it.
  *
- * Slack ties every "Add to Slack" button to a Slack app. A self-hosted WGO has one OAuth redirect URL, so one app
- * works for every project. It is set up once, in one of three places, used in this order:
- * - a project's (owners, from the dashboard): for everyone in that project;
- * - a person's own (anyone, from the dashboard): for them, in every project they're a member of;
- * - the instance's, with SLACK_CLIENT_ID / SLACK_CLIENT_SECRET at deploy time: for everyone.
+ * The token comes one of two ways:
+ * - pasted (connectWithToken): someone creates the WGO Slack app from a pre-filled manifest (createAppUrl), clicks
+ *   Install to Workspace and copies its Bot User OAuth Token. Nothing else about the app is needed;
+ * - "Add to Slack" (OAuth), when the instance has an app of its own (SLACK_CLIENT_ID / SLACK_CLIENT_SECRET at deploy
+ *   time) that anyone can install without creating one.
  */
-type Source = NonNullable<SlackSetup['source']>;
-interface Creds { clientId: string; clientSecret: string; source: Source }
+interface Creds { clientId: string; clientSecret: string }
 
-async function projectApp(pid: string): Promise<Creds | null> {
-  const [row] = await query<{ config: { clientId: string; clientSecret: string } }>(
-    `SELECT config FROM integrations WHERE project_id = $1 AND type = 'slack_app' LIMIT 1`,
-    [pid],
-  );
-  return row ? { ...row.config, source: 'project' } : null;
-}
-
-async function accountApp(email: string | null | undefined): Promise<Creds | null> {
-  if (!email) return null;
-  const [row] = await query<{ client_id: string; client_secret: string }>('SELECT client_id, client_secret FROM slack_apps WHERE owner_email = $1', [email]);
-  return row ? { clientId: row.client_id, clientSecret: row.client_secret, source: 'account' } : null;
-}
-
+/** The instance's Slack app: "Add to Slack" works for everyone. */
 function instanceApp(): Creds | null {
   const clientId = process.env.SLACK_CLIENT_ID ?? '';
   const clientSecret = process.env.SLACK_CLIENT_SECRET ?? '';
-  return clientId && clientSecret ? { clientId, clientSecret, source: 'instance' } : null;
-}
-
-/** The app "Add to Slack" uses for `email` in project `pid`. */
-async function credentials(pid: string, email?: string | null): Promise<Creds | null> {
-  return (await projectApp(pid)) ?? (await accountApp(email)) ?? instanceApp();
-}
-
-/** The app a given source names: a callback is verified against the app its install started with. */
-async function credentialsFrom(source: Source | undefined, pid: string, email: string | null): Promise<Creds | null> {
-  if (source === 'account') return accountApp(email);
-  if (source === 'instance') return instanceApp();
-  if (source === 'project') return projectApp(pid);
-  return (await projectApp(pid)) ?? instanceApp(); // installs started before sources were recorded
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
 }
 
 const redirectUrl = (apiDomain: string) => `https://${apiDomain}/slack/callback`;
 
 /**
  * A pre-filled Slack app manifest: Slack's "create app" page asks only which workspace to create it in.
- * Bot scopes need a bot user. Token rotation stays off: the bot token must not expire.
+ * Bot scopes need a bot user. Token rotation stays off: the bot token must not expire. The redirect URL only
+ * matters for an instance app ("Add to Slack"); installing from the app's own page doesn't use it.
  */
 export function createAppUrl(apiDomain: string): string {
   const manifest = {
@@ -74,49 +48,43 @@ export function createAppUrl(apiDomain: string): string {
 }
 
 export async function setupStatus(pid: string, apiDomain: string, email?: string): Promise<SlackSetup> {
-  const [creds, own, workspaces] = await Promise.all([credentials(pid, email), accountApp(email), listWorkspaces(pid, email ?? null)]);
   return {
-    configured: !!creds,
-    source: creds?.source ?? null,
-    clientId: creds && creds.source !== 'instance' ? creds.clientId : null,
-    accountClientId: own?.clientId ?? null,
-    redirectUrl: redirectUrl(apiDomain),
+    addToSlack: !!instanceApp(),
     createAppUrl: createAppUrl(apiDomain),
-    workspaces,
+    workspaces: await listWorkspaces(pid, email ?? null),
   };
 }
 
 /**
- * Save Slack app credentials, the project's or (level=account) the person's own, after checking them with Slack:
- * exchanging a dummy code fails with `invalid_code` only once the client id and secret are valid.
+ * Connect a workspace with a bot token pasted from the app's OAuth & Permissions page, for the project or
+ * (level=account) for the person. auth.test says which workspace it is and (in a header) which scopes it has.
+ * Connecting a workspace again updates its token.
  */
-export async function saveApp(pid: string, email: string, clientId: unknown, clientSecret: unknown, level: DestinationLevel = 'project'): Promise<void> {
-  const id = typeof clientId === 'string' ? clientId.trim() : '';
-  const secret = typeof clientSecret === 'string' ? clientSecret.trim() : '';
-  if (!/^\d+\.\d+$/.test(id)) throw new HttpError(400, 'That doesn’t look like a Slack Client ID (digits.digits, under Basic Information)');
-  if (!/^[0-9a-f]{32}$/i.test(secret)) throw new HttpError(400, 'That doesn’t look like a Slack Client Secret (32 hex characters; click Show next to it)');
-  const check = await oauthAccess(id, secret, 'wgo-credential-check', 'https://example.invalid/');
-  if (check.error === 'invalid_client_id') throw new HttpError(400, 'Slack doesn’t know that Client ID');
-  if (check.error === 'bad_client_secret') throw new HttpError(400, 'That Client Secret doesn’t match the Client ID');
-  if (level === 'account') {
-    await query(
-      `INSERT INTO slack_apps (owner_email, client_id, client_secret) VALUES ($1, $2, $3)
-       ON CONFLICT (owner_email) DO UPDATE SET client_id = EXCLUDED.client_id, client_secret = EXCLUDED.client_secret`,
-      [email, id, secret],
-    );
-    return;
+export async function connectWithToken(pid: string, email: string, token: unknown, level: DestinationLevel = 'project'): Promise<SlackWorkspace> {
+  const t = typeof token === 'string' ? token.trim() : '';
+  if (/^xoxe\./.test(t)) throw new HttpError(400, 'That token expires: turn off token rotation for the Slack app (OAuth & Permissions), reinstall it and copy the new token');
+  if (/^xoxp-/.test(t)) throw new HttpError(400, 'That’s a user token. Copy the Bot User OAuth Token instead (it starts with xoxb-)');
+  if (!/^xoxb-[\w-]{10,}$/.test(t)) throw new HttpError(400, 'That doesn’t look like a Slack bot token. Copy the Bot User OAuth Token from OAuth & Permissions (it starts with xoxb-)');
+  let res: Response;
+  try {
+    res = await fetch('https://slack.com/api/auth.test', { method: 'POST', headers: { authorization: `Bearer ${t}` }, signal: AbortSignal.timeout(8000) });
+  } catch {
+    throw new HttpError(502, 'Slack didn’t answer. Try again');
   }
-  await query(`DELETE FROM integrations WHERE project_id = $1 AND type = 'slack_app'`, [pid]);
-  await query(
-    `INSERT INTO integrations (project_id, id, type, config, created_by) VALUES ($1, $2, 'slack_app', $3::jsonb, $4)`,
-    [pid, randomUUID(), JSON.stringify({ clientId: id, clientSecret: secret }), email],
-  );
-}
-
-/** Forget the project's Slack app, or (level=account) the person's own. Connected channels keep working. */
-export async function removeApp(pid: string, email?: string, level: DestinationLevel = 'project'): Promise<void> {
-  if (level === 'account') await query('DELETE FROM slack_apps WHERE owner_email = $1', [email]);
-  else await query(`DELETE FROM integrations WHERE project_id = $1 AND type = 'slack_app'`, [pid]);
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; team?: string; team_id?: string; user_id?: string; bot_id?: string };
+  if (!body.ok) {
+    if (body.error && REVOKED.has(body.error)) throw new HttpError(400, 'Slack doesn’t accept that token. Copy it again from OAuth & Permissions');
+    throw new HttpError(502, `Slack: ${body.error ?? 'no response'}`);
+  }
+  if (!body.bot_id || !body.team_id) throw new HttpError(400, 'That’s not a bot token. Copy the Bot User OAuth Token (it starts with xoxb-)');
+  const granted = new Set((res.headers.get('x-oauth-scopes') ?? '').split(',').map((x) => x.trim()));
+  const missing = SLACK_BOT_SCOPES.filter((sc) => !granted.has(sc));
+  if (missing.length) throw new SlackScopesError(missing);
+  const owner: Owner = level === 'account' ? { level: 'account', email } : { level: 'project', pid };
+  const id = await saveWorkspace(owner, email, { teamId: body.team_id, teamName: body.team ?? null, token: t, botUserId: body.user_id ?? null });
+  const w = (await listWorkspaces(pid, email)).find((x) => x.id === id);
+  if (!w) throw new HttpError(500, 'Slack workspace not saved');
+  return w;
 }
 
 // ---------------------------------------------------------------- OAuth
@@ -124,26 +92,25 @@ export async function removeApp(pid: string, email?: string, level: DestinationL
 const STATE_TTL_MS = 15 * 60 * 1000;
 const mac = (secret: string, data: string) => createHmac('sha256', secret).update(data).digest('base64url');
 
-interface State { pid: string; email: string; returnTo: string | null; level: DestinationLevel; source?: Source }
+interface State { pid: string; email: string; returnTo: string | null; level: DestinationLevel }
 
 /**
  * Signed, expiring state: ties the callback to the project and user that started the install, and to where the
  * channel is saved (the project, or the user's own destinations).
  */
-export function signState(secret: string, pid: string, email: string, returnTo: string | null, now = Date.now(), level: DestinationLevel = 'project', source?: Source): string {
-  const data = Buffer.from(JSON.stringify({ p: pid, e: email, r: returnTo, x: now + STATE_TTL_MS, ...(level === 'account' ? { l: 'account' } : {}), ...(source ? { s: source } : {}) })).toString('base64url');
+export function signState(secret: string, pid: string, email: string, returnTo: string | null, now = Date.now(), level: DestinationLevel = 'project'): string {
+  const data = Buffer.from(JSON.stringify({ p: pid, e: email, r: returnTo, x: now + STATE_TTL_MS, ...(level === 'account' ? { l: 'account' } : {}) })).toString('base64url');
   return `${data}.${mac(secret, data)}`;
 }
 
-/** Read before verification only to find which app's secret signed the state. */
-function peekState(state: string): { p?: string; e?: string; s?: Source } {
+/** The project a state names, read before verification. */
+export function peekStateProject(state: string): string | null {
   try {
-    return JSON.parse(Buffer.from(state.split('.')[0] ?? '', 'base64url').toString()) as { p?: string; e?: string; s?: Source };
+    return (JSON.parse(Buffer.from(state.split('.')[0] ?? '', 'base64url').toString()) as { p?: string }).p ?? null;
   } catch {
-    return {};
+    return null;
   }
 }
-export const peekStateProject = (state: string): string | null => peekState(state).p ?? null;
 
 export function verifyState(secret: string, state: string, now = Date.now()): State {
   const [data, sig] = state.split('.');
@@ -151,27 +118,27 @@ export function verifyState(secret: string, state: string, now = Date.now()): St
   const expected = Buffer.from(mac(secret, data));
   const given = Buffer.from(sig);
   if (expected.length !== given.length || !timingSafeEqual(expected, given)) throw new HttpError(400, 'Bad state signature');
-  const { p, e, r, x, l, s } = JSON.parse(Buffer.from(data, 'base64url').toString()) as { p: string; e: string; r: string | null; x: number; l?: string; s?: Source };
+  const { p, e, r, x, l } = JSON.parse(Buffer.from(data, 'base64url').toString()) as { p: string; e: string; r: string | null; x: number; l?: string };
   if (now > x) throw new HttpError(400, 'Slack install link expired, try again');
-  return { pid: p, email: e, returnTo: r ?? null, level: l === 'account' ? 'account' : 'project', ...(s ? { source: s } : {}) };
+  return { pid: p, email: e, returnTo: r ?? null, level: l === 'account' ? 'account' : 'project' };
 }
 
-/** Verify a callback's state against the app the install started with (the project's, the user's or the instance's). */
-export async function verifyCallbackState(state: string): Promise<State & { creds: Creds }> {
-  const { p, e, s } = peekState(state);
-  const creds = p ? await credentialsFrom(s, p, e ?? null) : null;
+/** Verify a callback's state, signed with the instance app's secret. */
+export function verifyCallbackState(state: string): State & { creds: Creds } {
+  const creds = instanceApp();
   if (!creds) throw new HttpError(400, 'Bad state');
   return { ...verifyState(creds.clientSecret, state), creds };
 }
 
+/** "Add to Slack" with the instance's app. Without one, workspaces are connected with a pasted bot token. */
 export async function installUrl(pid: string, email: string, apiDomain: string, returnTo: string | null, level: DestinationLevel = 'project'): Promise<string> {
-  const creds = await credentials(pid, email);
-  if (!creds) throw new HttpError(409, 'Set up a Slack app first: for this project, or your own for all your projects');
+  const creds = instanceApp();
+  if (!creds) throw new HttpError(409, 'This WGO has no Slack app of its own: connect a workspace with your app’s bot token instead');
   const u = new URL('https://slack.com/oauth/v2/authorize');
   u.searchParams.set('client_id', creds.clientId);
   u.searchParams.set('scope', SLACK_BOT_SCOPES.join(','));
   u.searchParams.set('redirect_uri', redirectUrl(apiDomain));
-  u.searchParams.set('state', signState(creds.clientSecret, pid, email, returnTo, Date.now(), level, creds.source));
+  u.searchParams.set('state', signState(creds.clientSecret, pid, email, returnTo, Date.now(), level));
   return u.toString();
 }
 
@@ -199,7 +166,7 @@ async function oauthAccess(clientId: string, clientSecret: string, code: string,
 /** The Slack app lacks bot scopes WGO needs: apps created from the manifest before bot tokens only had incoming-webhook. */
 export class SlackScopesError extends HttpError {
   constructor(public missing: string[]) {
-    super(400, `The Slack app needs these bot scopes: ${missing.join(', ')}`);
+    super(400, `The Slack app needs these bot scopes: ${missing.join(', ')}. Add them under OAuth & Permissions, reinstall the app and copy its token again`);
   }
 }
 
@@ -208,7 +175,7 @@ export class SlackScopesError extends HttpError {
  * connected it. Connecting a workspace again updates its token.
  */
 export async function completeInstall(code: string, state: string, apiDomain: string): Promise<{ pid: string; level: DestinationLevel }> {
-  const { pid, email, level, creds } = await verifyCallbackState(state);
+  const { pid, email, level, creds } = verifyCallbackState(state);
   const body = await oauthAccess(creds.clientId, creds.clientSecret, code, redirectUrl(apiDomain));
   if (!body.ok) throw new HttpError(502, `Slack: ${body.error ?? 'no token returned'}`);
   const granted = new Set((body.scope ?? '').split(','));
@@ -227,18 +194,20 @@ interface WorkspaceRow { id: string; project_id: string | null; owner_email: str
 
 const ownerWhere = (o: Owner): [string, string] => (o.level === 'project' ? ['project_id = $1', o.pid] : ['owner_email = $1 AND project_id IS NULL', o.email]);
 
-async function saveWorkspace(o: Owner, email: string, w: { teamId: string; teamName: string | null; token: string; botUserId: string | null }): Promise<void> {
+async function saveWorkspace(o: Owner, email: string, w: { teamId: string; teamName: string | null; token: string; botUserId: string | null }): Promise<string> {
   const [where, v] = ownerWhere(o);
   const [cur] = await query<{ id: string }>(`SELECT id FROM slack_workspaces WHERE ${where} AND team_id = $2`, [v, w.teamId]);
   if (cur) {
     await query('UPDATE slack_workspaces SET bot_token = $2, team_name = $3, bot_user_id = $4 WHERE id = $1', [cur.id, w.token, w.teamName, w.botUserId]);
-    return;
+    return cur.id;
   }
+  const id = randomUUID();
   await query(
     `INSERT INTO slack_workspaces (id, project_id, owner_email, team_id, team_name, bot_token, bot_user_id, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [randomUUID(), o.level === 'project' ? o.pid : null, o.level === 'account' ? o.email : null, w.teamId, w.teamName, w.token, w.botUserId, email],
+    [id, o.level === 'project' ? o.pid : null, o.level === 'account' ? o.email : null, w.teamId, w.teamName, w.token, w.botUserId, email],
   );
+  return id;
 }
 
 /** Channels added from a workspace: the project's (integrations) and people's own (destinations). */

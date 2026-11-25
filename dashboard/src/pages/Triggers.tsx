@@ -3,8 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { BellRing, Check, Copy, Hash, MessageSquareText, Pencil, Plus, Send, Slack, Trash2, Webhook } from 'lucide-react';
 import { SLACK_BOT_SCOPES } from '../api/contract';
 import type { Destination, DestinationLevel, Filter, FilterScope, SlackTemplate, Trigger, TriggerAgg, TriggerCondition, TriggerDestination, TriggerInput, TriggerKind, TriggerMetric } from '../api/contract';
-import { useDeleteDestination, useDeleteTrigger, useDestinations, useDisconnectSlackWorkspace, useRemoveSlackApp, useSaveDestination, useSaveTrigger, useSlackSetup, useTestDestination, useTestTrigger, useTriggerPreview, useTriggers } from '../api/hooks';
-import { SlackAppSetup, SlackChannelDialog } from './SlackConnect';
+import { useDeleteDestination, useDeleteTrigger, useDestinations, useDisconnectSlackWorkspace, useSaveDestination, useSaveTrigger, useSlackSetup, useTestDestination, useTestTrigger, useTriggerPreview, useTriggers } from '../api/hooks';
+import { SlackChannelDialog } from './SlackConnect';
 import { SlackMessageEditor } from './SlackMessageEditor';
 import { cn, relTime } from '../lib/format';
 import { describeFilter, FILTER_PARAM, SCOPE_LABEL } from '../lib/filters';
@@ -469,10 +469,8 @@ function Destinations({ slackDialog, setSlackDialog }: { slackDialog: Destinatio
   const { project } = useProject();
   const destinations = useDestinations(project.id);
   const setup = useSlackSetup(project.id);
-  const removeApp = useRemoveSlackApp(project.id);
   const disconnect = useDisconnectSlackWorkspace(project.id);
   const toast = useToast();
-  const slackReady = !!setup.data?.configured;
   const workspacesAt = (level: DestinationLevel) => setup.data?.workspaces.filter((w) => w.level === level) ?? [];
   const forgetWorkspace = async (id: string, name: string | null) => {
     if (!confirm(`Disconnect ${name ?? 'this Slack workspace'}? WGO stays installed in Slack until you remove it there.`)) return;
@@ -483,15 +481,7 @@ function Destinations({ slackDialog, setSlackDialog }: { slackDialog: Destinatio
       toast({ title: 'Cannot disconnect it', body: (e as Error).message, tone: 'bad' });
     }
   };
-  const ownApp = setup.data?.accountClientId ?? null;
-  const [showSetup, setShowSetup] = useState(false);
   const [dialog, setDialog] = useState<{ open: boolean; level: DestinationLevel; d: Destination | null }>({ open: false, level: 'project', d: null });
-  const hasSlack = !!destinations.data?.some((d) => d.type === 'slack');
-  const forgetApp = async () => {
-    if (!confirm('Remove your Slack app? Channels you connected keep working; you’ll need an app again to connect more.')) return;
-    await removeApp.mutateAsync('account');
-    toast({ title: 'Your Slack app was removed', tone: 'accent' });
-  };
   const section = (level: DestinationLevel, title: string, sub: string, empty: string) => {
     const list = destinations.data?.filter((d) => d.level === level) ?? [];
     return (
@@ -503,7 +493,7 @@ function Destinations({ slackDialog, setSlackDialog }: { slackDialog: Destinatio
           </div>
           <div className="flex items-center gap-1.5">
             <Button size="sm" onClick={() => setDialog({ open: true, level, d: null })}><Plus size={13} />Webhook</Button>
-            {(slackReady || workspacesAt(level).length > 0) && <Button size="sm" onClick={() => setSlackDialog(level)}><Slack size={13} />Slack channel</Button>}
+            <Button size="sm" onClick={() => setSlackDialog(level)}><Slack size={13} />Slack channel</Button>
           </div>
         </div>
         {destinations.isPending ? <Skeleton className="h-8" />
@@ -515,17 +505,6 @@ function Destinations({ slackDialog, setSlackDialog }: { slackDialog: Destinatio
             <button className="cursor-pointer text-muted underline-offset-2 hover:text-fg hover:underline" onClick={() => void forgetWorkspace(w.id, w.teamName)}>Disconnect</button>
           </p>
         ))}
-        {level === 'account' && (ownApp ? (
-          <p className="pt-2 text-[11.5px] text-faint">
-            Your Slack app (<span className="font-mono">{ownApp}</span>) connects channels in all your projects{setup.data?.source === 'project' ? '; this project uses its own' : ''}.{' '}
-            <button className="cursor-pointer text-muted underline-offset-2 hover:text-fg hover:underline" onClick={() => void forgetApp()}>Remove it</button>
-          </p>
-        ) : slackReady && (
-          <p className="pt-2 text-[11.5px] text-faint">
-            {setup.data?.source === 'instance' ? 'Slack uses the app set up for this whole WGO.' : `Slack uses ${project.name}’s app here.`}{' '}
-            <button className="cursor-pointer text-muted underline-offset-2 hover:text-fg hover:underline" onClick={() => setShowSetup((x) => !x)}>Set up your own for all your projects</button>
-          </p>
-        ))}
       </div>
     );
   };
@@ -535,13 +514,6 @@ function Destinations({ slackDialog, setSlackDialog }: { slackDialog: Destinatio
       {section('project', 'This project', 'Every member can use them in this project’s triggers', 'None yet.')}
       <div className="border-t border-line/60" />
       {section('account', 'Yours', 'Only you manage them, and you can use them in every project you’re a member of', 'None yet. Save a webhook or Slack channel here to reuse it across your projects.')}
-      {!slackReady && !showSetup && hasSlack && (
-        <p className="px-4 pb-3 text-[11.5px] text-faint">
-          To connect more Slack channels, set up a Slack app.{' '}
-          <button className="cursor-pointer text-muted underline-offset-2 hover:text-fg hover:underline" onClick={() => setShowSetup(true)}>Set it up</button>
-        </p>
-      )}
-      {(showSetup || (!slackReady && !hasSlack)) && <div className="px-4 pb-4"><SlackAppSetup onDone={() => setShowSetup(false)} /></div>}
       <SlackChannelDialog level={slackDialog} onClose={() => setSlackDialog(null)} />
       <DestinationDialog open={dialog.open} level={dialog.level} initial={dialog.d} onClose={() => setDialog((x) => ({ ...x, open: false, d: null }))} />
     </Card>

@@ -111,6 +111,37 @@ d('maintenance (PostgreSQL)', async () => {
     expect(again.hours).toBe(0);
   });
 
+  it('counts spans, logs and metric points per hour, backfilling what is stored', async () => {
+    const at = (t: number) => new Date(t);
+    const span = (t: number) => ({ project_id: pid, start_time: at(t), end_time: at(t + 50), span_id: randomUUID(), trace_id: randomUUID(), name: 'GET /', service: 'api' });
+    const log = (t: number) => ({ project_id: pid, ts: at(t), id: randomUUID(), body: 'hello', service: 'api' });
+    const point = (t: number) => ({ project_id: pid, ts: at(t), id: randomUUID(), name: 'requests', type: 'sum', service: 'api', value: 1 });
+    const spans = [], logs = [], points = [];
+    // hours 2..72 back (the last hour may still be settling)
+    for (let h = 2; h <= 3 * 24; h += 5) {
+      const t = thisHour - h * HOUR + 120_000;
+      spans.push(span(t), span(t + 1000));
+      logs.push(log(t));
+    }
+    for (let i = 0; i < 3; i++) points.push(point(thisHour - 2 * HOUR + i * 1000));
+    await writeRows('spans', [...spans, span(now)]); // the current hour isn't complete: not counted yet
+    await writeRows('logs', logs);
+    await writeRows('metric_points', points);
+    const counts = async () => Object.fromEntries((await query<{ key: string; n: number }>(
+      `SELECT key, sum(events)::int AS n FROM rollups WHERE project_id = $1 AND dim = 'signal' GROUP BY key`, [pid])).map((r) => [r.key, r.n]));
+
+    const res = await R.runSignalCounts(Date.now() + 60_000, now);
+    expect(res).toEqual({ until: R.floorHour(now - 5 * 60_000), caughtUp: true });
+    expect(await counts()).toEqual({ spans: spans.length, logs: logs.length, metric_points: 3 });
+    const [{ h }] = await query<{ h: Date }>(`SELECT min(hour) AS h FROM rollups WHERE project_id = $1 AND dim = 'signal' AND key = 'logs'`, [pid]);
+    expect(h.getTime()).toBe(thisHour - 72 * HOUR);
+
+    // an hour later: the hour before the watermark is counted again (a late batch), and the next one for the first time
+    await writeRows('spans', [span(res.until - HOUR + 2000)]);
+    await R.runSignalCounts(Date.now() + 60_000, now + HOUR);
+    expect((await counts()).spans).toBe(spans.length + 2);
+  });
+
   it('long ranges count hidden bot sessions from rollups', async () => {
     const [rolled, raw] = await Promise.all([A.stats(pid, range), A.stats(pid, { ...range, filters: RAW })]);
     expect(raw.botSessions).toBe(14); // 13 in rolled-up hours, 1 in the current hour (read raw)
@@ -169,9 +200,12 @@ d('maintenance (PostgreSQL)', async () => {
     const before = await A.stats(pid, range);
     await P.setRetention(OWNER, pid, 2);
     const notRolledBefore = thisHour - 4 * DAY;
-    await runRetention(Date.now() + 60_000, notRolledBefore);
+    await runRetention(Date.now() + 60_000, notRolledBefore, Date.now(), Infinity, notRolledBefore);
     const [{ n }] = await raw<{ n: number }>('SELECT count(*)::int AS n FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3', [pid, new Date(notRolledBefore), new Date(now - 2 * DAY)]);
     expect(n).toBeGreaterThan(0);
+    // spans, logs and metric points likewise wait until they are counted
+    const [{ s }] = await raw<{ s: number }>('SELECT count(*)::int AS s FROM spans WHERE project_id = $1 AND start_time >= $2 AND start_time < $3', [pid, new Date(notRolledBefore), new Date(now - 2 * DAY)]);
+    expect(s).toBeGreaterThan(0);
     // whole days go: the day that isn't completely rolled up stays
     const [{ old }] = await raw<{ old: number }>('SELECT count(*)::int AS old FROM events WHERE project_id = $1 AND ts < $2', [pid, new Date(floorDay(notRolledBefore))]);
     expect(old).toBe(0);
@@ -220,7 +254,7 @@ d('maintenance (PostgreSQL)', async () => {
     const stats = await reportCluster(now, read);
     expect(read).toHaveBeenCalledWith('abc123', now);
     expect(stats?.storageBytes).toBe(2_500_000_000);
-    const points = await raw<{ name: string; value: number }>('SELECT name, value FROM metric_points WHERE project_id = $1 ORDER BY name', [pid]);
+    const points = await raw<{ name: string; value: number }>(`SELECT name, value FROM metric_points WHERE project_id = $1 AND name LIKE 'wgo.%' ORDER BY name`, [pid]);
     expect(points).toEqual([{ name: 'wgo.dsql.dpu', value: 1234.4 }, { name: 'wgo.dsql.storage_bytes', value: 2_500_000_000 }]);
     const [evt] = await raw<{ props: Record<string, unknown> }>(`SELECT props FROM events WHERE project_id = $1 AND name = 'wgo.cluster'`, [pid]);
     expect(evt.props).toMatchObject({ storageGb: 2.5, dpuLastHour: 1234, dpuLast24h: 20000 });
