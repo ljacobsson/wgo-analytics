@@ -9,6 +9,7 @@ import type {
   UptimeCheck, UptimeCheckInput, UptimeResults, UptimeRunResult, CostsResponse, TriggerPreview, ErrorSuppression, ErrorSuppressionInput, Budget, BudgetInput,
   RecordingsResponse, RecordingResponse, RecordingSettings, RecordingSettingsResponse, RecordingFilters, ProjectSite,
   Dashboard, DashboardInput, DashboardSummary, DashboardTile, MeasureNames, QueryResult, QuerySpec,
+  FixRun, FixSettings, FixSettingsInput, GithubAppStatus, GithubManifestForm, GithubRepo, FixAgentAdmin, FixAgentConfigInput, FixTarget, FixTargetInfo, InstallFeatures, InstallSettings,
 } from './contract';
 import { previousWindow, type TimeRange } from '../lib/time';
 import { botsParam, filtersParam, type FieldScope } from '../lib/filters';
@@ -711,3 +712,79 @@ export const useQueryResult = (pid: string, r: Pick<TimeRange, 'from' | 'to'>, s
     queryFn: ({ signal }) => api<QueryResult>(`${base(pid)}/query`, { params: { ...rp(r), q: JSON.stringify(spec), filters, bots }, signal }),
     staleTime: STALE, placeholderData: keepPreviousData, enabled: enabled && !!spec,
   });
+
+// ---------- GitHub Agent (only shown when an admin turned it on: Me.features.fixAgent) ----------
+export const useGithubApp = (enabled = true) =>
+  useQuery({ queryKey: ['github-app'] as const, queryFn: () => api<GithubAppStatus>('/api/github'), enabled, staleTime: 60_000 });
+export const githubManifest = (pid: string, org?: string) => api<GithubManifestForm>('/api/github/manifest', { params: { pid, org } });
+export const githubInstallUrl = (pid: string) => api<{ url: string }>(`${base(pid)}/fix-settings/install-url`).then((r) => r.url);
+export const useFixSettings = (pid: string, enabled = true) =>
+  useQuery({ queryKey: ['fix-settings', pid] as const, queryFn: () => api<FixSettings>(`${base(pid)}/fix-settings`), enabled, staleTime: 30_000 });
+export const useGithubRepos = (pid: string, enabled: boolean) =>
+  useQuery({ queryKey: ['github-repos', pid] as const, queryFn: () => api<GithubRepo[]>(`${base(pid)}/fix-settings/repos`), enabled, staleTime: 60_000, retry: false });
+export function useSaveFixSettings(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Partial<FixSettingsInput>) => api<FixSettings>(`${base(pid)}/fix-settings`, { method: 'PATCH', body: input }),
+    onSuccess: (s) => qc.setQueryData(['fix-settings', pid], s),
+  });
+}
+const LIVE_RUN = (runs: FixRun[] | undefined) => !!runs?.some((r) => r.status === 'queued' || r.status === 'running');
+/** A project's runs (or one error group's), polled every 3 s while one is going. */
+export const useFixRuns = (pid: string, fingerprint: string | undefined, enabled = true) =>
+  useQuery({
+    queryKey: ['fix-runs', pid, fingerprint ?? null] as const,
+    queryFn: () => api<FixRun[]>(`${base(pid)}/fixes`, { params: { fingerprint, limit: fingerprint ? 10 : 20 } }),
+    enabled, staleTime: 5_000,
+    refetchInterval: (q) => (LIVE_RUN(q.state.data) ? 3_000 : false),
+  });
+export function useStartFix(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: Record<string, unknown>) => api<FixRun>(`${base(pid)}/fixes`, { method: 'POST', body: b }),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: ['fix-runs', pid] }); void qc.invalidateQueries({ queryKey: ['errors', pid] }); void qc.invalidateQueries({ queryKey: ['fix-settings', pid] }); },
+  });
+}
+export function useCancelFix(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<FixRun>(`${base(pid)}/fixes/${id}/cancel`, { method: 'POST' }),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: ['fix-runs', pid] }); void qc.invalidateQueries({ queryKey: ['errors', pid] }); },
+  });
+}
+
+/** The GitHub Agent's model for every project (admins). */
+export const useFixAgentAdmin = (enabled = true) =>
+  useQuery({ queryKey: ['fix-agent-admin'] as const, queryFn: () => api<FixAgentAdmin>('/api/fix-agent'), enabled, staleTime: 30_000, retry: false });
+export function useSaveFixAgentAdmin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Partial<FixAgentConfigInput>) => api<FixAgentAdmin>('/api/fix-agent', { method: 'PATCH', body: input }),
+    onSuccess: (d) => { qc.setQueryData(['fix-agent-admin'], d); void qc.invalidateQueries({ queryKey: ['fix-settings'] }); void qc.invalidateQueries({ queryKey: keys.me }); },
+  });
+}
+/** The backend error a span or log stands for and its runs, polled every 3 s while one is going. */
+export const useFixTarget = (pid: string, t: Exclude<FixTarget, { kind: 'browser' }>, enabled: boolean) =>
+  useQuery({
+    queryKey: ['fix-runs', pid, 'for', t] as const,
+    queryFn: () => api<FixTargetInfo>(`${base(pid)}/fixes/for`, { params: { ...t } }),
+    enabled, staleTime: 5_000, retry: false,
+    refetchInterval: (q) => (LIVE_RUN(q.state.data?.runs) ? 3_000 : false),
+  });
+
+// ---------- install-wide switches (admins turn them on in the dashboard) ----------
+const NO_FEATURES: InstallFeatures = { fixAgent: false, mcp: false, slackApp: false };
+/** What admins turned on for the whole install. */
+export const useFeatures = (): InstallFeatures => useMe().data?.features ?? NO_FEATURES;
+export const useInstall = (enabled = true) =>
+  useQuery({ queryKey: ['install'] as const, queryFn: () => api<InstallSettings>('/api/install'), enabled, staleTime: 30_000, retry: false });
+function useInstallMutation<T>(fn: (b: T) => Promise<InstallSettings>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (d) => { qc.setQueryData(['install'], d); void qc.invalidateQueries({ queryKey: keys.me }); void qc.invalidateQueries({ queryKey: ['slack-setup'] }); },
+  });
+}
+export const useSetMcp = () => useInstallMutation((enabled: boolean) => api<InstallSettings>('/api/install/mcp', { method: 'PATCH', body: { enabled } }));
+export const useSetSlackApp = () => useInstallMutation((b: { clientId: string; clientSecret?: string }) => api<InstallSettings>('/api/install/slack', { method: 'PUT', body: b }));
+export const useDeleteSlackApp = () => useInstallMutation((_: void) => api<InstallSettings>('/api/install/slack', { method: 'DELETE' }));

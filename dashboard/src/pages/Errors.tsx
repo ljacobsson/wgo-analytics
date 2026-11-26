@@ -20,6 +20,7 @@ import { BUILTIN } from '../dashboards/measures';
 import { RowActions } from '../ui/RowActions';
 import { errorGroupConditions } from '../lib/rowFilters';
 import { SourcemapsMissing } from './SourcemapsMissing';
+import { FixIcon, FixSection } from './FixAgent';
 const COLS = 'grid-cols-[minmax(260px,3fr)_90px_70px_80px_130px_110px_110px]';
 
 export function Stack({ stack }: { stack: string }) {
@@ -94,6 +95,7 @@ function ErrorDrawer({ g, onClose, onSuppress }: { g: ErrorGroup | null; onClose
                 : <Button size="sm" onClick={() => onSuppress(g)} title="Drop errors like this one when they arrive"><EyeOff size={13} />Suppress errors like this</Button>}</span></div></div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Events', fmtNum(g.count)], ['Sessions', fmtNum(g.sessions)], ['First seen', relTime(g.firstSeen)], ['Last seen', relTime(g.lastSeen)]].map(([k, v]) => (
             <div key={k} className="rounded-xl border border-line bg-[var(--hl)] p-3"><div className="text-[11px] text-faint">{k}</div><div className="mt-0.5 text-[16px] font-semibold tnum">{v}</div></div>))}</div>
+          <FixSection key={g.fingerprint} g={g} />
           <StackSection g={g} />
           <div className="flex justify-end"><AddToDashboard tile={() => errorsTile(currentFilters('events'), g)} /></div>
           <Dl rows={[['Sample URL', g.sampleUrl && <a className="inline-flex items-center gap-1 font-mono text-[12px] text-accent hover:underline" href={g.sampleUrl} target="_blank" rel="noreferrer">{g.sampleUrl}<ExternalLink size={11} /></a>], ['Source', g.source && <Mono>{g.source}</Mono>]]} />
@@ -142,7 +144,7 @@ export function ErrorsPage() {
           {isPending || !data ? <RowsSkeleton /> : !data.length ? <EmptyState pinned icon={<Bug size={22} />} title="No errors in this range">Nothing broke. Enjoy it. Uncaught exceptions, rejections and failed resources show up here.</EmptyState> :
             data.map((g) => (
               <div key={g.fingerprint} role="button" tabIndex={0} onClick={() => set({ fp: g.fingerprint }, false)} onKeyDown={(e) => { if (e.key === 'Enter') set({ fp: g.fingerprint }, false); }} className={`group grid w-full ${COLS} cursor-pointer items-center gap-4 border-b border-line/60 px-4 py-3 text-left text-[13px] transition-colors hover:bg-[var(--hl)] ${g.suppressedBy ? 'opacity-50' : ''}`}>
-                <div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5 truncate font-medium">{g.suppressedBy && <EyeOff size={12} className="shrink-0 text-faint" aria-label="Suppressed" />}<span className="truncate">{g.message}</span></div><div className="truncate font-mono text-[11.5px] text-faint">{g.source ?? g.sampleUrl}</div></div><RowActions scope="events" conditions={errorGroupConditions(g)} /></div>
+                <div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5 truncate font-medium">{g.suppressedBy && <EyeOff size={12} className="shrink-0 text-faint" aria-label="Suppressed" />}<FixIcon fix={g.fix} /><span className="truncate">{g.message}</span></div><div className="truncate font-mono text-[11.5px] text-faint">{g.source ?? g.sampleUrl}</div></div><RowActions scope="events" conditions={errorGroupConditions(g)} /></div>
                 <div>{g.kind && <Badge tone={g.kind === 'rejection' ? 'warn' : 'bad'}>{g.kind}</Badge>}</div>
                 <div className="text-right tnum font-medium">{fmtNum(g.count)}</div>
                 <div className="text-right tnum text-muted">{fmtNum(g.sessions)}</div>

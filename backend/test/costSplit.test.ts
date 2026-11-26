@@ -26,6 +26,7 @@ describe('function map', () => {
     expect(functionFor('wgo-ApiFunction-AbC123', 'wgo')).toBe('ApiFunction');
     expect(functionFor('wgo-McpAuthFunction-AbC123', 'wgo')).toBe('McpAuthFunction');
     expect(functionFor('wgo-EventsWriterFun-AbC123', 'wgo')).toBe('EventsWriterFunction'); // shortened by CloudFormation
+    expect(functionFor('wgo-FixAgentFunction-run', 'wgo')).toBe('FixAgentFunction'); // named in the template
     expect(functionFor('wgo-staging-ApiFunction-AbC123', 'wgo')).toBeNull(); // another stack
     expect(functionFor('other-ApiFunction-AbC123', 'wgo')).toBeNull();
     expect(queueFor('wgo-OtlpQueue-aazVucYkr779', 'wgo')).toBe('OtlpQueue');

@@ -6,6 +6,7 @@ import type {
 import { rawQuery, inList, type Window as Win } from './store/duck';
 import { aliasMap } from './clickAliases';
 import { stacksFor } from './errorStacks';
+import { attachFixes } from './fixes';
 import { markSuppressed, suppressedSql } from './suppressions';
 import { symbolicateEvents, symbolicateGroups } from './sourcemaps';
 import { toApiEvent, type EventRow } from './events';
@@ -337,13 +338,15 @@ export async function errors(pid: string, p: Params): Promise<ErrorGroup[]> {
     const arr = series.get(s.fingerprint);
     if (arr && s.b >= 0 && s.b < SPARK_BUCKETS) arr[s.b] += s.n;
   }
-  return markSuppressed(pid, groups.map((g) => ({
+  const out = await markSuppressed(pid, groups.map((g) => ({
     fingerprint: g.fingerprint, message: g.message, kind: g.kind, count: g.count, sessions: g.sessions,
     firstSeen: iso(g.first_seen)!, lastSeen: iso(g.last_seen)!, sampleStack: mapped.get(g.fingerprint)?.stack ?? null, sampleUrl: g.sample_url,
     minifiedStack: mapped.get(g.fingerprint)?.minified ?? null, ...(mapped.get(g.fingerprint)?.frames ? { stackFrames: mapped.get(g.fingerprint)!.frames } : {}),
     ...(mapped.get(g.fingerprint)?.missing ? { missingSourcemaps: mapped.get(g.fingerprint)!.missing } : {}),
     source: g.source, series: series.get(g.fingerprint)!,
   })));
+  await attachFixes(pid, out);
+  return out;
 }
 
 export async function httpErrors(pid: string, p: Params): Promise<HttpErrorGroup[]> {

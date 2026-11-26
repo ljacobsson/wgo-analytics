@@ -30,7 +30,7 @@ export interface RuntimeConfig {
   commitDate?: string;
   /** False turns off the dashboard's check for newer commits on GitHub (UPDATE_CHECK=false). Absent = on. */
   updateCheck?: boolean;
-  /** The MCP server for AI assistants (the McpUrl stack output, e.g. https://wgo.example.com/mcp); empty or absent when MCP is turned off. */
+  /** Where AI assistants connect over MCP (the McpUrl stack output, e.g. https://wgo.example.com/mcp). Whether MCP is on is Me.features.mcp. */
   mcpUrl?: string;
 }
 
@@ -85,7 +85,20 @@ export interface Me {
   email: string;
   projects: Project[];
   admin: boolean; // can see what the install costs and manage budgets (ADMIN_EMAILS; unset: the first project's owners)
+  features: InstallFeatures;
 }
+/** What admins turned on for the whole install (dashboard, not deploy settings). */
+export interface InstallFeatures {
+  fixAgent: boolean; // the GitHub Agent
+  mcp: boolean; // the MCP server for AI assistants, with Cognito client registration
+  slackApp: boolean; // the install has a Slack app: "Add to Slack" works in every project
+}
+// GET /api/install (admins): the install-wide settings behind InstallFeatures
+export interface InstallSettings extends InstallFeatures {
+  slack: { clientId: string | null; secretSet: boolean; fromEnv: boolean; redirectUrl: string; createAppUrl: string };
+  mcpUrl: string | null; // where MCP clients connect (the deployed McpUrl)
+}
+// PATCH /api/install/mcp {enabled}, PUT /api/install/slack {clientId, clientSecret}, DELETE /api/install/slack
 
 // ---------- product analytics ----------
 export type EventType = 'pageview' | 'click' | 'error' | 'http_error' | 'custom' | 'vitals' | 'identify';
@@ -366,8 +379,8 @@ export interface TriggerWebhookPayload {
 // (only you; your channels are your account destinations, usable in all your projects).
 // Channels connected before workspaces existed post through an incoming webhook and keep working.
 // A workspace is connected with a bot token: create the WGO Slack app from createAppUrl (pre-filled), click Install
-// to Workspace and paste its Bot User OAuth Token. When the instance has a Slack app of its own (SLACK_CLIENT_ID/SECRET
-// at deploy time, `addToSlack`), "Add to Slack" connects one without creating an app.
+// to Workspace and paste its Bot User OAuth Token. When the instance has a Slack app of its own (set by an admin
+// on the Triggers page, `addToSlack`), "Add to Slack" connects one without creating an app.
 // GET    /api/projects/{pid}/integrations              -> SlackIntegration[]   the project's channels
 // DELETE /api/projects/{pid}/integrations/{id}         -> { ok: true }
 // GET    /api/projects/{pid}/slack                     -> SlackSetup   (for the caller)
@@ -630,6 +643,7 @@ export interface ErrorGroup {
   source: string | null;
   series: number[]; // 24 equal buckets across [from,to] for a sparkline
   suppressedBy?: string | null; // id of an error suppression rule covering this group (new ones are dropped at ingest)
+  fix?: FixSummary | null; // the latest GitHub Agent run for this group (set only when the project uses the GitHub Agent)
 }
 
 /**
@@ -1480,4 +1494,173 @@ export interface DashboardSummary {
   tiles: number;
   createdBy: string;
   updatedAt: string;
+}
+
+// ---------- GitHub Agent (opt-in: EnableFixAgent at deploy, then per project) ----------
+// An AI agent (Strands Agents on Amazon Bedrock) reads the project's GitHub repository, finds the cause of one error
+// group and opens a draft pull request. A person always reviews and merges it.
+
+// GET /api/github: the install's GitHub App, created once by an admin from a manifest
+export interface GithubAppStatus {
+  enabled: boolean; // the GitHub Agent is deployed (EnableFixAgent=true)
+  app: { slug: string; htmlUrl: string; owner: string | null; createdBy: string; createdAt: string } | null;
+  canCreate: boolean; // the caller is an admin
+}
+// GET /api/github/manifest?pid&org: what the dashboard POSTs (as a form field named `manifest`) to `action`
+export interface GithubManifestForm {
+  action: string; // https://github.com/settings/apps/new?state=… or the organization's page
+  manifest: string; // JSON
+}
+
+export type FixRunStatus = 'queued' | 'running' | 'pr_opened' | 'no_fix' | 'failed' | 'cancelled';
+export type FixOutcome = 'fixed' | 'not_fixable' | 'needs_more_info';
+export type PrState = 'open' | 'merged' | 'closed';
+
+export interface FixAutoSettings {
+  enabled: boolean; // start a run for new error groups by itself
+  minEvents: number; // in the last hour, 1-100000
+  minSessions: number; // in the last hour, 1-100000
+  maxPerDay: number; // automatic runs per UTC day, 1-50 (runs people start have no limit)
+}
+// GET /api/projects/{pid}/fix-settings (members), PATCH (owners, partial FixSettingsInput)
+/**
+ * One repository the agent works in. Errors are routed to a repository by what it fixes: a failed span or error log
+ * to the one listing its service, a JavaScript error to the one marked `browser`; anything no repository claims goes
+ * to the first. A run can also name its repository.
+ */
+export interface FixRepo {
+  fullName: string; // owner/name, one of GET .../fix-settings/repos
+  baseBranch: string | null; // null = the repository's default branch
+  rootPath: string | null; // the app's folder in a monorepo, e.g. "dashboard/"; null = the whole repository
+  instructions: string | null; // guidance for the agent, up to 4000 characters
+  deniedPaths: string[]; // glob patterns the agent may not change (at most 50)
+  browser: boolean; // fixes the web app's JavaScript errors
+  services: string[]; // fixes errors from these backend services (OpenTelemetry service.name), at most 50
+}
+export interface FixSettingsInput {
+  enabled: boolean;
+  repos: FixRepo[]; // at most 10, in order; the first also gets errors no repository claims
+  auto: FixAutoSettings;
+}
+export interface FixSettings extends FixSettingsInput {
+  model: { provider: FixProvider; modelId: string; label: string }; // what runs use, set by admins for the whole install
+  installed: boolean; // the GitHub App is installed for this project
+  account: string | null; // the GitHub account it's installed on
+  autoRunsToday: number; // automatic runs started today (UTC)
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+// GET /api/projects/{pid}/fix-settings/repos (owners)
+export interface GithubRepo {
+  fullName: string; // owner/name
+  defaultBranch: string;
+  private: boolean;
+}
+
+export interface FixStep {
+  ts: string;
+  tool: string; // read_file, grep, edit_file, …
+  summary: string; // one line, e.g. "src/cart.ts:40-120"
+  error?: boolean;
+}
+export interface FixResult {
+  outcome: FixOutcome;
+  rootCause: string;
+  summary: string;
+  confidence: 'high' | 'medium' | 'low';
+  testsAdded: boolean;
+  files: string[]; // changed files
+}
+export interface FixSummary {
+  runId: string;
+  status: FixRunStatus;
+  prUrl: string | null;
+  prNumber: number | null;
+  prState: PrState | null;
+}
+/**
+ * What a run fixes: a JavaScript error group, a failed span of a trace, or an error log record (severity ERROR or
+ * FATAL). `at` is when the span or log happened (any time near it), so it's found quickly.
+ */
+export type FixTarget =
+  | { kind: 'browser'; fingerprint: string }
+  | { kind: 'span'; traceId: string; spanId: string; at?: string }
+  | { kind: 'log'; logId: string; at: string };
+export type FixKind = FixTarget['kind'];
+
+// GET /api/projects/{pid}/fixes/for?kind=span&traceId&spanId&at | ?kind=log&logId&at: the backend error a span or log
+// stands for (spans and logs with the same exception and top frame share one fingerprint) and its runs
+export interface FixTargetInfo {
+  fingerprint: string;
+  message: string;
+  service: string;
+  hasStack: boolean;
+  repo: string | null; // the repository a run goes to by default (null: none connected)
+  runs: FixRun[]; // newest first, of every occurrence of this error
+}
+
+// GET /api/projects/{pid}/fixes?fingerprint&limit=50, GET .../fixes/{id}, POST .../fixes {fingerprint} | FixTarget,
+// POST .../fixes/{id}/cancel
+export interface FixRun extends FixSummary {
+  kind: FixKind;
+  target: FixTarget;
+  fingerprint: string;
+  message: string | null; // the error message when the run started
+  trigger: 'manual' | 'auto';
+  requestedBy: string | null;
+  repo: string;
+  branch: string | null;
+  steps: FixStep[];
+  result: FixResult | null;
+  error: string | null;
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number | null; // estimate from list prices
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+// ---------- GitHub Agent: install-wide model settings (admins) ----------
+// GET /api/fix-agent, PATCH /api/fix-agent (FixAgentConfigInput). Applies to every project's runs.
+export type FixProvider = 'bedrock' | 'anthropic'; // Claude on Amazon Bedrock (this AWS account), or the Claude API with your own key
+export type FixEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export const FIX_EFFORTS: FixEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+export interface FixModelOption {
+  provider: FixProvider;
+  modelId: string; // e.g. global.anthropic.claude-opus-5-5 (Bedrock), claude-opus-5-5 (Claude API)
+  label: string;
+  note: string; // one line on what it's good for
+  pricePerMTok: [number, number] | null; // list price per million input / output tokens, USD
+}
+export interface FixAgentConfigInput {
+  enabled?: boolean; // the GitHub Agent for this whole WGO (off: no runs, and members don't see it)
+  provider: FixProvider;
+  modelId: string; // one of the options, or another id of that provider (3-120 characters)
+  effort: FixEffort;
+  apiKey?: string | null; // Claude API key: a new one to save, null to remove; leave out to keep the saved one
+}
+export interface FixAgentConfig extends Omit<FixAgentConfigInput, 'apiKey' | 'enabled'> {
+  apiKey: { hint: string; setBy: string; setAt: string } | null; // only the last 4 characters are ever shown
+  updatedBy: string | null; // null: the deploy defaults (FixAgentModelId, FixAgentEffort)
+  updatedAt: string | null;
+}
+export interface FixUsageRow {
+  projectId: string | null; // null: projects you aren't a member of, together
+  name: string;
+  runs: number;
+  prsOpened: number;
+  prsMerged: number;
+  tokens: number;
+  costUsd: number; // estimate from list prices
+}
+export interface FixAgentAdmin {
+  enabled: boolean;
+  config: FixAgentConfig;
+  models: FixModelOption[];
+  usage: { since: string; total: Omit<FixUsageRow, 'projectId' | 'name'>; projects: FixUsageRow[] }; // this month (UTC)
+  app: GithubAppStatus['app'];
+  projectsOn: number; // projects with the GitHub Agent turned on
 }

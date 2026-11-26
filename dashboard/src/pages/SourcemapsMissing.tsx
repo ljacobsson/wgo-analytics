@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useFeatures } from '../api/hooks';
 import type { MissingSourcemaps } from '../api/contract';
 import { getConfig } from '../api/config';
 import { useProject } from '../lib/project';
@@ -28,7 +29,8 @@ export function SourcemapsMissing({ missing }: { missing: MissingSourcemaps }) {
 
 function SourcemapsDialog({ missing, open, onClose }: { missing: MissingSourcemaps; open: boolean; onClose: () => void }) {
   const { project } = useProject(); const route = useRoute();
-  const mcpUrl = getConfig().mcpUrl;
+  const features = useFeatures();
+  const mcpUrl = features.mcp ? getConfig().mcpUrl : undefined;
   const prompt = sourcemapPrompt(project.name, missing);
   const files = missing.files;
   const shown = files.length > 3 ? `${files.slice(0, 3).join(', ')} and ${files.length - 3} more` : files.join(', ');

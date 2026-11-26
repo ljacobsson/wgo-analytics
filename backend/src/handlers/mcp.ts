@@ -1,4 +1,5 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
+import { mcpOn } from '../lib/installSettings';
 import { AdminGetUserCommand, CognitoIdentityProviderClient, UserNotFoundException } from '@aws-sdk/client-cognito-identity-provider';
 import { OAuthError, OAuthErrorCode, type AuthInfo } from '@modelcontextprotocol/server';
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
@@ -11,7 +12,7 @@ import { mcpFetch, type McpAuthConfig } from '../lib/mcp/http';
  * starts the MCP OAuth flow, so the access token is verified here.
  */
 
-const { USER_POOL_ID, COGNITO_DOMAIN, EDGE_SECRET, MCP_ENABLED, AWS_REGION } = process.env;
+const { USER_POOL_ID, COGNITO_DOMAIN, EDGE_SECRET, AWS_REGION } = process.env;
 
 const jwt = CognitoJwtVerifier.create({
   userPoolId: USER_POOL_ID!,
@@ -90,7 +91,8 @@ export async function fromResponse(res: Response): Promise<APIGatewayProxyStruct
 }
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> {
-  if (MCP_ENABLED === 'false') return { statusCode: 404, headers: { 'content-type': 'application/json' }, body: '{"error":"MCP is disabled on this WGO instance"}' };
+  // admins turn it on and off on the dashboard's MCP page
+  if (!(await mcpOn())) return { statusCode: 404, headers: { 'content-type': 'application/json' }, body: '{"error":"MCP is turned off on this WGO: an admin turns it on on the AI assistants page"}' };
   try {
     const origin = publicOrigin(event);
     return await fromResponse(await mcpFetch(toRequest(event, origin), { publicOrigin: origin, auth }));

@@ -8,6 +8,10 @@ import * as B from '../lib/budgets';
 import * as C from '../lib/costs';
 import * as U from '../lib/uptime';
 import * as D from '../lib/devices';
+import * as FX from '../lib/fixes';
+import * as FXC from '../lib/fixConfig';
+import * as INS from '../lib/install';
+import * as GH from '../lib/github';
 import * as DB from '../lib/dashboards';
 import * as G from '../lib/goals';
 import * as GF from '../lib/funnel';
@@ -35,8 +39,8 @@ async function route(method: string, parts: string[], q: Q, email: string, event
   const [, resource, pid, sub, ...rest] = parts;
 
   if (resource === 'me' && method === 'GET') {
-    const [projects, admin] = await Promise.all([P.listProjects(email), isAdmin(email)]);
-    return { email, projects, admin };
+    const [projects, admin, features] = await Promise.all([P.listProjects(email), isAdmin(email), INS.features()]);
+    return { email, projects, admin, features };
   }
   // your own trigger destinations (`pid` holds the destination id)
   if (resource === 'destinations') {
@@ -47,6 +51,31 @@ async function route(method: string, parts: string[], q: Q, email: string, event
     if (id && action === 'test' && method === 'POST') return DST.testDestination(me, id, null);
     if (id && !action && method === 'PATCH') return DST.updateDestination(me, email, id, jsonBody(event));
     if (id && !action && method === 'DELETE') { await DST.deleteDestination(me, id); return { ok: true }; }
+    throw new HttpError(405, 'Method not allowed');
+  }
+  // the GitHub Agent's GitHub App (created once by an admin; `pid` is only where the callback returns to)
+  if (resource === 'github' && method === 'GET') {
+    if (!pid) return GH.appStatus(email);
+    if (pid === 'manifest') {
+      if (!q.pid) throw new HttpError(400, 'pid is required');
+      await P.getProject(email, q.pid);
+      return GH.manifestForm(email, q.pid, event.requestContext.domainName, T.dashboardOrigin(event.headers?.origin), q.org || undefined);
+    }
+    throw new HttpError(404, 'Not found');
+  }
+  // install-wide switches for admins (lib/install.ts): MCP and the install's Slack app
+  if (resource === 'install') {
+    const domain = event.requestContext.domainName, dashboard = T.dashboardOrigin(event.headers?.origin);
+    if (!pid && method === 'GET') return INS.getInstall(email, domain, dashboard);
+    if (pid === 'mcp' && method === 'PATCH') return INS.setMcp(email, jsonBody<{ enabled?: unknown }>(event).enabled, domain, dashboard);
+    if (pid === 'slack' && method === 'PUT') return INS.setSlackApp(email, jsonBody(event), domain, dashboard);
+    if (pid === 'slack' && method === 'DELETE') return INS.deleteSlackApp(email, domain, dashboard);
+    throw new HttpError(405, 'Method not allowed');
+  }
+  // the GitHub Agent's model for every project (admins only, checked in lib/fixConfig.ts)
+  if (resource === 'fix-agent' && !pid) {
+    if (method === 'GET') return FXC.getAdmin(email);
+    if (method === 'PATCH') return FXC.saveAdmin(email, jsonBody(event));
     throw new HttpError(405, 'Method not allowed');
   }
   if (resource === 'devices') {
@@ -242,6 +271,27 @@ async function route(method: string, parts: string[], q: Q, email: string, event
       }
       if (id === 'install' && method === 'GET') return { url: await S.installUrl(pid, email, domain, T.dashboardOrigin(event.headers?.origin), q.level === 'account' ? 'account' : 'project') };
     }
+    throw new HttpError(405, 'Method not allowed');
+  }
+
+  // GitHub Agent: owners connect the repository and decide when it runs; any member can start a run once it's on
+  if (sub === 'fix-settings') {
+    const [what] = rest;
+    if (!what && method === 'GET') { await P.getProject(email, pid); return FX.getSettings(pid); }
+    await P.requireOwner(email, pid);
+    if (!what && method === 'PATCH') return FX.saveSettings(pid, email, jsonBody(event), T.dashboardOrigin(event.headers?.origin));
+    if (what === 'install-url' && method === 'GET') return { url: await GH.installUrl(pid, email, T.dashboardOrigin(event.headers?.origin)) };
+    if (what === 'repos' && method === 'GET') return FX.repos(pid);
+    throw new HttpError(405, 'Method not allowed');
+  }
+  if (sub === 'fixes') {
+    await P.getProject(email, pid); // authorization: caller must be a member
+    const [id, action] = rest;
+    if (!id && method === 'GET') return FX.listRuns(pid, q);
+    if (id === 'for' && !action && method === 'GET') return FX.targetInfo(pid, q);
+    if (!id && method === 'POST') return FX.startRun(pid, email, jsonBody(event));
+    if (id && !action && method === 'GET') return FX.getRun(pid, id);
+    if (id && action === 'cancel' && method === 'POST') return FX.cancelRun(pid, id);
     throw new HttpError(405, 'Method not allowed');
   }
 

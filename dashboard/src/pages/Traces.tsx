@@ -1,4 +1,5 @@
 import { InfoTip } from '../ui/InfoTip';
+import { SpanFix } from './FixAgent';
 import { useMemo, useState } from 'react';
 import { ArrowLeft, ChevronDown, ChevronRight, ListTree, MonitorPlay, MonitorSmartphone, ScrollText, Search, Waypoints } from 'lucide-react';
 import { useServices, useTrace, useTraces } from '../api/hooks';
@@ -155,6 +156,7 @@ function Waterfall({ spans }: { spans: Span[] }) {
           <div className="mt-3"><Dl rows={[['Service', <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-[3px]" style={{ background: serviceColor(svc, sel.service) }} />{sel.service}</span>], ['Duration', fmtMs(sel.durationMs)], ['Offset', '+' + fmtMs(Date.parse(sel.start) - t0)], ['Kind', KIND[sel.kind] ?? sel.kind], ['Span ID', <Mono>{sel.spanId}</Mono>], ['Parent', sel.parentSpanId && <Mono>{sel.parentSpanId}</Mono>], ['Status', sel.statusMessage]]} /></div>
           <Button className="mt-4 w-full" onClick={() => navigate(pageHref(project.id, 'logs', route.params, { traceId: sel.traceId }))}><ScrollText size={14} />View logs for this trace</Button>
           <RowActions key={sel.spanId} scope="spans" conditions={spanConditions(sel)} labels filterPage="traces" className="mt-2 justify-center" />
+          <div className="mt-4"><SpanFix key={sel.spanId} span={sel} /></div>
           {Object.keys(sel.attributes).length > 0 && <div className="mt-5"><h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Attributes</h4><JsonView value={sel.attributes} /></div>}
           {Object.keys(sel.resource).length > 0 && <div className="mt-5"><h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Resource</h4><JsonView value={sel.resource} /></div>}
           {sel.events.length > 0 && <div className="mt-5"><h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Events</h4><div className="space-y-2">{sel.events.map((e, i) => (

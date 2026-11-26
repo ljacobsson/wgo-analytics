@@ -63,6 +63,9 @@ export const FUNCTIONS: Record<string, { category: CostCategory; memoryMb: numbe
   UptimeFunction: { category: 'other', memoryMb: 256 },
   ScreenshotFunction: { category: 'other', memoryMb: 2048 },
   MigrateFunction: { category: 'other', memoryMb: 1024 },
+  // named `${stack}-FixAgentFunction-run` (see template.yaml), so it matches like the generated names
+  FixAgentFunction: { category: 'other', memoryMb: 2048 },
+  GithubFunction: { category: 'other', memoryMb: 256 },
 };
 
 /** The queues the intake writes to and the events writer reads, and what they carry (dead-letter queues aren't counted). */

@@ -38,11 +38,12 @@ const REGIONS = {
   'ap-southeast-2': 'Asia Pacific (Sydney)',
 };
 
-// Keys this wizard owns in deploy.env. Anything else in the file is carried over untouched.
+// Keys this wizard owns in deploy.env. Anything else in the file is carried over untouched. MCP_ENABLED, FIX_AGENT* and
+// SLACK_CLIENT_* are listed only so they're dropped: admins set those in the dashboard now.
 const MANAGED = [
   'STACK_NAME', 'AWS_REGION', 'AWS_PROFILE', 'CUSTOM_DOMAIN', 'HOSTED_ZONE_ID', 'CERTIFICATE_ARN',
-  'ALLOWED_EMAIL_DOMAINS', 'ALLOW_SELF_SIGNUP', 'ADMIN_EMAILS', 'MCP_ENABLED', 'DELETION_PROTECTION', 'MAX_RETENTION_DAYS',
-  'WRITE_BUFFER_SECONDS', 'SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET',
+  'ALLOWED_EMAIL_DOMAINS', 'ALLOW_SELF_SIGNUP', 'ADMIN_EMAILS', 'DELETION_PROTECTION', 'MAX_RETENTION_DAYS',
+  'WRITE_BUFFER_SECONDS', 'MCP_ENABLED', 'FIX_AGENT', 'FIX_AGENT_MODEL_ID', 'SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET',
 ];
 
 if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -148,12 +149,9 @@ const cfg = {
   allowlist: parseAllowlist(prev.ALLOWED_EMAIL_DOMAINS),
   selfSignup: flag(prev.ALLOW_SELF_SIGNUP, true),
   admins: parseAllowlist(prev.ADMIN_EMAILS),
-  mcp: flag(prev.MCP_ENABLED, true),
   deletionProtection: flag(prev.DELETION_PROTECTION, false),
   maxRetentionDays: prev.MAX_RETENTION_DAYS || '',
   writeBufferSeconds: prev.WRITE_BUFFER_SECONDS || '',
-  slackClientId: prev.SLACK_CLIENT_ID || '',
-  slackClientSecret: prev.SLACK_CLIENT_SECRET || '',
   extras: Object.fromEntries(Object.entries(prev).filter(([k]) => !MANAGED.includes(k))),
 };
 const tools = { sam: '', bash: true };
@@ -311,11 +309,9 @@ function adoptStackParameters(params) {
   if (p.AllowedEmailDomains !== undefined) cfg.allowlist = parseAllowlist(p.AllowedEmailDomains);
   if (p.AllowSelfSignup) cfg.selfSignup = p.AllowSelfSignup === 'true';
   if (p.AdminEmails !== undefined) cfg.admins = parseAllowlist(p.AdminEmails);
-  if (p.EnableMcp) cfg.mcp = p.EnableMcp === 'true';
   if (p.DeletionProtection) cfg.deletionProtection = p.DeletionProtection === 'true';
   if (p.MaxRetentionDays && p.MaxRetentionDays !== DEFAULT_RETENTION) cfg.maxRetentionDays = p.MaxRetentionDays;
   if (p.WriteBufferSeconds && p.WriteBufferSeconds !== DEFAULT_WRITE_BUFFER) cfg.writeBufferSeconds = p.WriteBufferSeconds;
-  if (p.SlackClientId) cfg.slackClientId = p.SlackClientId; // the secret is NoEcho: asked for in stepAdvanced
   log.info('Loaded the current settings of that stack as defaults.');
 }
 
@@ -511,11 +507,6 @@ async function stepAccess(n, total) {
 
 async function stepFeatures(n, total) {
   section(n, total, 'Features');
-  cfg.mcp = await confirm({
-    message: 'Let AI assistants query your analytics over MCP?',
-    help: `Serves an MCP server at ${cfg.domain ? `https://${cfg.domain}` : 'your WGO address'}/mcp for Claude, Cursor and other MCP clients. They register themselves; people still sign in with their WGO account.`,
-    initial: cfg.mcp,
-  });
   cfg.deletionProtection = await confirm({
     message: 'Turn on deletion protection for the database?',
     help: "Recommended once you rely on the data: the Aurora DSQL cluster can't be deleted until you turn it off again. Leave it off while you're trying WGO out.",
@@ -523,23 +514,11 @@ async function stepFeatures(n, total) {
   });
   const advanced = await confirm({
     message: 'Change any advanced settings?',
-    help: 'Data retention limit, write buffering and an instance-wide Slack app. The defaults suit most installs.',
-    initial: Boolean(cfg.maxRetentionDays || cfg.writeBufferSeconds || (cfg.slackClientId && !cfg.slackClientSecret)),
+    help: 'Data retention limit and write buffering. The defaults suit most installs.',
+    initial: Boolean(cfg.maxRetentionDays || cfg.writeBufferSeconds),
   });
   if (advanced) await stepAdvanced();
-  else if (cfg.slackClientId && !cfg.slackClientSecret) await askSlackSecret();
-}
-
-// Stack parameters hide the secret, and deploying a client ID with an empty secret would erase it.
-async function askSlackSecret() {
-  cfg.slackClientSecret = await text({
-    message: 'Slack client secret',
-    help: cfg.slackClientId ? `The secret of Slack app ${cfg.slackClientId}, from api.slack.com/apps → Basic Information → App Credentials.` : undefined,
-    initial: cfg.slackClientSecret,
-    mask: true,
-    validate: (v) => (v ? '' : 'Required with a client ID'),
-    display: (v) => '•'.repeat(Math.min(v.length, 12)),
-  });
+  log.info('MCP for AI assistants, the GitHub Agent and one Slack app for every project are turned on by admins in the dashboard, after deploying.');
 }
 
 async function stepAdvanced() {
@@ -560,25 +539,6 @@ async function stepAdvanced() {
   });
   cfg.writeBufferSeconds = secs === DEFAULT_WRITE_BUFFER ? '' : secs;
 
-  const slack = await select({
-    message: 'Slack notifications for triggers',
-    options: [
-      { value: false, label: 'Each project connects Slack itself', hint: 'from its Triggers page, about a minute; no redeploy' },
-      { value: true, label: 'One Slack app for every project', hint: 'needs the client id and secret of a Slack app' },
-    ],
-    initial: Boolean(cfg.slackClientId),
-  });
-  if (!slack) {
-    cfg.slackClientId = cfg.slackClientSecret = '';
-    return;
-  }
-  cfg.slackClientId = await text({
-    message: 'Slack client ID',
-    help: 'From your Slack app at api.slack.com/apps, under Basic Information → App Credentials.',
-    initial: cfg.slackClientId,
-    validate: (v) => (/^\d+\.\d+$/.test(v) ? '' : 'A Slack client ID looks like 1234567890.1234567890'),
-  });
-  await askSlackSecret();
 }
 
 // ── review, save, deploy ──────────────────────────────────────────────────────────────────────────────
@@ -592,7 +552,6 @@ function summary() {
   const advanced = [
     `retention up to ${cfg.maxRetentionDays || DEFAULT_RETENTION} days`,
     `${cfg.writeBufferSeconds || DEFAULT_WRITE_BUFFER} s write buffer`,
-    cfg.slackClientId ? 'one Slack app' : 'Slack per project',
   ];
   return [
     row('AWS', `account ${cfg.account}${cfg.profile ? ` · profile ${cfg.profile}` : ''} · ${cfg.region}`),
@@ -600,7 +559,6 @@ function summary() {
     row('Address', address),
     row('Sign-in', `${cfg.allowlist.length ? `only ${cfg.allowlist.map(describePattern).join(', ')}` : 'anyone with a verified email'} · ${cfg.selfSignup ? 'self sign-up' : 'accounts created by you'}`),
     row('Admins', cfg.admins.length ? cfg.admins.join(', ') : c.dim('the first project’s owners')),
-    row('MCP', yes(cfg.mcp, 'on', 'off')),
     row('Database', cfg.deletionProtection ? c.green('deletion protection on') : 'deletion protection off'),
     row('Advanced', c.dim(advanced.join(' · '))),
     ...(Object.keys(cfg.extras).length ? [row('Kept', c.dim(Object.keys(cfg.extras).join(', ')))] : []),
@@ -620,12 +578,9 @@ function toEnvFile() {
   group('Web address', [['CUSTOM_DOMAIN', cfg.domain], ['HOSTED_ZONE_ID', cfg.hostedZoneId], ['CERTIFICATE_ARN', cfg.certificateArn]]);
   group('Who can sign in', [['ALLOWED_EMAIL_DOMAINS', cfg.allowlist.join(',')], ['ALLOW_SELF_SIGNUP', String(cfg.selfSignup)], ['ADMIN_EMAILS', cfg.admins.join(',')]]);
   group('Features', [
-    ['MCP_ENABLED', String(cfg.mcp)],
     ['DELETION_PROTECTION', String(cfg.deletionProtection)],
     ['MAX_RETENTION_DAYS', cfg.maxRetentionDays],
     ['WRITE_BUFFER_SECONDS', cfg.writeBufferSeconds],
-    ['SLACK_CLIENT_ID', cfg.slackClientId],
-    ['SLACK_CLIENT_SECRET', cfg.slackClientSecret],
   ]);
   group('Kept from the previous file', Object.entries(cfg.extras));
   return `${out.join('\n')}\n`;

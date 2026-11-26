@@ -32,6 +32,7 @@ import { WidgetPage } from './pages/Widget';
 import { KiosksPage } from './pages/Kiosks';
 import { UptimePage } from './pages/Uptime';
 import { CostsPage } from './pages/Costs';
+import { GithubAgentPage } from './pages/FixAgentAdmin';
 import { McpPage } from './pages/Mcp';
 import { OtelDocs } from './docs/OtelDocs';
 import { Docs } from './docs/Docs';
@@ -84,6 +85,7 @@ function Authed({ email }: { email: string }) {
       case 'kiosks': return <KiosksPage />;
       case 'uptime': return <UptimePage />;
       case 'costs': return <CostsPage />;
+      case 'fix-agent': return <GithubAgentPage />;
       case 'mcp': return <McpPage />;
       default: return <Overview />;
     }

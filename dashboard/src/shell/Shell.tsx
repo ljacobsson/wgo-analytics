@@ -118,7 +118,7 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, [project.id, paramsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const title = page === 'settings' ? 'Settings' : page === 'widget' ? 'Mobile widget' : page === 'kiosks' ? 'Kiosks' : page === 'costs' ? 'Costs' : page === 'mcp' ? 'AI assistants (MCP)' : PAGES.find((p) => p.id === page)?.label ?? '';
+  const title = page === 'settings' ? 'Settings' : page === 'widget' ? 'Mobile widget' : page === 'kiosks' ? 'Kiosks' : page === 'costs' ? 'Costs' : page === 'fix-agent' ? 'GitHub Agent' : page === 'mcp' ? 'AI assistants (MCP)' : PAGES.find((p) => p.id === page)?.label ?? '';
   const groups = ['Product', 'Observability'] as const;
 
   const navItem = (id: string, label: string) => (
@@ -158,6 +158,7 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
             {navItem('widget', 'Mobile widget')}
             {navItem('mcp', 'AI assistants (MCP)')}
             {me.data?.admin && navItem('costs', 'Costs')}
+            {(me.data?.features?.fixAgent || me.data?.admin) && navItem('fix-agent', 'GitHub Agent')}
             {navItem('settings', 'Settings')}
             <div className={cn('flex items-center gap-2 rounded-lg px-2 py-1.5', collapsed && 'justify-center px-0')}>
               {collapsed ? (

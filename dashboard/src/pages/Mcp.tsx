@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useFeatures } from '../api/hooks';
+import { McpSwitchCard } from './InstallAdmin';
 import { KeyRound, Lock, PlugZap, Sparkles } from 'lucide-react';
 import { getConfig } from '../api/config';
 import { useProject } from '../lib/project';
@@ -110,18 +112,21 @@ export function McpPage() {
   const { project } = useProject();
   const config = getConfig();
   const url = config.mcpUrl;
+  const features = useFeatures();
   const local = !!config.devEmail;
   const [client, setClient] = useState<Client>(() => (localStorage.getItem('wgo.mcpClient') as Client) || 'claude-code');
   const pick = (c: Client) => { setClient(c); localStorage.setItem('wgo.mcpClient', c); };
 
-  if (!url) {
+  if (!url || !features.mcp) {
     return (
-      <Card>
-        <EmptyState icon={<Sparkles size={22} />} title="MCP is turned off on this WGO">
-          Whoever deployed WGO can turn it on by deploying again with <Mono>MCP_ENABLED=true</Mono> (the default). AI assistants then connect at
-          <Mono> /mcp</Mono> on the dashboard’s address.
-        </EmptyState>
-      </Card>
+      <div className="space-y-4">
+        <McpSwitchCard />
+        <Card>
+          <EmptyState icon={<Sparkles size={22} />} title="MCP is turned off on this WGO">
+            {url ? <>An admin turns it on on this page. AI assistants then connect at <Mono>/mcp</Mono> on the dashboard’s address.</> : <>This WGO was deployed without an MCP address. Deploy it again to get one.</>}
+          </EmptyState>
+        </Card>
+      </div>
     );
   }
 
@@ -134,6 +139,7 @@ export function McpPage() {
 
   return (
     <div className="space-y-4">
+      <McpSwitchCard />
       <p className="max-w-[860px] text-[13px] leading-relaxed text-muted">
         Connect Claude, VS Code, Cursor or any other MCP client to WGO and ask about traffic, conversions, errors, traces and metrics in plain
         language. The assistant looks up the numbers itself, so there are no screenshots to paste.

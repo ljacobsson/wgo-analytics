@@ -14,12 +14,11 @@
 #   ADMIN_EMAILS           comma-separated: who sees the Costs page and manages budgets (default: the first project's owners)
 #   UPDATE_CHECK           true (default) | false: the dashboard tells you when GitHub has a newer version
 #   DELETION_PROTECTION    false (default) | true  (DSQL cluster)
-#   MCP_ENABLED            true (default) | false: the MCP server at /mcp and Cognito MCP auth (open client registration)
 #   MAX_RETENTION_DAYS     400 (default): the longest raw-data retention project owners can pick (default retention: 90 days)
 #   WRITE_BUFFER_SECONDS   30 (default): how long incoming data is collected before it is written as one Parquet file
 #   CLUSTER_METRICS_PROJECT_ID  optional project id that receives hourly Aurora DSQL storage/DPU metrics and a wgo.cluster event
-#   SLACK_CLIENT_ID        optional: one Slack app for "Add to Slack" in every project (otherwise each project
-#   SLACK_CLIENT_SECRET    sets it up from its Triggers page in about a minute)
+#
+# MCP, the GitHub Agent and the install's Slack app are turned on by admins in the dashboard, not here.
 #   PARAMS                 extra raw `sam deploy --parameter-overrides`
 #   BUILD_ANDROID          true = rebuild the Android widget APK (default: deploy the one committed in the repo)
 #
@@ -101,11 +100,13 @@ if [ "$FRONTEND_ONLY" = false ]; then
   [ -n "${ALLOW_SELF_SIGNUP:-}" ] && overrides+=("AllowSelfSignup=$ALLOW_SELF_SIGNUP")
   [ -n "${ADMIN_EMAILS:-}" ] && overrides+=("AdminEmails=${ADMIN_EMAILS// /}")
   [ -n "${DELETION_PROTECTION:-}" ] && overrides+=("DeletionProtection=$DELETION_PROTECTION")
-  [ -n "${MCP_ENABLED:-}" ] && overrides+=("EnableMcp=$MCP_ENABLED")
   [ -n "${MAX_RETENTION_DAYS:-}" ] && overrides+=("MaxRetentionDays=$MAX_RETENTION_DAYS")
   [ -n "${WRITE_BUFFER_SECONDS:-}" ] && overrides+=("WriteBufferSeconds=$WRITE_BUFFER_SECONDS")
   [ -n "${CLUSTER_METRICS_PROJECT_ID:-}" ] && overrides+=("ClusterMetricsProjectId=$CLUSTER_METRICS_PROJECT_ID")
-  [ -n "${SLACK_CLIENT_ID:-}" ] && overrides+=("SlackClientId=$SLACK_CLIENT_ID" "SlackClientSecret=${SLACK_CLIENT_SECRET:-}")
+  # these moved to the dashboard; say so instead of ignoring them quietly
+  for v in MCP_ENABLED FIX_AGENT FIX_AGENT_MODEL_ID SLACK_CLIENT_ID SLACK_CLIENT_SECRET; do
+    [ -n "${!v:-}" ] && echo "  note: $v in deploy.env is no longer used. Admins set it in the dashboard (AI assistants, GitHub Agent and Triggers pages)." >&2
+  done
   # shellcheck disable=SC2206
   [ -n "${PARAMS:-}" ] && overrides+=($PARAMS)
 
@@ -141,8 +142,6 @@ DISTRIBUTION="$(out DistributionId)"
 USER_POOL_ID="$(out UserPoolId)"
 USER_POOL_CLIENT_ID="$(out UserPoolClientId)"
 MCP_URL="$(out McpUrl)"
-MCP_STATE="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$AWS_REGION" \
-  --query "Stacks[0].Parameters[?ParameterKey=='EnableMcp'].ParameterValue" --output text 2>/dev/null || true)"
 # the allowlist the stack actually runs with (also right for --frontend-only)
 DEPLOYED_ALLOWLIST="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$AWS_REGION" \
   --query "Stacks[0].Parameters[?ParameterKey=='AllowedEmailDomains'].ParameterValue" --output text 2>/dev/null || true)"
@@ -174,9 +173,9 @@ step "Dashboard: build"
 cd "$ROOT/dashboard"
 npm ci --no-audit --no-fund
 npm run build
-# the dashboard's MCP page shows setup instructions only when the server is on
+# where MCP clients connect; whether MCP is on is an admin setting in the dashboard
 MCP_CONFIG_URL=""
-if [ -n "$MCP_URL" ] && [ "$MCP_URL" != "None" ] && [ "$MCP_STATE" != "false" ]; then MCP_CONFIG_URL="$MCP_URL"; fi
+if [ -n "$MCP_URL" ] && [ "$MCP_URL" != "None" ]; then MCP_CONFIG_URL="$MCP_URL"; fi
 cat > dist/config.json <<JSON
 {
   "apiUrl": "$API_URL",
@@ -235,16 +234,13 @@ $(printf '\033[1;32m✔ WGO deployed\033[0m')
   Ingest     $INGEST_URL      (SDK data-endpoint)
   OTLP       $INGEST_URL/v1/{traces,logs,metrics}   (header x-wgo-key)
 EOF
-if [ -n "$MCP_URL" ] && [ "$MCP_URL" != "None" ] && [ "$MCP_STATE" != "false" ]; then
-  echo "  MCP        $MCP_URL      (claude mcp add --transport http wgo $MCP_URL)"
+if [ -n "$MCP_CONFIG_URL" ]; then
+  echo "  MCP        $MCP_URL      (an admin turns it on on the AI assistants page)"
 fi
 if [ -n "$CUSTOM_DOMAIN" ] && [ -z "$HOSTED_ZONE_ID" ] && [ "$FRONTEND_ONLY" = false ]; then
   echo "  DNS        point a CNAME for $CUSTOM_DOMAIN at $CLOUDFRONT_DOMAIN"
 fi
 [ -n "$DEPLOYED_ALLOWLIST" ] && echo "  Sign-ups   only: $DEPLOYED_ALLOWLIST"
-if [ -n "${SLACK_CLIENT_ID:-}" ]; then
-  echo "  Slack      \"Add to Slack\" is on for every project (instance-wide Slack app)"
-else
-  echo "  Slack      set up \"Add to Slack\" from a project's Triggers page (one-time, about a minute)"
-fi
+echo "  Admins     turn on MCP (AI assistants page), the GitHub Agent (GitHub Agent page) and \"Add to Slack\""
+echo "             for every project (Triggers page) in the dashboard."
 exit 0

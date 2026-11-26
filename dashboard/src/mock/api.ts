@@ -1,4 +1,5 @@
 import type { Destination, DestinationInput, DestinationLevel, RecordingSettings, TriggerDestination } from '../api/contract';
+import * as FIX from './fixes';
 import type { ClickAlias, ClickAliasInput, Device, Goal, GoalInput, Kiosk, KioskConfig, KioskState, Member, Project, SavedView, SavedViewInput, SlackIntegration, Trigger, TriggerInput, UptimeCheckInput } from '../api/contract';
 import * as D from './data';
 import { funnel } from './funnel';
@@ -106,8 +107,29 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
   const limit = Number(qp('limit') ?? 100);
 
   // ?mock_nonadmin: sign in as someone who isn't an admin (no Costs page)
-  if (parts[0] === 'me') return { email, projects: db.projects, admin: !new URLSearchParams(location.search).has('mock_nonadmin') };
+  if (parts[0] === 'me') return { email, projects: db.projects, admin: !new URLSearchParams(location.search).has('mock_nonadmin'), features: FIX.features() };
+  if (parts[0] === 'install') {
+    try {
+      return FIX.installApi(method, parts[1], body, !new URLSearchParams(location.search).has('mock_nonadmin'));
+    } catch (e) {
+      if (e instanceof FIX.FixMockError) throw new MockHttpError(e.status, e.message);
+      throw e;
+    }
+  }
   if (parts[0] === 'destinations') return destinationsApi(db, null, email, method, parts[1], parts[2], body);
+  if (parts[0] === 'fix-agent') {
+    try {
+      return FIX.fixAdminApi(method, body, email, db.projects, !new URLSearchParams(location.search).has('mock_nonadmin'));
+    } catch (e) {
+      if (e instanceof FIX.FixMockError) throw new MockHttpError(e.status, e.message);
+      throw e;
+    }
+  }
+  if (parts[0] === 'github') {
+    const admin = !new URLSearchParams(location.search).has('mock_nonadmin');
+    if (parts[1] === 'manifest') return { action: 'https://github.com/settings/apps/new?state=mock', manifest: JSON.stringify({ name: 'WGO mock' }) };
+    return FIX.githubApp(email, admin);
+  }
   if (parts[0] === 'devices') {
     const list = (db.devices ??= []);
     if (method === 'POST') {
@@ -439,7 +461,14 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       return list;
     }
     case 'pages': return D.pages(from, to, limit);
-    case 'errors': { const rules = db.suppressions?.[pid] ?? []; return D.errors(from, to, limit).map((g) => ({ ...g, suppressedBy: rules.find((r) => covers(r, g))?.id ?? null })); }
+    case 'errors': { const rules = db.suppressions?.[pid] ?? []; return FIX.attachFixes(pid, D.errors(from, to, limit).map((g) => ({ ...g, suppressedBy: rules.find((r) => covers(r, g))?.id ?? null }))); }
+    case 'fix-settings': case 'fixes':
+      try {
+        return FIX.fixApi(pid, project.role === 'owner', email, method, sub, parts, body, qp);
+      } catch (e) {
+        if (e instanceof FIX.FixMockError) throw new MockHttpError(e.status, e.message);
+        throw e;
+      }
     case 'http-errors': return D.httpErrors(from, to, limit);
     case 'breakdown': return D.breakdown(from, to, qp('dim') ?? 'browser');
     case 'vitals': return D.vitals(from);

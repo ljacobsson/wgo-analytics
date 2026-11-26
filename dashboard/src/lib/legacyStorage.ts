@@ -3,7 +3,7 @@
  * preferences) to `wgo.*`, so nobody is signed out or loses their watches. Imported first in main.tsx,
  * before modules that read storage at load time. Safe to delete once old installs have upgraded.
  */
-const OLD = 'analytico.';
+const OLD = '.setti.';
 
 try {
   for (const key of Object.keys(localStorage)) {

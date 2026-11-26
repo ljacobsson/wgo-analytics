@@ -5,6 +5,10 @@ import { mcpFetch, readScope, type McpAuthConfig } from '../src/lib/mcp/http';
 import { scriptSnippet, windowParams } from '../src/lib/mcp/tools';
 import { dcrConfig, updateRequest } from '../src/handlers/mcpauth';
 
+// whether admins turned MCP on (install_settings, a database read in the real handler)
+const mcp = { on: true };
+vi.mock('../src/lib/installSettings', async (orig) => ({ ...(await orig<typeof import('../src/lib/installSettings')>()), mcpOn: async () => mcp.on }));
+
 const ORIGIN = 'https://wgo.example.com';
 const RESOURCE = `${ORIGIN}/mcp`;
 const SCOPE = readScope(RESOURCE);
@@ -178,7 +182,7 @@ describe('MCP bearer auth', () => {
     const writes = msg.result.tools.filter((t: { annotations?: { readOnlyHint?: boolean } }) => !t.annotations?.readOnlyHint);
     expect(writes.map((t: { name: string }) => t.name).sort()).toEqual([
       'add_dashboard_tile', 'create_dashboard', 'create_destination', 'create_goal', 'create_project', 'create_trigger', 'delete_dashboard', 'delete_destination',
-      'delete_goal', 'delete_trigger', 'set_click_alias', 'test_trigger', 'update_dashboard', 'update_goal', 'update_trigger', 'upload_sourcemaps',
+      'delete_goal', 'delete_trigger', 'set_click_alias', 'start_fix_run', 'test_trigger', 'update_dashboard', 'update_goal', 'update_trigger', 'upload_sourcemaps',
     ]);
     const hints = (name: string) => writes.find((t: { name: string }) => t.name === name).annotations;
     expect(hints('set_click_alias')).toMatchObject({ destructiveHint: false, idempotentHint: true });
@@ -253,6 +257,17 @@ describe('MCP Lambda glue', () => {
     const res = await lambda.handler(event({ 'content-type': 'application/json', 'x-forwarded-host': 'wgo.example.com', 'x-wgo-edge': 'edge-secret' }));
     expect(res.statusCode).toBe(401);
     expect(res.headers!['www-authenticate']).toContain('https://wgo.example.com/.well-known/oauth-protected-resource/mcp');
+  });
+
+  it('answers 404 while admins have MCP turned off', async () => {
+    mcp.on = false;
+    try {
+      const res = await lambda.handler(event({ 'content-type': 'application/json', 'x-forwarded-host': 'wgo.example.com', 'x-wgo-edge': 'edge-secret' }));
+      expect(res.statusCode).toBe(404);
+      expect(res.body).toContain('turned off');
+    } finally {
+      mcp.on = true;
+    }
   });
 });
 

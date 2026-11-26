@@ -3,16 +3,21 @@ import {
   CognitoIdentityProviderClient, DescribeUserPoolCommand, ResourceNotFoundException, UpdateUserPoolCommand,
   type DcrConfigurationType, type UpdateUserPoolRequest, type UserPoolType,
 } from '@aws-sdk/client-cognito-identity-provider';
+import { getSetting, setSetting, type McpSetting } from '../lib/installSettings';
 
 /**
- * CloudFormation custom resource: turns Cognito's MCP auth (dynamic client registration) on or off for the
- * user pool. CloudFormation has no property for it yet.
+ * Turns Cognito's MCP auth (dynamic client registration) on or off for the user pool. CloudFormation has no property
+ * for it yet. This is the only code with permission to change the pool. Invoked two ways:
+ * - as a CloudFormation custom resource on every deploy: applies the admins' choice saved in install_settings ('mcp').
+ *   Installs from before the dashboard switch keep what they had (the old EnableMcp parameter, default on); new
+ *   installs start with MCP off. It also saves the pool id and allowed scopes for the direct invocation;
+ * - directly by the API ({ action: 'set', enabled }) when an admin flips the switch on the MCP page.
  *
  * UpdateUserPool resets every setting it isn't given to its default, so the current configuration is read
  * first and sent back unchanged with only DcrConfiguration replaced. CloudFormation's own UserPool updates
  * may in turn drop DcrConfiguration, so the template re-runs this whenever the pool's configuration changes.
  *
- * Properties: UserPoolId, Enabled ('true' | 'false'), AllowedScopes (string[]).
+ * Properties: UserPoolId, AllowedScopes (string[]).
  */
 
 const cognito = new CognitoIdentityProviderClient({});
@@ -52,8 +57,32 @@ async function apply(userPoolId: string, dcr: DcrConfigurationType): Promise<voi
   await cognito.send(new UpdateUserPoolCommand(updateRequest(UserPool, dcr)));
 }
 
-export async function handler(event: CloudFormationCustomResourceEvent, context: Context): Promise<void> {
-  const props = event.ResourceProperties as unknown as { UserPoolId: string; Enabled?: string; AllowedScopes?: string[] };
+/** The switch on the MCP page: apply it to the pool, then remember it. */
+async function setFromApi(enabled: boolean): Promise<{ enabled: boolean }> {
+  const s = await getSetting<McpSetting>('mcp');
+  if (!s?.userPoolId) throw new Error('MCP auth was never deployed: deploy the stack again');
+  await apply(s.userPoolId, dcrConfig(enabled, s.scopes ?? []));
+  await setSetting('mcp', { ...s, enabled }, 'dashboard');
+  return { enabled };
+}
+
+/** On a deploy: the saved choice, or (first deploy with the switch) what the install had. */
+async function deployedState(event: CloudFormationCustomResourceEvent, props: { UserPoolId: string; AllowedScopes?: string[] }): Promise<boolean> {
+  const legacy = event.RequestType === 'Update' ? (event.OldResourceProperties as { Enabled?: string }).Enabled !== 'false' : false;
+  try {
+    const saved = await getSetting<McpSetting>('mcp');
+    const enabled = saved ? saved.enabled === true : legacy;
+    await setSetting('mcp', { enabled, userPoolId: props.UserPoolId, scopes: props.AllowedScopes ?? [] }, 'deploy');
+    return enabled;
+  } catch (err) {
+    console.warn('could not read or save the MCP setting, keeping the previous state', err);
+    return legacy;
+  }
+}
+
+export async function handler(event: CloudFormationCustomResourceEvent | { action: 'set'; enabled: boolean }, context: Context): Promise<unknown> {
+  if ('action' in event) return setFromApi(event.enabled === true);
+  const props = event.ResourceProperties as unknown as { UserPoolId: string; AllowedScopes?: string[] };
   let status: 'SUCCESS' | 'FAILED' = 'SUCCESS';
   let reason = '';
   try {
@@ -64,7 +93,7 @@ export async function handler(event: CloudFormationCustomResourceEvent, context:
         if (!(err instanceof ResourceNotFoundException)) console.warn('could not disable DCR:', err);
       });
     } else {
-      const enabled = props.Enabled !== 'false';
+      const enabled = await deployedState(event, props);
       console.log(`DCR ${enabled ? 'enabled' : 'disabled'} on ${props.UserPoolId}`, props.AllowedScopes);
       await apply(props.UserPoolId, dcrConfig(enabled, props.AllowedScopes ?? []));
     }

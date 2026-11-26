@@ -467,4 +467,111 @@ export const SCHEMA_STATEMENTS: string[] = [
    )`,
   // a trigger's own Slack message (SlackTemplate: Block Kit blocks with {{variables}}); NULL = the default message
   `ALTER TABLE triggers ADD COLUMN IF NOT EXISTS slack_template jsonb`,
+  // GitHub Agent (lib/github.ts, lib/fixes.ts, lib/fixAgent/): the install's GitHub App, created once from a manifest. One row
+  // (id 'app'); the 'state' row only holds the HMAC key that signs GitHub callback state before the app exists.
+  `CREATE TABLE IF NOT EXISTS github_app (
+     id text PRIMARY KEY,
+     app_id bigint,
+     slug text,
+     client_id text,
+     client_secret text,
+     private_key text,
+     webhook_secret text,
+     html_url text,
+     owner_login text,
+     state_secret text,
+     created_by text,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  // a project's GitHub Agent settings: the repository it fixes and when runs start by themselves (auto, FixAutoSettings JSON)
+  `CREATE TABLE IF NOT EXISTS fix_settings (
+     project_id uuid PRIMARY KEY,
+     enabled boolean NOT NULL DEFAULT false,
+     installation_id bigint,
+     account text,
+     repo text,
+     base_branch text,
+     root_path text,
+     instructions text,
+     denied_paths jsonb,
+     auto jsonb,
+     dashboard_url text,
+     updated_by text,
+     updated_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  // one GitHub Agent run per row; also the ledger that keeps automatic runs from repeating an error group
+  `CREATE TABLE IF NOT EXISTS fix_runs (
+     project_id uuid NOT NULL,
+     id uuid NOT NULL,
+     fingerprint text NOT NULL,
+     message text,
+     trigger text NOT NULL,
+     requested_by text,
+     repo text NOT NULL,
+     status text NOT NULL,
+     steps jsonb,
+     result jsonb,
+     branch text,
+     pr_number int,
+     pr_url text,
+     pr_state text,
+     pr_checked_at timestamptz,
+     model_id text NOT NULL,
+     input_tokens bigint NOT NULL DEFAULT 0,
+     output_tokens bigint NOT NULL DEFAULT 0,
+     cost_usd double precision,
+     error text,
+     created_at timestamptz NOT NULL DEFAULT now(),
+     started_at timestamptz,
+     finished_at timestamptz,
+     PRIMARY KEY (project_id, id)
+   )`,
+  `CREATE INDEX ASYNC IF NOT EXISTS fix_runs_fingerprint_idx ON fix_runs (project_id, fingerprint, created_at)`,
+  `CREATE INDEX ASYNC IF NOT EXISTS fix_runs_created_idx ON fix_runs (project_id, created_at)`,
+  // the GitHub Agent's model for the whole install (lib/fixConfig.ts), one row (id 'config'); no row = the deploy defaults.
+  // The Claude API key itself is in Secrets Manager; anthropic_key is only used without it (local development).
+  `CREATE TABLE IF NOT EXISTS fix_agent_config (
+     id text PRIMARY KEY,
+     provider text NOT NULL,
+     model_id text NOT NULL,
+     effort text NOT NULL,
+     key_hint text,
+     key_set_by text,
+     key_set_at timestamptz,
+     anthropic_key text,
+     updated_by text NOT NULL,
+     updated_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  // fix runs for backend errors too: kind 'browser' (NULL for older rows) | 'span' | 'log', and the FixTarget JSON
+  `ALTER TABLE fix_runs ADD COLUMN IF NOT EXISTS kind text`,
+  `ALTER TABLE fix_runs ADD COLUMN IF NOT EXISTS target jsonb`,
+  // a project's repositories for the GitHub Agent (lib/fixes.ts): settings per repository and which errors it fixes
+  // (browser: the web app's JavaScript errors; services: backend services by OpenTelemetry service.name). `position`
+  // orders them; the first also gets errors no repository claims.
+  `CREATE TABLE IF NOT EXISTS fix_repos (
+     project_id uuid NOT NULL,
+     repo text NOT NULL,
+     position int NOT NULL,
+     base_branch text,
+     root_path text,
+     instructions text,
+     denied_paths jsonb,
+     browser boolean NOT NULL DEFAULT false,
+     services jsonb,
+     PRIMARY KEY (project_id, repo)
+   )`,
+  // projects set up with one repository before there could be several: it becomes their first, fixing everything
+  `INSERT INTO fix_repos (project_id, repo, position, base_branch, root_path, instructions, denied_paths, browser, services)
+     SELECT project_id, repo, 0, base_branch, root_path, instructions, denied_paths, true, '[]'::jsonb FROM fix_settings WHERE repo IS NOT NULL
+     ON CONFLICT (project_id, repo) DO NOTHING`,
+  // …once: the old column isn't written any more, and re-running the copy mustn't bring back a removed repository
+  `UPDATE fix_settings SET repo = NULL WHERE repo IS NOT NULL`,
+  // settings admins change in the dashboard instead of at deploy time (lib/installSettings.ts): the GitHub Agent and MCP
+  // switches, the install's Slack app; secrets only when there's no Secrets Manager (local development)
+  `CREATE TABLE IF NOT EXISTS install_settings (
+     key text PRIMARY KEY,
+     value jsonb NOT NULL,
+     updated_by text NOT NULL,
+     updated_at timestamptz NOT NULL DEFAULT now()
+   )`,
 ];

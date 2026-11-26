@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { LogFix } from './FixAgent';
 import { ChevronRight, Radio, ScrollText, Search, X } from 'lucide-react';
 import { useLogs, useServices } from '../api/hooks';
 import type { LogRecord } from '../api/contract';
@@ -48,6 +49,7 @@ function LogRow({ l, open, toggle, traceHref }: { l: LogRecord; open: boolean; t
           <div><h4 className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-faint">Attributes</h4><AttributeTable scope="logs" rows={Object.entries(l.attributes).map(([k, v]) => [`attributes.${k}`, typeof v === 'object' ? JSON.stringify(v) : String(v)])} /></div>
           <div><h4 className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-faint">Resource</h4><AttributeTable scope="logs" rows={Object.entries(l.resource).map(([k, v]) => [`resource.${k}`, typeof v === 'object' ? JSON.stringify(v) : String(v)])} />
             {(l.traceId || l.spanId) && <div className="mt-2 font-mono text-[11px] text-faint">trace {l.traceId} · span {l.spanId}</div>}</div>
+          {l.severityNumber >= 17 && <div className="lg:col-span-2"><LogFix log={l} /></div>}
         </div>
       )}
     </div>

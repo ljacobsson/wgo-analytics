@@ -5,6 +5,7 @@ import { query } from './db';
 import { integrationDestination, saveAccountSlack, type Owner, type Target } from './destinations';
 import { HttpError } from './http';
 import { isUuid } from './projects';
+import { slackApp } from './installSettings';
 
 /**
  * A Slack workspace is connected with WGO's bot token (slack_workspaces), for the project or for the person who
@@ -14,19 +15,15 @@ import { isUuid } from './projects';
  * The token comes one of two ways:
  * - pasted (connectWithToken): someone creates the WGO Slack app from a pre-filled manifest (createAppUrl), clicks
  *   Install to Workspace and copies its Bot User OAuth Token. Nothing else about the app is needed;
- * - "Add to Slack" (OAuth), when the instance has an app of its own (SLACK_CLIENT_ID / SLACK_CLIENT_SECRET at deploy
- *   time) that anyone can install without creating one.
+ * - "Add to Slack" (OAuth), when the instance has an app of its own (an admin enters its client id and secret on the
+ *   Triggers page; lib/install.ts) that anyone can install without creating one.
  */
 interface Creds { clientId: string; clientSecret: string }
 
-/** The instance's Slack app: "Add to Slack" works for everyone. */
-function instanceApp(): Creds | null {
-  const clientId = process.env.SLACK_CLIENT_ID ?? '';
-  const clientSecret = process.env.SLACK_CLIENT_SECRET ?? '';
-  return clientId && clientSecret ? { clientId, clientSecret } : null;
-}
+/** The instance's Slack app, set by admins on the Triggers page: "Add to Slack" works for everyone. */
+const instanceApp = (): Promise<Creds | null> => slackApp();
 
-const redirectUrl = (apiDomain: string) => `https://${apiDomain}/slack/callback`;
+export const redirectUrl = (apiDomain: string) => `https://${apiDomain}/slack/callback`;
 
 /**
  * A pre-filled Slack app manifest: Slack's "create app" page asks only which workspace to create it in.
@@ -49,7 +46,7 @@ export function createAppUrl(apiDomain: string): string {
 
 export async function setupStatus(pid: string, apiDomain: string, email?: string): Promise<SlackSetup> {
   return {
-    addToSlack: !!instanceApp(),
+    addToSlack: !!(await instanceApp()),
     createAppUrl: createAppUrl(apiDomain),
     workspaces: await listWorkspaces(pid, email ?? null),
   };
@@ -124,15 +121,15 @@ export function verifyState(secret: string, state: string, now = Date.now()): St
 }
 
 /** Verify a callback's state, signed with the instance app's secret. */
-export function verifyCallbackState(state: string): State & { creds: Creds } {
-  const creds = instanceApp();
+export async function verifyCallbackState(state: string): Promise<State & { creds: Creds }> {
+  const creds = await instanceApp();
   if (!creds) throw new HttpError(400, 'Bad state');
   return { ...verifyState(creds.clientSecret, state), creds };
 }
 
 /** "Add to Slack" with the instance's app. Without one, workspaces are connected with a pasted bot token. */
 export async function installUrl(pid: string, email: string, apiDomain: string, returnTo: string | null, level: DestinationLevel = 'project'): Promise<string> {
-  const creds = instanceApp();
+  const creds = await instanceApp();
   if (!creds) throw new HttpError(409, 'This WGO has no Slack app of its own: connect a workspace with your app’s bot token instead');
   const u = new URL('https://slack.com/oauth/v2/authorize');
   u.searchParams.set('client_id', creds.clientId);
@@ -175,7 +172,7 @@ export class SlackScopesError extends HttpError {
  * connected it. Connecting a workspace again updates its token.
  */
 export async function completeInstall(code: string, state: string, apiDomain: string): Promise<{ pid: string; level: DestinationLevel }> {
-  const { pid, email, level, creds } = verifyCallbackState(state);
+  const { pid, email, level, creds } = await verifyCallbackState(state);
   const body = await oauthAccess(creds.clientId, creds.clientSecret, code, redirectUrl(apiDomain));
   if (!body.ok) throw new HttpError(502, `Slack: ${body.error ?? 'no token returned'}`);
   const granted = new Set((body.scope ?? '').split(','));

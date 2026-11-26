@@ -37,20 +37,6 @@ Parameters:
     Type: String
     Default: ''
     Description: Optional comma-separated emails that can see what the install costs and manage budgets. Empty = the owners of the first project.
-  SlackClientId:
-    Type: String
-    Default: ''
-    Description: Optional Slack app client id. Enables one-click "Add to Slack" for trigger notifications (scripts/deploy.sh prints a link that creates the app).
-  SlackClientSecret:
-    Type: String
-    Default: ''
-    NoEcho: true
-    Description: Client secret of that Slack app.
-  EnableMcp:
-    Type: String
-    AllowedValues: ['true', 'false']
-    Default: 'true'
-    Description: Serve the MCP server at /mcp. Turns on Cognito MCP auth (open dynamic client registration) so MCP clients can register themselves; users still sign in with their WGO account.
   MaxRetentionDays:
     Type: Number
     Default: 400
@@ -104,6 +90,9 @@ Globals:
         CONNECTIONS_TABLE: !Ref ConnectionsTable
         ALLOWED_EMAIL_DOMAINS: !Ref AllowedEmailDomains
         ADMIN_EMAILS: !Ref AdminEmails
+        # install-wide secrets set in the dashboard (lib/installSettings.ts, lib/fixConfig.ts) live under <stack>/
+        SECRET_PREFIX: !Ref AWS::StackName
+        FIX_SECRET_NAME: !Sub '${AWS::StackName}/fix-agent/anthropic-api-key'
         NODE_OPTIONS: --enable-source-maps
 
 Resources:
@@ -336,24 +325,29 @@ Resources:
             - Effect: Allow
               Action: [cognito-idp:DescribeUserPool, cognito-idp:UpdateUserPool]
               Resource: !GetAtt UserPool.Arn
+            # the MCP switch admins set in the dashboard (install_settings)
+            - Effect: Allow
+              Action: dsql:DbConnectAdmin
+              Resource: !GetAtt DsqlCluster.ResourceArn
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
         Minify: true
         Target: es2022
         Sourcemap: true
+        External: [pg-native]
         EntryPoints: [src/handlers/mcpauth.ts]
 
-  # Cognito MCP auth: open dynamic client registration (CloudFormation has no property for it yet).
+  # Cognito MCP auth: open dynamic client registration (CloudFormation has no property for it yet), on or off as
+  # admins set it on the dashboard's MCP page (install_settings, so it needs the schema first).
   # CloudFormation's own updates of UserPool may reset it, so every property that changes the pool is
   # repeated here to re-apply it afterwards. Bump PoolConfigVersion when you change UserPool above.
   McpAuth:
     Type: Custom::CognitoMcpAuth
-    DependsOn: [UserPoolDomain, McpResourceServer] # DCR needs a managed login domain; allowed scopes must exist
+    DependsOn: [UserPoolDomain, McpResourceServer, DsqlSchema] # DCR needs a managed login domain; allowed scopes must exist
     Properties:
       ServiceToken: !GetAtt McpAuthFunction.Arn
       UserPoolId: !Ref UserPool
-      Enabled: !Ref EnableMcp
       AllowedScopes:
         - !Sub
           - 'https://${Host}/mcp/read'
@@ -551,11 +545,11 @@ Resources:
       Layers: [!Ref DuckDbLayer]
       Environment:
         Variables:
-          SLACK_CLIENT_ID: !Ref SlackClientId
-          SLACK_CLIENT_SECRET: !Ref SlackClientSecret
           STACK_NAME: !Ref AWS::StackName
           DSQL_CLUSTER_ID: !GetAtt DsqlCluster.Identifier
           TRIGGER_FUNCTION: !Ref TriggerFunction
+          FIX_AGENT_FUNCTION: !Sub '${AWS::StackName}-FixAgentFunction-run'
+          MCP_AUTH_FUNCTION: !Ref McpAuthFunction
       Policies:
         - S3ReadPolicy: { BucketName: !Ref DataBucket }
         # "Run now" on an uptime check records its result like the scheduled run does
@@ -567,6 +561,18 @@ Resources:
             - Effect: Allow
               Action: lambda:InvokeFunction
               Resource: !GetAtt TriggerFunction.Arn
+            # "Fix with agent" (named, so the API doesn't depend on the function)
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-FixAgentFunction-run'
+            # secrets admins save in the dashboard: the GitHub Agent's Claude API key, the Slack app's client secret
+            - Effect: Allow
+              Action: [secretsmanager:CreateSecret, secretsmanager:PutSecretValue, secretsmanager:DeleteSecret, secretsmanager:GetSecretValue]
+              Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AWS::StackName}/*'
+            # the MCP switch: only the MCP auth function may change the Cognito user pool; the API may call it
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !GetAtt McpAuthFunction.Arn
             # the Costs page: Cost Explorer and CloudWatch reads can't be scoped to a resource
             - Effect: Allow
               Action: [ce:GetCostAndUsage, cloudwatch:GetMetricData, cloudwatch:ListMetrics]
@@ -627,15 +633,15 @@ Resources:
       Handler: slack.handler
       MemorySize: 256
       Timeout: 15
-      Environment:
-        Variables:
-          SLACK_CLIENT_ID: !Ref SlackClientId
-          SLACK_CLIENT_SECRET: !Ref SlackClientSecret
       Policies:
         - Statement:
             - Effect: Allow
               Action: dsql:DbConnectAdmin
               Resource: !GetAtt DsqlCluster.ResourceArn
+            # the install's Slack app (an admin enters it on the Triggers page)
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AWS::StackName}/slack-client-secret-*'
       Events:
         Callback:
           Type: HttpApi
@@ -781,7 +787,6 @@ Resources:
           COGNITO_DOMAIN: !Sub
             - 'wgo-${Id}.auth.${AWS::Region}.amazoncognito.com' # = UserPoolDomain
             - Id: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
-          MCP_ENABLED: !Ref EnableMcp
           EDGE_SECRET: !Select [2, !Split ['/', !Ref AWS::StackId]]
       Policies:
         - S3ReadPolicy: { BucketName: !Ref DataBucket }
@@ -920,12 +925,17 @@ Resources:
       Environment:
         Variables:
           WRITE_BUFFER_SECONDS: !Ref WriteBufferSeconds
+          FIX_AGENT_FUNCTION: !Sub '${AWS::StackName}-FixAgentFunction-run'
       Policies:
         - S3ReadPolicy: { BucketName: !Ref DataBucket }
         - Statement:
             - Effect: Allow
               Action: dsql:DbConnectAdmin
               Resource: !GetAtt DsqlCluster.ResourceArn
+            # automatic GitHub Agent runs (lib/fixes.ts autoSweep)
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-FixAgentFunction-run'
       Events:
         Schedule:
           Type: ScheduleV2
@@ -940,6 +950,85 @@ Resources:
         Sourcemap: true
         External: [pg-native, '@duckdb/node-api']
         EntryPoints: [src/handlers/monitor.ts]
+
+  # ---------------------------------------------------------------- GitHub Agent (admins turn it on in the dashboard)
+  # One run per invocation (lib/fixAgent/agent.ts): downloads the repository into /tmp, runs a Strands agent on
+  # Bedrock and opens a draft pull request through the GitHub App. It stops itself after 13.5 minutes. Never
+  # retried; a run that can't start within 5 minutes is dropped and shows as failed. Named (stack names up to 42
+  # characters) so the API and monitor don't depend on it (no cycle through the CloudFront distribution); the name keeps the
+  # `${stack}-${LogicalId}-…` shape the Costs page (lib/costSplit.ts) attributes by.
+  FixAgentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-FixAgentFunction-run'
+      CodeUri: ./
+      Handler: fixagent.handler
+      MemorySize: 2048
+      Timeout: 900
+      EphemeralStorage: { Size: 4096 }
+      ReservedConcurrentExecutions: 2
+      Layers: [!Ref DuckDbLayer]
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+        MaximumEventAgeInSeconds: 300
+      Environment:
+        Variables:
+          DASHBOARD_URL: !If [HasCustomDomain, !Sub 'https://${CustomDomain}', '']
+      Policies:
+        - S3ReadPolicy: { BucketName: !Ref DataBucket }
+        - Statement:
+            - Effect: Allow
+              Action: dsql:DbConnectAdmin
+              Resource: !GetAtt DsqlCluster.ResourceArn
+            # Claude models only (admins pick one on the GitHub Agent page). A cross-region inference profile routes to
+            # the model in other regions, so the regions are wildcarded.
+            - Effect: Allow
+              Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*anthropic.claude-*'
+                - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-*'
+            # the Claude API key, when admins chose the Claude API instead of Bedrock
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AWS::StackName}/fix-agent/*'
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        External: [pg-native, '@duckdb/node-api']
+        EntryPoints: [src/handlers/fixagent.ts]
+
+  # GitHub's redirects after creating or installing the GitHub Agent's app (public: authenticated by the signed state
+  # they carry). It answers 404 while the GitHub Agent is off.
+  GithubFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: github.handler
+      MemorySize: 256
+      Timeout: 20
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dsql:DbConnectAdmin
+              Resource: !GetAtt DsqlCluster.ResourceArn
+      Events:
+        Manifest:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /github/manifest, Method: GET }
+        Setup:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /github/setup, Method: GET }
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        External: [pg-native, '@duckdb/node-api']
+        EntryPoints: [src/handlers/github.ts]
 
   # ---------------------------------------------------------------- maintenance
   # Every 15 minutes: merging small Parquet files, hourly rollups, hourly cluster metrics, daily retention (and,
@@ -1109,7 +1198,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt MigrateFunction.Arn
       SchemaVersion: !Ref SchemaVersion
-      SchemaHash: '2026-11-25-1' # bump when src/lib/schema.ts changes
+      SchemaHash: '2026-11-26-4' # bump when src/lib/schema.ts changes
 
   # ---------------------------------------------------------------- dashboard + SDK hosting
   WebBucket:

@@ -7,7 +7,7 @@
 WGO monitors your real users in the browser (clicks, pageviews, errors and Web Vitals) and collects traces, logs
 and metrics from your backends over OpenTelemetry. It all lands in one dashboard that updates as it happens.
 
-[Web analytics](#live-web-analytics) · [OpenTelemetry](#opentelemetry-metrics-traces-and-logs) · [Alerts](#know-when-something-breaks-and-why) · [Costs](#see-what-it-costs) · [Android](#a-home-screen-widget-for-android) · [Wall screens](#your-dashboard-on-a-wall-screen) · [MCP](#ask-your-ai-assistant-with-mcp) · [Deploy it yourself](README.md#deploy-it-yourself)
+[Web analytics](#live-web-analytics) · [OpenTelemetry](#opentelemetry-metrics-traces-and-logs) · [Alerts](#know-when-something-breaks-and-why) · [GitHub Agent](#github-agent-let-ai-fix-your-errors-opt-in) · [Costs](#see-what-it-costs) · [Android](#a-home-screen-widget-for-android) · [Wall screens](#your-dashboard-on-a-wall-screen) · [MCP](#ask-your-ai-assistant-with-mcp) · [Deploy it yourself](README.md#deploy-it-yourself)
 
 </div>
 
@@ -90,6 +90,22 @@ The dashboard has a setup guide for Node.js and Python, on servers and AWS Lambd
   unusual for the time of day, in Slack or by webhook. Save destinations once, for a project or for yourself
   across all your projects, and reuse them in any trigger.
 - 💓 Uptime checks fetch your URLs every 1, 5 or 15 minutes. A check goes down after two failures in a row.
+
+---
+
+## GitHub Agent: let AI fix your errors (opt-in)
+
+Click **Fix with agent** on a JavaScript error, a failed span or an error log, and the GitHub Agent (Claude, on Amazon
+Bedrock in your AWS account or through the Claude API) reads your GitHub repository, finds the cause and opens a
+draft pull request for you to review.
+
+- 🔎 It starts from what WGO already knows: the source-mapped stack and what the visitor did right before the error,
+  or for a backend error, the exception, the whole trace and its logs.
+- 🤖 Let it start by itself for error groups that pass a number of events and sessions in an hour, up to a daily
+  limit.
+- 🔐 It can read code and open pull requests, nothing else. It never runs your code and can't touch CI, build files,
+  dependencies or secrets, and every pull request is a draft for a person to merge.
+- 💵 Each run shows the tokens it used and what they cost.
 
 ---
 

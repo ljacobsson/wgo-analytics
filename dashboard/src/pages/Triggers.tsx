@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { SlackAppCard } from './InstallAdmin';
 import { useQueryClient } from '@tanstack/react-query';
 import { BellRing, Check, Copy, Hash, MessageSquareText, Pencil, Plus, Send, Slack, Trash2, Webhook } from 'lucide-react';
 import { SLACK_BOT_SCOPES } from '../api/contract';
@@ -574,6 +575,7 @@ export function TriggersPage() {
           : triggers.data.map((t) => <TriggerRow key={t.id} t={t} onEdit={() => setDialog({ open: true, t, prefill: NO_PREFILL })} />)}
       </Card>
       <Destinations slackDialog={slackDialog} setSlackDialog={setSlackDialog} />
+      <SlackAppCard />
       <p className="text-[11.5px] text-faint">
         Webhooks receive a JSON POST (<Mono>trigger</Mono>, <Mono>project</Mono>, <Mono>scope</Mono>, <Mono>matches</Mono>, <Mono>events</Mono> / <Mono>logs</Mono> / <Mono>spans</Mono>, <Mono>url</Mono>) with an
         <Mono> X-WGO-Signature: sha256=…</Mono> header: the HMAC-SHA256 of the raw body keyed with the signing secret of the saved webhook (also named in <Mono>X-WGO-Destination</Mono>), or of the trigger for a one-off URL.

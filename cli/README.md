@@ -10,7 +10,7 @@ tool's description and schema into the agent's context in every session. With th
 one-line-per-command list (`wgo --help`) and asks for a command's options only when it uses that command. It can
 also cut results down to the fields it needs, and get rows as TSV instead of JSON.
 
-Requires Node.js 20 or later, and a WGO instance with MCP enabled (`MCP_ENABLED=true`, the default).
+Requires Node.js 20 or later, and a WGO instance with MCP turned on (an admin turns it on on the dashboard's AI assistants page).
 
 ## Install and sign in
 

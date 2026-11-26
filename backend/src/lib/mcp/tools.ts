@@ -20,6 +20,7 @@ import { BEHAVIOR_ACTIONS, findRecordings } from '../recordingSearch';
 import * as U from '../uptime';
 import * as QRY from '../query';
 import * as D from '../dashboards';
+import * as FX from '../fixes';
 import { randomUUID } from 'node:crypto';
 import { normalizeMapFile, normalizeRelease, UPLOAD_URL_TTL_SECONDS, uploadUrl } from '../sourcemaps';
 
@@ -66,7 +67,9 @@ A trigger can design its own Slack message (slackTemplate: Block Kit blocks with
 Any number across all of it (web events, Web Vitals, goals, spans, logs, OpenTelemetry metrics, uptime checks), as a
 total, over time or split by a field: query_measures. To keep a set of them in view, build a custom dashboard:
 create_dashboard with tiles (each tile is a query_measures measure plus how to show it), add_dashboard_tile to an
-existing one (list_dashboards). Dashboards are shared with every project member.`;
+existing one (list_dashboards). Dashboards are shared with every project member.
+When the install has the GitHub Agent and a project turned it on, start_fix_run asks it to fix one error group: it opens
+a draft pull request on the project's GitHub repository for a person to review. list_fix_runs shows how runs went.`;
 
 const RANGE_RE = /^(\d+)\s*(m|h|d)$/i;
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
@@ -461,6 +464,38 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
     { ...windowShape, limit: limit(50, 200) },
     async (pid, a) => (await A.errors(pid, { ...windowParams(a), limit: str(a.limit ?? 50) })).map(({ stackFrames: _frames, ...g }) => g), // sampleStack is symbolicated when source maps are uploaded
   );
+
+  {
+    projectTool(
+      'list_fix_runs',
+      'GitHub Agent runs',
+      'Runs of WGO\'s GitHub Agent, newest first: the error group (fingerprint), status (queued, running, pr_opened, no_fix, failed, cancelled), the draft pull request it opened and its state, the agent\'s root cause and summary, the steps it took and the token cost. Pass a fingerprint for one error group\'s runs.',
+      { fingerprint: z.string().max(200).optional().describe('Only runs for this error group'), limit: limit(20, 100) },
+      (pid, a) => FX.listRuns(pid, { fingerprint: a.fingerprint, limit: str(a.limit ?? 20) }),
+    );
+
+    projectTool(
+      'start_fix_run',
+      'Ask the GitHub Agent to fix an error',
+      'Starts WGO\'s GitHub Agent on one error: a JavaScript error group (fingerprint from list_errors), a failed span (traceId and spanId from get_trace) or an ERROR/FATAL log record (logId and its timestamp from search_logs). It reads the project\'s GitHub repository, looks for the cause and, when it finds a fix, opens a draft pull request for a person to review; it takes a few minutes, and list_fix_runs shows how it went. It only works when a project owner turned the GitHub Agent on, and it refuses while the error has a run going or an open pull request. Each run costs model tokens, so only start one when asked to.',
+      {
+        fingerprint: z.string().max(200).optional().describe('Error group fingerprint from list_errors'),
+        traceId: z.string().regex(/^[0-9a-f]{32}$/i).optional().describe('With spanId: a failed span'),
+        spanId: z.string().regex(/^[0-9a-f]{16}$/i).optional(),
+        logId: z.string().max(64).optional().describe('With at: an ERROR or FATAL log record'),
+        at: z.string().max(40).optional().describe('ISO time of the span or log record'),
+        repo: z.string().max(140).optional().describe('owner/name: one of the project\'s repositories. Without it, the repository that fixes this kind of error or service'),
+      },
+      (pid, a) => {
+        const repo = a.repo ? { repo: a.repo } : {};
+        if (a.fingerprint) return FX.startRun(pid, email, { fingerprint: a.fingerprint, ...repo });
+        if (a.traceId && a.spanId) return FX.startRun(pid, email, { kind: 'span', traceId: a.traceId, spanId: a.spanId, at: a.at, ...repo });
+        if (a.logId && a.at) return FX.startRun(pid, email, { kind: 'log', logId: a.logId, at: a.at, ...repo });
+        throw new HttpError(400, 'Pass fingerprint, traceId and spanId, or logId and at');
+      },
+      CREATE,
+    );
+  }
 
   projectTool(
     'list_failed_requests',

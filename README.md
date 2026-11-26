@@ -143,9 +143,10 @@ trigger** in the filter bar), from any event (**Create trigger from this event**
   usable in all your projects). WGO posts as a Slack app, which you create once per workspace. The dialog
   walks you through it in about a minute: **Create the WGO Slack app** opens Slack pre-filled (you only pick
   the workspace), then click **Install to** your workspace under **OAuth & Permissions** and paste the **Bot
-  User OAuth Token** (`xoxb-…`). WGO checks it with Slack. To skip that for everyone, put the Client ID and
-  Secret of a distributed Slack app in `deploy.env` (`SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`): **Slack
-  channel** then connects a workspace with "Add to Slack". The app needs the bot token scopes `chat:write`,
+  User OAuth Token** (`xoxb-…`). WGO checks it with Slack. To skip that for everyone, an admin enters the Client ID and
+  Secret of a distributed Slack app under **Slack app for every project** on the Triggers page (WGO checks them with
+  Slack and keeps the secret in AWS Secrets Manager): **Slack channel** then connects a workspace with "Add to
+  Slack". The app needs the bot token scopes `chat:write`,
   `chat:write.public`, `channels:read` and `groups:read` (the pre-filled app has them) and token rotation
   turned off. An app created before WGO used a bot only has `incoming-webhook`: add those scopes under
   **OAuth & Permissions**, reinstall it and paste its token. Channels connected the old way keep working.
@@ -175,6 +176,78 @@ trigger** in the filter bar), from any event (**Create trigger from this event**
 - **Uptime checks:** WGO fetches a URL every 1, 5 or 15 minutes from the region it runs in, and checks the status
   code, the timeout and, optionally, text in the body. A check goes down after two failures in a row. Each change
   is a `wgo.uptime` event, so a trigger can send it to Slack or a webhook.
+
+### GitHub Agent: AI fixes for your errors (opt-in)
+
+Once an admin turns it on (the switch on the **GitHub Agent** page), the **GitHub Agent** can fix your errors: JavaScript errors from your web app, and
+failed spans and error logs from your backends. It reads the project's GitHub repository, finds the cause and opens
+a **draft pull request** for a person to review. It runs on
+[Strands Agents](https://strandsagents.com) with Claude, on Amazon Bedrock in your own AWS account by default.
+
+- **Admins choose the model for every project** on the **GitHub Agent** page: Claude Opus 5.5 or Sonnet 5.5 on Bedrock,
+  or the Claude API with your own key (Opus 5.5, Sonnet 5.5, Fable 5.2 or any model id), and the effort level. The
+  page also shows the month's runs, pull requests and cost per project. A key is checked with Anthropic when you
+  save it, kept in AWS Secrets Manager where only the agent can read it, and never shown again. With the Claude
+  API, repository code and error details go to Anthropic, outside your AWS account.
+
+- **Start it from an error:** **Fix with agent** is in a JavaScript error's details, on a failed span in a trace,
+  and on an ERROR or FATAL log. You can follow its steps as it works. Owners can also let it start by itself for
+  JavaScript error groups that pass a number of events and sessions in an hour, up to a daily limit.
+- **It starts from what WGO knows:** for a JavaScript error, the stack mapped through your source maps, where the
+  frames point in the repository, recent occurrences, and what one visitor did right before the error. For a
+  backend error, the exception and its stack (JavaScript, Python, Java, Go and more), where it points in the
+  repository, the whole trace and the trace's logs, and it can search the project's logs. Repeats of the same
+  backend error (same service, exception and top frame) share one run and one pull request.
+- **One GitHub App per install,** created by an admin with one click from a manifest. Owners install it on the
+  repositories they choose. It can read code and open pull requests, and nothing else. It can't change workflows,
+  and its tokens last an hour and cover one repository.
+- **Guard rails in code, not only in the prompt:** the agent has no shell or network access, so it never runs your
+  code; CI runs on the pull request. It can't write outside the repository or to protected paths (CI, build files,
+  dependency manifests, lockfiles, scripts, infrastructure and `.env` files by default). Telemetry can hold text
+  anyone could send (error messages, URLs, request data), so it treats it as untrusted data.
+- **Bounded:** each run stops after 50 model turns, 4 million tokens or 13.5 minutes, whichever comes first. Every
+  run shows its token count and estimated cost.
+
+Set it up on the **GitHub Agent** page in the sidebar: create the app (admins), install it on the repository, then pick
+the repository and turn it on (owners). Your AWS account needs
+[Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) for the model.
+
+Owners connect one or more repositories to a project (up to 10, from the GitHub account the app is installed on).
+Each error goes to the repository that fixes it: a failed span or error log to the repository listing its service,
+a JavaScript error to the one marked for the web app, and anything else to the first repository. **Fix with agent**
+shows that repository and lets you pick another of the project's. Each repository has these settings:
+
+| Setting | Default | What it does |
+|---|---|---|
+| **Repository** | none | One of the repositories the app is installed on |
+| **Fixes** | JavaScript errors, for the first repository | Whether it fixes the web app's JavaScript errors (one repository can), and which backend services' spans and logs (OpenTelemetry `service.name`, `*` matches anything) |
+| **Base branch** | the repository's default | The branch it reads and opens pull requests against |
+| **App folder** | the repository root | For a monorepo: where the code for these errors lives, e.g. `web/` |
+| **Instructions** | none | The repository's conventions, e.g. where tests live and how they're written (up to 4000 characters). They can't relax the guard rails |
+| **Protected paths** | `.github/**`, `.circleci/**`, `.gitlab-ci.yml`, `.husky/**`, `**/package.json`, lockfiles, `**/Dockerfile`, `**/*.sh`, `**/*.tf`, `**/template.yaml`, `**/.env*`, `**/.npmrc` | Globs the agent can't change |
+
+**Start runs automatically** (per project) is off by default. When it's on, JavaScript error groups with 20 events
+and 3 sessions in an hour (you can change both) get a run, once, up to 3 automatic runs a day (at most 50). Runs
+people start aren't limited.
+
+**How a run ends.** The agent finishes with one of three outcomes:
+
+- **Fixed:** WGO commits its changes to a new `wgo-fix/…` branch and opens a draft pull request (a regular one where
+  the repository has no drafts, such as private repositories on GitHub's free plan). The description has the root
+  cause, what changed, the agent's confidence, whether it added a regression test and a link back to the error.
+  The error list then shows whether the pull request is open or merged.
+- **Needs more info:** for example, the stack is still minified. Upload source maps for the release and try again.
+- **Not fixable here:** the cause is outside the repository (a browser extension, a third-party script, the
+  backend), or the fix needs a protected path or a decision a person has to make.
+
+You can stop a run while it works. An error group doesn't get a second run while one is going or its pull request
+is open, and a cost budget that stops a project's data collection also stops its runs. AI assistants can start
+runs too, with the `start_fix_run` [MCP tool](#ai-assistants-mcp).
+
+> A pull request is code that someone else wrote. Review it like any other, and keep reviews and CI required
+> before merging. A pull request from a branch in the same repository runs your CI workflows with the
+> repository's secrets. Treat the agent's changes like a contributor's: for repositories whose CI holds
+> sensitive secrets, require approval before workflows run for the app, or leave automatic runs off.
 
 ### Teams and access control
 
@@ -278,14 +351,16 @@ change them later by re-running the deploy.
 | `ALLOW_SELF_SIGNUP` | `true` | `false` = only users you create in Cognito can sign in |
 | `ADMIN_EMAILS` | owners of the first project | Comma-separated emails that can see the Costs page and manage budgets (which can stop every project collecting data) |
 | `DELETION_PROTECTION` | `false` | DSQL cluster deletion protection; turn on for production |
-| `MCP_ENABLED` | `true` | The [MCP server](#ai-assistants-mcp) at `/mcp`, with Cognito MCP auth (open client registration) |
 | `MAX_RETENTION_DAYS` | `400` | Longest raw-data retention a project owner can choose (the default is 90 days); see [Cost awareness](#cost-awareness) |
 | `WRITE_BUFFER_SECONDS` | `30` | How long incoming events, logs, spans and metrics are collected before they are written as one Parquet file (1–300). Shorter means fresher charts, longer means fewer files. The Live page and triggers don't wait for it |
 | `CLUSTER_METRICS_PROJECT_ID` | none | Project that receives hourly Aurora DSQL storage and DPU numbers, as metrics and as a `wgo.cluster` event you can create triggers on |
 | `BUILD_ANDROID` | `false` | `true` = rebuild the Android app (needs JDK 17 and the Android SDK) instead of deploying the prebuilt APK from the repo |
 | `UPDATE_CHECK` | `true` | The dashboard checks GitHub every few hours and shows a dismissable note with the update command when `main` has commits newer than your install. The request goes from the signed-in user's browser to `api.github.com`; `false` turns it off |
-| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` | none | One Slack app for "Add to Slack" in every project's [triggers](#filters-and-triggers), for everyone; otherwise people create their own WGO Slack app and paste its bot token on the Triggers page |
 | `PARAMS` | none | Extra raw `sam deploy --parameter-overrides` |
+
+MCP, the GitHub Agent and one Slack app for every project aren't deploy settings: admins turn them on in the
+dashboard, on the AI assistants (MCP), GitHub Agent and Triggers pages. The stack name must be at most 42 characters
+(the GitHub Agent's function is named after it).
 
 **Custom domain.** With `CUSTOM_DOMAIN=wgo.example.com`:
 - **DNS in Route 53, same account:** the script creates and DNS-validates a certificate in us-east-1 (a
@@ -337,6 +412,12 @@ Lambda; Aurora DSQL only holds projects, settings, error stacks and the hourly a
 (storage and requests), Lambda, SQS, API Gateway, CloudFront, Cognito and a little DSQL. Cognito runs on the
 Essentials tier, which MCP sign-in requires; check [Cognito pricing](https://aws.amazon.com/cognito/pricing/)
 for its monthly active user allowance.
+
+The [GitHub Agent](#github-agent-ai-fixes-for-your-errors-opt-in), if you deploy it, adds Amazon Bedrock token charges for each
+run (or Claude API charges on your Anthropic account, if admins switch it to their own key; WGO's budgets don't see
+those). A typical run reads a few files and costs well under a dollar; the hard limit is 4 million tokens. Every run
+shows its estimate, which uses list prices. Runs per project are capped per day, and a budget that stops
+collecting data also stops the agent.
 
 As traffic grows, cost comes from four places:
 
@@ -499,16 +580,19 @@ WGO is a remote [MCP](https://modelcontextprotocol.io) server:
 claude mcp add --transport http wgo https://wgo.example.com/mcp
 ```
 
-There is no key to copy. The client registers itself, opens a browser, and you sign in with your WGO account.
+An admin turns it on first, with the switch on the dashboard's **AI assistants (MCP)** page (new installs start
+with it off; installs from before the switch keep what they had). There is no key to copy. The client registers
+itself, opens a browser, and you sign in with your WGO account.
 It then sees exactly the projects you're a member of. The tools are:
 - **Setup:** `create_project` creates a project you own and returns its script tag with the new write key filled in, so an assistant can add it to your site's `<head>` in one go. `get_install_snippet` returns the same for an existing project.
 - **Product analytics:** `list_projects`, `get_overview`, `top_clicks`, `top_pages`, `goal_conversions`, `goal_funnel`, `get_retention`, `list_frustration`, `list_errors`, `list_failed_requests`, `explain_change`, `list_releases`, `breakdown`, `web_vitals`, `visitor_locations`, `search_events`, `find_recordings`, `list_uptime_checks`
 - **Click aliases:** `list_click_aliases`, and `set_click_alias`, which gives an autocaptured selector a readable name.
 - **Goals:** `list_goals`, `create_goal`, `update_goal`, `delete_goal` define conversion goals (event filters, optional funnel steps). Goals count from raw events, so a new one has numbers right away.
 - **Triggers (alerts):** `list_triggers` (with the saved destinations a trigger can use: the project's and your own), `preview_trigger`, `create_trigger`, `update_trigger`, `delete_trigger`, and `test_trigger`, which sends a sample notification. `create_destination` and `delete_destination` save and remove webhooks for the project or for yourself. Connecting a Slack channel still happens in the dashboard.
-
-The tools that change anything (`create_project`, `set_click_alias` and the goal and trigger tools) only do what any project member can also do in the dashboard, and never touch recorded data.
 - **OpenTelemetry:** `list_services`, `list_traces`, `get_trace`, `search_logs`, `list_metrics`, `get_metric_series`
+- **GitHub Agent** (when the install has [the GitHub Agent](#github-agent-ai-fixes-for-your-errors-opt-in)): `list_fix_runs` shows each run's status, pull request and root cause. `start_fix_run` starts one on an error group, a failed span or an error log, for projects whose owners turned the agent on.
+
+The tools that change anything (`create_project`, `set_click_alias`, the goal and trigger tools, and `start_fix_run`) only do what any project member can also do in the dashboard, and never touch recorded data.
 
 Use the dashboard's host (the `McpUrl` stack output). The raw API Gateway URL has no OAuth resource of its own.
 
@@ -522,8 +606,9 @@ This needs the Cognito Essentials tier (set on the pool) and a managed login dom
 
 **Open registration.** Anyone who can reach the user pool can register an OAuth client and send your users to
 its sign-in link. That is how MCP clients connect without setup, but it's also a phishing surface: a malicious
-client that tricks a signed-in user gets read access to that user's projects. Set `MCP_ENABLED=false` if you
-don't need MCP. Cognito's guidance is to attach an AWS WAF rate-based rule to the user pool for `/oauth2/register`.
+client that tricks a signed-in user gets read access to that user's projects. That's why MCP is off until an admin
+turns it on with the switch on the **AI assistants (MCP)** page, which also turns registration off again. Only the
+small MCP auth function may change the user pool; the API just asks it to. Cognito's guidance is to attach an AWS WAF rate-based rule to the user pool for `/oauth2/register`.
 Registered clients are not cleaned up automatically. List them with
 `aws cognito-idp list-user-pool-clients` and delete the stale ones.
 
@@ -664,6 +749,10 @@ cd backend && npm run test:integration   # full API + ingest + OTLP against Post
 ```
 
 ## Known limits
+
+- The GitHub Agent works on JavaScript error groups with a stack, failed spans and ERROR or FATAL logs; automatic
+  runs cover JavaScript error groups only. A project's repositories must all be visible to its one GitHub App
+  installation (one GitHub account or organization). It can't run code or tests, so it relies on the repository's CI. Repositories over 300 MB unpacked are only partly downloaded, and it skips files over 1 MB.
 
 - The Lambdas connect to DSQL as `admin`. For least privilege, create a custom DB role and
   `AWS IAM GRANT` it to the function roles.

@@ -1,11 +1,19 @@
+import { autoSweep } from '../lib/fixes';
 import { runMonitor } from '../lib/monitor';
 
 /**
- * Scheduled every minute: evaluates threshold and anomaly triggers. With none enabled it costs one small DSQL query,
- * so an idle install stays close to free.
+ * Scheduled every minute: evaluates threshold and anomaly triggers, and starts automatic GitHub Agent runs (every five
+ * minutes, for projects that turned them on). With neither in use it costs two small DSQL queries, so an idle
+ * install stays close to free.
  */
 export async function handler(): Promise<object> {
-  const result = await runMonitor();
-  if (result.evaluated || result.failed) console.log(JSON.stringify(result));
-  return result;
+  const [result, fixes] = await Promise.all([
+    runMonitor(),
+    autoSweep().catch((err) => {
+      console.warn(JSON.stringify({ msg: 'GitHub Agent sweep failed', error: String(err) }));
+      return { started: 0 };
+    }),
+  ]);
+  if (result.evaluated || result.failed || fixes.started) console.log(JSON.stringify({ ...result, fixRunsStarted: fixes.started }));
+  return { ...result, fixRunsStarted: fixes.started };
 }
