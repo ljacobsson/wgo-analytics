@@ -265,6 +265,18 @@ d('GitHub Agent (PostgreSQL)', async () => {
     const groups = (await call('GET', `/api/projects/${pid}/errors`, undefined, { from: new Date(now - 3600_000).toISOString(), to: new Date(now + 60_000).toISOString() })).body;
     expect(groups.find((g: { fingerprint: string }) => g.fingerprint === fp).fix).toEqual({ runId, status: 'pr_opened', prUrl: 'https://github.com/acme/shop/pull/7', prNumber: 7, prState: 'open' });
     expect((await call('POST', `/api/projects/${pid}/fixes`, { fingerprint: fp })).body.error).toMatch(/#7 for this error is still open/);
+
+    // merged on GitHub: the background sweep notices once the last check is 10 minutes old, without anyone looking
+    prStates.set(7, 'merged');
+    expect((await FX.sweepPrStates()).checked).toBe(0); // just checked by the request above
+    await query(`UPDATE fix_runs SET pr_checked_at = now() - interval '11 minutes' WHERE project_id = $1 AND id = $2`, [pid, runId]);
+    expect((await FX.sweepPrStates()).checked).toBe(1);
+    expect((await query<{ pr_state: string }>('SELECT pr_state FROM fix_runs WHERE project_id = $1 AND id = $2', [pid, runId]))[0].pr_state).toBe('merged');
+    // and looking at the run checks again after a minute
+    await query(`UPDATE fix_runs SET pr_state = 'open', pr_checked_at = now() - interval '2 minutes' WHERE project_id = $1 AND id = $2`, [pid, runId]);
+    expect((await call('GET', `/api/projects/${pid}/fixes/${runId}`)).body.prState).toBe('merged');
+    prStates.delete(7);
+    await query(`UPDATE fix_runs SET pr_state = 'open', pr_checked_at = now() WHERE project_id = $1 AND id = $2`, [pid, runId]);
   });
 
   it('refuses protected paths and reports runs without a fix', async () => {

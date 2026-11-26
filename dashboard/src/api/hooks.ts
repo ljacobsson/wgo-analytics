@@ -730,13 +730,15 @@ export function useSaveFixSettings(pid: string) {
   });
 }
 const LIVE_RUN = (runs: FixRun[] | undefined) => !!runs?.some((r) => r.status === 'queued' || r.status === 'running');
-/** A project's runs (or one error group's), polled every 3 s while one is going. */
+/** Every 3 s while a run is going, every minute while its pull request is open (to see it merged), else not at all. */
+const runsPoll = (runs: FixRun[] | undefined) => (LIVE_RUN(runs) ? 3_000 : runs?.some((r) => r.prState === 'open') ? 60_000 : false);
+/** A project's runs (or one error group's), polled while one is going or its pull request is open. */
 export const useFixRuns = (pid: string, fingerprint: string | undefined, enabled = true) =>
   useQuery({
     queryKey: ['fix-runs', pid, fingerprint ?? null] as const,
     queryFn: () => api<FixRun[]>(`${base(pid)}/fixes`, { params: { fingerprint, limit: fingerprint ? 10 : 20 } }),
     enabled, staleTime: 5_000,
-    refetchInterval: (q) => (LIVE_RUN(q.state.data) ? 3_000 : false),
+    refetchInterval: (q) => runsPoll(q.state.data),
   });
 export function useStartFix(pid: string) {
   const qc = useQueryClient();
@@ -763,13 +765,13 @@ export function useSaveFixAgentAdmin() {
     onSuccess: (d) => { qc.setQueryData(['fix-agent-admin'], d); void qc.invalidateQueries({ queryKey: ['fix-settings'] }); void qc.invalidateQueries({ queryKey: keys.me }); },
   });
 }
-/** The backend error a span or log stands for and its runs, polled every 3 s while one is going. */
+/** The backend error a span or log stands for and its runs, polled like useFixRuns. */
 export const useFixTarget = (pid: string, t: Exclude<FixTarget, { kind: 'browser' }>, enabled: boolean) =>
   useQuery({
     queryKey: ['fix-runs', pid, 'for', t] as const,
     queryFn: () => api<FixTargetInfo>(`${base(pid)}/fixes/for`, { params: { ...t } }),
     enabled, staleTime: 5_000, retry: false,
-    refetchInterval: (q) => (LIVE_RUN(q.state.data?.runs) ? 3_000 : false),
+    refetchInterval: (q) => runsPoll(q.state.data?.runs),
   });
 
 // ---------- install-wide switches (admins turn them on in the dashboard) ----------

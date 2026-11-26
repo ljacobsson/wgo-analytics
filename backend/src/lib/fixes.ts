@@ -25,7 +25,9 @@ export const DEFAULT_DENIED_PATHS = [
 const DEFAULT_AUTO: FixAutoSettings = { enabled: false, minEvents: 20, minSessions: 3, maxPerDay: 3 };
 /** A run that hasn't finished after this long died with its Lambda (the agent stops itself after 14 minutes). */
 const STALE_MS = 20 * 60_000;
-const PR_CHECK_MS = 10 * 60_000;
+/** How stale an open pull request's state may be: while someone looks at its run, and in the background sweep. */
+const PR_CHECK_MS = 60_000;
+const PR_SWEEP_MS = 10 * 60_000;
 
 interface SettingsRow {
   project_id: string;
@@ -276,9 +278,12 @@ async function failStale(rows: RunRow[], now = Date.now()): Promise<void> {
   }
 }
 
-/** Open pull requests are checked on GitHub at most every 10 minutes, a few per request. */
-async function refreshPrStates(pid: string, rows: RunRow[], now = Date.now()): Promise<void> {
-  const due = rows.filter((r) => r.pr_number && r.pr_state === 'open' && (!r.pr_checked_at || now - r.pr_checked_at.getTime() > PR_CHECK_MS)).slice(0, 3);
+/**
+ * Whether open pull requests were merged or closed, asked of GitHub: when runs are shown (at most once a minute per
+ * pull request, a few per request) and by sweepPrStates in the background.
+ */
+async function refreshPrStates(pid: string, rows: RunRow[], now = Date.now(), maxAge = PR_CHECK_MS, max = 3): Promise<void> {
+  const due = rows.filter((r) => r.pr_number && r.pr_state === 'open' && (!r.pr_checked_at || now - r.pr_checked_at.getTime() > maxAge)).slice(0, max);
   if (!due.length) return;
   const s = await settingsRow(pid);
   if (!s?.installation_id) return;
@@ -291,6 +296,22 @@ async function refreshPrStates(pid: string, rows: RunRow[], now = Date.now()): P
       console.warn(JSON.stringify({ msg: 'checking pull request failed', run: r.id, error: String(err) }));
     }
   }));
+}
+
+/**
+ * From the monitor (every minute): open pull requests nobody looked at for 10 minutes are checked on GitHub, so the
+ * Errors list and MCP see merges without anyone opening the run. Without open pull requests it's one small query.
+ */
+export async function sweepPrStates(now = Date.now()): Promise<{ checked: number }> {
+  if (!(await fixAgentEnabled())) return { checked: 0 };
+  const rows = await query<RunRow>(
+    `SELECT * FROM fix_runs WHERE pr_state = 'open' AND (pr_checked_at IS NULL OR pr_checked_at < $1) ORDER BY pr_checked_at NULLS FIRST LIMIT 30`,
+    [new Date(now - PR_SWEEP_MS)],
+  );
+  const byProject = new Map<string, RunRow[]>();
+  for (const r of rows) byProject.set(r.project_id, [...(byProject.get(r.project_id) ?? []), r]);
+  for (const [pid, list] of byProject) await refreshPrStates(pid, list, now, PR_SWEEP_MS, 30);
+  return { checked: rows.length };
 }
 
 export async function listRuns(pid: string, q: { fingerprint?: string; limit?: string }): Promise<FixRun[]> {
