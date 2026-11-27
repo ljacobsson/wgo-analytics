@@ -15,7 +15,7 @@ const HOST = 'https://wgo.example.com';
 const GROUPS: Array<{ title: string; items: Array<[id: string, label: string]> }> = [
   { title: 'Getting started', items: [['install', 'Installation'], ['first-steps', 'First steps'], ['configuration', 'Configuration'], ['updating', 'Updating and removing']] },
   { title: 'Sending data', items: [['web', 'Web apps'], ['sourcemaps', 'Source maps'], ['otel', 'Backends (OpenTelemetry)'], ['trace-linking', 'Browser requests and traces']] },
-  { title: 'Features', items: [['retention', 'Retention and cohorts'], ['mcp', 'AI assistants (MCP)'], ['triggers', 'Filters and triggers'], ['suppress', 'Suppressing errors'], ['releases', 'Releases and deploys'], ['why', 'Why did this change?'], ['uptime', 'Uptime checks'], ['costs', 'What the install costs'], ['kiosks', 'Kiosk screens'], ['android', 'Android widget'], ['teams', 'Teams and access']] },
+  { title: 'Features', items: [['flows', 'User flows'], ['retention', 'Retention and cohorts'], ['mcp', 'AI assistants (MCP)'], ['triggers', 'Filters and triggers'], ['suppress', 'Suppressing errors'], ['releases', 'Releases and deploys'], ['why', 'Why did this change?'], ['uptime', 'Uptime checks'], ['costs', 'What the install costs'], ['kiosks', 'Kiosk screens'], ['android', 'Android widget'], ['teams', 'Teams and access']] },
   { title: 'Operating WGO', items: [['privacy', 'Cookies and privacy'], ['cost', 'Cost awareness'], ['architecture', 'How it works'], ['local-dev', 'Local development'], ['limits', 'Known limits']] },
 ];
 const IDS = GROUPS.flatMap((g) => g.items.map(([id]) => id));
@@ -246,6 +246,16 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
           </Section>
 
           {/* ───────────── Features ───────────── */}
+          <Section id="flows" title="User flows">
+            <P>The User flows page follows sessions page by page: each column is the next page they viewed, the bands show where they went, and the red part of each page is the sessions that left there. Pages where sessions hit a JavaScript error or a failed request are outlined in red; turn on <b>Highlight errors</b> to fade out the rest.</P>
+            <List items={[
+              'Reloads of the same page count once. Each column shows its top 6 pages, the rest as (other). Choose 3 to 7 steps.',
+              'Start from the entry page, or pick a page (or click one in the chart) to see where people go after it.',
+              'Click a page for its most common errors and how many sessions left right after one. The table below ranks the pages sessions leave on, with the exit rate after an error next to the overall one.',
+              <>Filters choose sessions: a session is included when any of its events matches, so <C>Event type equals error</C> shows the paths of sessions that hit an error. Bots are left out. The API is <C>GET /api/projects/&#123;id&#125;/flows</C> and the MCP tool is <C>user_flows</C>.</>,
+            ]} />
+          </Section>
+
           <Section id="retention" title="Retention and cohorts">
             <P>The Retention page groups visitors by the day, week or month they started (their first visit, or the first time they reached a goal) and shows the share of each group that came back in the periods after. Split by device, country or source to see which visitors stick.</P>
             <List items={[

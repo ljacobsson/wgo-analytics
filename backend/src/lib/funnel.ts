@@ -100,6 +100,11 @@ function previewSteps(raw: string | undefined): GoalStep[] | null {
   return goalSteps(v);
 }
 
+/** An error event as one line (NULL for other events): its message, or "POST /api/checkout 502" for a failed request. */
+export const ERROR_KEY = `CASE WHEN type = 'error' THEN left(error_message, 200)
+                   WHEN type = 'http_error' THEN concat_ws(' ', http_method, COALESCE(http_route, split_part(http_url, '?', 1)), http_status::text)
+              END`;
+
 /** A filter list as one SQL boolean (never NULL), its values bound into `params`. */
 const condition = (filters: Filter[], params: unknown[]) => `COALESCE((${filterSql(filters, 'events', params).slice(' AND '.length)}), false)`;
 
@@ -166,9 +171,7 @@ async function sessionSegments(pid: string, r: { from: Date; to: Date }, p: Reco
               CASE WHEN type = 'pageview' THEN
                 CASE WHEN referrer IS NULL OR split_part(referrer, '/', 3) = split_part(url, '/', 3) THEN '' ELSE split_part(referrer, '/', 3) END
               END AS ref,
-              CASE WHEN type = 'error' THEN left(error_message, 200)
-                   WHEN type = 'http_error' THEN concat_ws(' ', http_method, COALESCE(http_route, split_part(http_url, '?', 1)), http_status::text)
-              END AS err,
+              ${ERROR_KEY} AS err,
               ${hit} AS hit
          FROM events WHERE ${RANGE}${F}),
      g AS (SELECT session_id, min(ts) AS goal_at FROM ev WHERE hit GROUP BY session_id),

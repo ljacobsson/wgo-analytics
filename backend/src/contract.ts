@@ -532,6 +532,50 @@ export interface GoalFunnel {
   journeys: JourneyRow[]; // top 15 by sessions
 }
 
+// GET /api/projects/{pid}/flows?from&to[&filters&bots][&start=<path>][&steps=3..7]
+//   How sessions move through the site, from raw events (the project's retention): the pages they view one after
+//   another (reloads collapsed), step 1 being the entry page or, with `start`, the first view of that page (sessions
+//   that never view it are left out). Each step lists its top pages, the rest as '(other)'. The filters choose
+//   sessions: a session counts when any of its events matches (bots are left out unless bots=1).
+//   Errors: error and http_error events of the session while it was on that page at that step (from its view up to
+//   the next page's view).
+export const FLOW_OTHER = '(other)';
+export interface FlowError {
+  key: string; // the error message (first 200 characters) or "POST /api/checkout 502"
+  sessions: number;
+}
+export interface FlowNode {
+  step: number; // 0 = the entry (or start) page
+  key: string; // the page path, or FLOW_OTHER
+  sessions: number; // sessions on this page at this step
+  exits: number; // of those, sessions that left after this page (on the last step: the rest went on past the chart)
+  errors: number; // sessions that hit an error on this page at this step
+  errorExits: number; // of those, how many left after this page
+  topErrors: FlowError[]; // the most common errors here, top 3
+}
+export interface FlowLink {
+  step: number; // from a node of this step to one of the next
+  from: string;
+  to: string;
+  sessions: number;
+}
+export interface FlowExitPage {
+  path: string;
+  views: number; // sessions that viewed it (from the start page on, every step, not only the charted ones)
+  exits: number; // sessions whose last page it was
+  rate: number; // exits / views
+  errorViews: number; // sessions that hit an error on it
+  errorExits: number; // of those, sessions that left on it
+}
+export interface FlowsResponse {
+  start: string | null;
+  steps: number;
+  sessions: number; // sessions in the chart: with a pageview (and, with `start`, that reached it)
+  nodes: FlowNode[]; // per step, by sessions (FLOW_OTHER last)
+  links: FlowLink[];
+  exitPages: FlowExitPage[]; // top 10 by exits
+}
+
 // GET /api/projects/{pid}/stats?from&to[&compare=0]
 //   Ranges of 3+ days (or reaching past the project's retention) without filters are served from hourly
 //   rollups: buckets of 1h or more, sessions/users are HyperLogLog estimates (about ±2%).

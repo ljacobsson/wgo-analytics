@@ -100,8 +100,22 @@ function session(slot: number): AnalyticsEvent[] {
   return out;
 }
 
+/**
+ * The synthetic sessions with events in [from, to), sampled down to MAX_SESSIONS; `weight` is how many sessions
+ * each one stands for. Shared with the user flows mock.
+ */
+export function* mockSessions(from: number, to: number): Generator<{ events: AnalyticsEvent[]; weight: number }> {
+  const lo = Math.ceil(from / SLOT), hi = Math.floor(to / SLOT);
+  const stride = Math.max(1, Math.ceil((hi - lo) / MAX_SESSIONS));
+  for (let slot = lo; slot < hi; slot += stride) {
+    if (rnd(slot, 7000) > Math.min(0.95, rate(slot * SLOT) * 1.4)) continue;
+    const events = session(slot).filter((e) => { const t = Date.parse(e.ts); return t >= from && t < to; });
+    if (events.length) yield { events, weight: stride };
+  }
+}
+
 const host = (u: string | null) => (u ? u.split('/')[2] ?? '' : '');
-const errKey = (e: AnalyticsEvent) =>
+export const errKey = (e: AnalyticsEvent) =>
   e.type === 'error' ? (e.errorMessage ?? '').slice(0, 200)
   : e.type === 'http_error' ? [e.httpMethod, e.httpRoute ?? (e.httpUrl ?? '').split('?')[0], e.httpStatus].filter((x) => x != null && x !== '').join(' ')
   : null;

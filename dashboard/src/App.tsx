@@ -23,6 +23,7 @@ import { RecordingPlayerPage } from './pages/RecordingPlayer';
 import { TriggersPage } from './pages/Triggers';
 import { GoalsPage } from './pages/Goals';
 import { RetentionPage } from './pages/Retention';
+import { FlowsPage } from './pages/Flows';
 import { GoalFunnelPage } from './pages/GoalFunnel';
 import { TracesPage } from './pages/Traces';
 import { LogsPage } from './pages/Logs';
@@ -75,6 +76,7 @@ function Authed({ email }: { email: string }) {
       case 'events': return <EventsPage />;
       case 'recordings': return sub ? <RecordingPlayerPage sessionId={decodeURIComponent(sub)} /> : <RecordingsPage />;
       case 'goals': return sub ? <GoalFunnelPage goalId={sub} /> : <GoalsPage />;
+      case 'flows': return <FlowsPage />;
       case 'retention': return <RetentionPage />;
       case 'triggers': return <TriggersPage />;
       case 'traces': return <TracesPage traceId={sub ?? null} />;

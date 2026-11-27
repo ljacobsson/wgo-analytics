@@ -271,7 +271,9 @@ private fun Overview(ui: Ui, rows: List<OverviewRow>, total: Int, w: Float, h: F
     // what fits beside the project name, the sparkline going first when space runs out
     val cols = min(keys.size, max(1, floor((w - 20 - nameMin) / colW).toInt()))
     val spark = w - 20 - nameMin - cols * colW >= sparkW + 6
-    val labels = cols > 1 || w >= 220
+    // column headings name the stats; a narrow single-account widget names its one stat under each project instead,
+    // but with several accounts that line names the account, so the headings are the only place left for it
+    val labels = cols > 1 || w >= 220 || ui.multi
     val hidden = total - rows.size // the server lists at most 30 projects
     // all rows fit at their normal height: stretch them to fill the widget; otherwise scroll. Glance drops the
     // children of a container past the 10th, so stretched rows get a column of their own and gaps are padding.

@@ -8,6 +8,7 @@ import * as FR from '../frustration';
 import * as C from '../cohorts';
 import * as G from '../goals';
 import * as GF from '../funnel';
+import * as FL from '../flows';
 import { SLACK_TEMPLATE_VARIABLES, TRIGGER_WINDOWS, type Dashboard, type Project, type Trigger } from '../../contract';
 import { OPS } from '../filters';
 import * as M from '../monitor';
@@ -682,6 +683,24 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
       const { dims: _d, ...f } = await GF.goalFunnel(pid, String(a.goalId), windowParams(a));
       return f;
     },
+  );
+
+  projectTool(
+    'user_flows',
+    'User flows: paths, drop-off and errors',
+    `How sessions move through the site: the pages they view one after another (reloads collapsed), from the entry page or from the first view of \`start\`, for ${FL.MIN_STEPS}-${FL.MAX_STEPS} steps (default ${FL.DEFAULT_STEPS}). Per step the top ${FL.TOP_PAGES} pages (the rest as "(other)") with sessions, how many left after that page (\`exits\`; on the last step the rest went on), and how many hit a JavaScript error or failed request there (\`errors\`, \`errorExits\`: of those, how many left; \`topErrors\`). \`links\` are the sessions going from one page to the next. \`exitPages\` ranks pages by sessions that ended on them, with the exit rate and the same counts for sessions that hit an error there. \`filters\` choose sessions: a session counts when any of its events matches. Use it for "where do people drop off" or "do errors make people leave". Only covers raw data (the project's retention).`,
+    {
+      ...windowShape,
+      start: z.string().optional().describe('Start at this page path, e.g. "/pricing" (default: the entry page)'),
+      steps: z.number().int().min(FL.MIN_STEPS).max(FL.MAX_STEPS).optional().describe(`Steps to follow (default ${FL.DEFAULT_STEPS})`),
+      filters: z.array(eventFilter).max(20).optional().describe('Event filters: sessions with at least one matching event'),
+    },
+    (pid, a) => FL.flows(pid, {
+      ...windowParams(a),
+      start: a.start ? String(a.start) : undefined,
+      steps: a.steps != null ? String(a.steps) : undefined,
+      filters: (a.filters as unknown[] | undefined)?.length ? JSON.stringify(a.filters) : undefined,
+    }),
   );
 
   projectTool(

@@ -40,6 +40,8 @@ from your real users, without any extra code. Events show up within seconds.
 - 😤 See where visitors get stuck: rage clicks, dead clicks (the page did nothing) and clicks followed by an error,
   per element, each with the recordings behind it.
 - 🔥 A click heatmap for any page, on desktop or mobile, drawn over a snapshot of the page when recordings are on.
+- 🔀 User flows: the paths visitors take page by page, where they leave, and where they hit errors on the way.
+  Start from any page to see where people go next.
 - 🔁 Retention cohorts: who comes back after their first visit or first conversion, by day, week or month, up to
   400 days back.
 - 🧩 Readable stack traces from minified code: upload your source maps from CI with one command. Suppress noise,
@@ -181,7 +183,7 @@ chat.
 - 🚀 Ask it to "add WGO to this site": it creates the project and pastes the script tag, with the new write key
   filled in, into your code.
 - 🧰 Twenty-eight tools cover project setup, the overview, top pages and clicks, click names, frustration,
-  conversion goals and funnels, retention, errors, failed requests, releases, explanations of a change, Web Vitals,
+  conversion goals and funnels, user flows, retention, errors, failed requests, releases, explanations of a change, Web Vitals,
   visitor locations, recordings, uptime, traces, logs and metrics. Ask for "sessions that hovered the buy button but never clicked it".
 
 ```sh

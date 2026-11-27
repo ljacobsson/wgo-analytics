@@ -2,9 +2,9 @@
   "file": "wgo-android.apk",
   "applicationId": "tools.lars.wgo",
   "versionName": "1.0.0",
-  "versionCode": 29925355,
+  "versionCode": 29929670,
   "size": 3042719,
-  "sha256": "76cc2e107c66be2c4f1d707c6b44241b844bdd844ac14ef032096e2d580655d7",
+  "sha256": "70841933a13d30d2353b54e5be43e9f2d1802e07eedae79cf19b3728a50a3d3a",
   "certSha256": "5A:B2:55:23:2C:E5:66:B8:6B:18:B5:42:41:DB:08:8E:5D:05:DF:07:0F:CD:08:28:CE:3E:D6:D5:6B:17:9E:E2",
-  "builtAt": "2026-11-24T11:56:53Z"
+  "builtAt": "2026-11-27T11:51:04Z"
 }

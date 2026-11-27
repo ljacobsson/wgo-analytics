@@ -2,6 +2,7 @@ import * as A from './analytics';
 import * as F from './frustration';
 import * as C from './cohorts';
 import * as G from './goals';
+import * as FL from './flows';
 import * as REL from './releases';
 import * as EX from './explain';
 import * as QY from './query';
@@ -30,6 +31,7 @@ export const READ_ROUTES: Record<string, ProjectRoute> = {
   events: (pid, q) => A.events(pid, q),
   conversions: (pid, q) => G.conversions(pid, q),
   retention: (pid, q) => C.retention(pid, q),
+  flows: (pid, q) => FL.flows(pid, q),
   traces: (pid, q, rest) => (rest[0] ? A.trace(pid, rest[0], q) : A.traces(pid, q)),
   services: (pid, q) => A.services(pid, q),
   logs: (pid, q) => A.logs(pid, q),

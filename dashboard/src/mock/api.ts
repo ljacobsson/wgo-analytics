@@ -3,6 +3,7 @@ import * as FIX from './fixes';
 import type { ClickAlias, ClickAliasInput, Device, Goal, GoalInput, Kiosk, KioskConfig, KioskState, Member, Project, SavedView, SavedViewInput, SlackIntegration, Trigger, TriggerInput, UptimeCheckInput } from '../api/contract';
 import * as D from './data';
 import { funnel } from './funnel';
+import * as FLOWS from './flows';
 import { hex } from './rng';
 import * as F from './filters';
 import * as REC from './recordings';
@@ -296,6 +297,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     }
     case 'conversions': return D.conversions(from, to, db.goals?.[pid] ?? [], F.parse(qp('filters')), qp('series') !== '0');
     case 'retention': return mockRetention(url.searchParams, now, db.goals?.[pid] ?? []);
+    case 'flows': return FLOWS.flows(from, to, F.parse(qp('filters')), qp('start')?.trim() || null, FLOWS.parseSteps(qp('steps')));
     case 'triggers': {
       const list = ((db.triggers ??= {})[pid] ??= []);
       const [, , , id, action] = parts;

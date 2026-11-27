@@ -85,7 +85,7 @@ export const describeFilter = (f: Filter) => {
 
 /** The filter scope each filterable page shows, and the page that lists each scope's rows. */
 export const PAGE_SCOPE: Record<string, FilterScope> = {
-  overview: 'events', clicks: 'events', errors: 'events', network: 'events', events: 'events', goals: 'events', logs: 'logs', traces: 'spans',
+  overview: 'events', clicks: 'events', errors: 'events', network: 'events', events: 'events', goals: 'events', flows: 'events', logs: 'logs', traces: 'spans',
 };
 export const SCOPE_PAGE: Record<FilterScope, string> = { events: 'events', logs: 'logs', spans: 'traces' };
 export const SCOPE_LABEL: Record<FilterScope, string> = { events: 'Product events', logs: 'Logs', spans: 'Spans' };
