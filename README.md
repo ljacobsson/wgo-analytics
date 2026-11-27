@@ -484,6 +484,16 @@ captured automatically:
 custom events, and `WGO.status()` in the browser console shows what the SDK is doing. See
 [sdk/README.md](sdk/README.md) for options, npm usage, frameworks and tag managers.
 
+### Flutter apps
+
+The [Flutter SDK](flutter/README.md) sends screen views, taps, errors and failed requests from iOS, Android and
+desktop apps to the same project, with the same write key:
+
+```dart
+await Wgo.init(const WgoConfig(writeKey: 'wk_…', endpoint: 'https://wgo.example.com'));
+runApp(MaterialApp(navigatorObservers: [WgoNavigatorObserver()], …));
+```
+
 ### Backends (OpenTelemetry)
 
 Point any OTLP/HTTP exporter at your WGO with the project's write key:
@@ -709,6 +719,7 @@ See [android/README.md](android/README.md).
 | Path | What |
 |---|---|
 | [sdk/](sdk/) | Browser SDK: autocapture, intelligent buffering, offline persistence. [README](sdk/README.md) |
+| [flutter/](flutter/) | Flutter SDK: screen views, taps, errors and failed requests from apps. [README](flutter/README.md) |
 | [backend/](backend/) | AWS SAM app: ingest, OTLP, dashboard API, WebSocket live feed, MCP server, DSQL schema migration |
 | [dashboard/](dashboard/) | React dashboard: accounts, projects, install snippets, analytics, live watches, map, traces/logs/metrics |
 | [android/](android/) | Android home-screen widget app. [README](android/README.md) |

@@ -10,6 +10,7 @@ export function parseUserAgent(ua: string): UaInfo {
 
   const browser =
     /bot|crawl|spider|slurp|headless/i.test(ua) ? 'Bot'
+    : /^wgo-flutter\//.test(ua) ? 'Flutter app' // the Flutter SDK (flutter/lib/src/device.dart)
     : /Edg\//.test(ua) ? 'Edge'
     : /OPR\/|Opera/.test(ua) ? 'Opera'
     : /SamsungBrowser/.test(ua) ? 'Samsung Internet'

@@ -79,6 +79,13 @@ describe('errorFingerprint', () => {
     expect(a).toBe(b);
     expect(a).not.toBe(c);
   });
+
+  it('groups Dart stacks from the Flutter SDK by their first frame', () => {
+    const at = (fn: string, line: number) => `#0      ${fn} (package:shop/cart.dart:${line}:7)\n#1      _InkResponseState.handleTap (package:flutter/src/material/ink_well.dart:1170:21)`;
+    const a = errorFingerprint('Bad state: cart empty', at('CartPage.checkout', 42), null, 'error');
+    expect(errorFingerprint('Bad state: cart empty', at('CartPage.checkout', 57), null, 'error')).toBe(a);
+    expect(errorFingerprint('Bad state: cart empty', at('CartPage.clear', 42), null, 'error')).not.toBe(a);
+  });
 });
 
 describe('normalizeRoute', () => {
@@ -96,6 +103,16 @@ describe('parseUserAgent', () => {
       .toEqual({ browser: 'Safari', os: 'iOS', device: 'mobile' });
     expect(parseUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0')).toEqual({ browser: 'Firefox', os: 'Windows', device: 'desktop' });
     expect(parseUserAgent('Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/131 Safari/537.36 Edg/131')).toMatchObject({ browser: 'Edge' });
+  });
+
+  it('reads the Flutter SDK\'s user agents', () => {
+    expect(parseUserAgent('wgo-flutter/0.1.0 (Linux; Android; Mobile)')).toEqual({ browser: 'Flutter app', os: 'Android', device: 'mobile' });
+    expect(parseUserAgent('wgo-flutter/0.1.0 (Linux; Android)')).toEqual({ browser: 'Flutter app', os: 'Android', device: 'tablet' });
+    expect(parseUserAgent('wgo-flutter/0.1.0 (iPhone; iOS)')).toEqual({ browser: 'Flutter app', os: 'iOS', device: 'mobile' });
+    expect(parseUserAgent('wgo-flutter/0.1.0 (iPad; iOS)')).toEqual({ browser: 'Flutter app', os: 'iOS', device: 'tablet' });
+    expect(parseUserAgent('wgo-flutter/0.1.0 (Macintosh; Mac OS X)')).toEqual({ browser: 'Flutter app', os: 'macOS', device: 'desktop' });
+    expect(parseUserAgent('wgo-flutter/0.1.0 (Windows)')).toEqual({ browser: 'Flutter app', os: 'Windows', device: 'desktop' });
+    expect(parseUserAgent('wgo-flutter/0.1.0 (X11; Linux)')).toEqual({ browser: 'Flutter app', os: 'Linux', device: 'desktop' });
   });
 });
 

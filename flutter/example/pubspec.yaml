@@ -1,0 +1,12 @@
+name: wgo_flutter_example
+description: A small app that sends screen views, taps, errors and failed requests to WGO.
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  wgo_flutter:
+    path: ..

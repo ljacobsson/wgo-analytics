@@ -202,10 +202,11 @@ export function errorFingerprint(message: string, stack: string | null, source: 
     .replace(/\b[0-9a-f]{8,}\b/gi, '<hex>')
     .replace(/\d+/g, '<n>')
     .slice(0, 300);
+  // the first frame: V8 `at fn (url:1:2)`, Firefox/Safari `fn@url:1:2`, or Dart (the Flutter SDK) `#0  fn (package:app/x.dart:1:2)`
   const frame = stack
     ?.split('\n')
     .map((l) => l.trim())
-    .find((l) => /^at |@/.test(l))
+    .find((l) => /^at |@|^#\d+\s/.test(l))
     ?.replace(/:\d+:\d+\)?$/, '')
     .replace(/\?[^\s)]*/, '');
   const basis = [kind ?? '', msg, frame ?? (kind === 'resource' ? source ?? '' : '')].join('|');
