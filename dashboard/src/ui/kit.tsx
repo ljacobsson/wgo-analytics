@@ -148,12 +148,23 @@ export function Drawer({ open, onClose, title, children, width = 640 }: { open: 
 }
 export function Dialog({ open, onClose, title, children, footer, width = 460 }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; width?: number }) {
   useEsc(onClose, open);
+  // Close only on a press that both started and ended on the backdrop. Selecting text in a field and releasing the
+  // mouse outside the dialog (or the reverse) also ends in a click on the backdrop: the browser targets the common
+  // ancestor.
+  const pressedBackdrop = useRef(false);
+  const releasedBackdrop = useRef(false);
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-[60] overflow-y-auto">
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm anim-fade" />
       {/* Tall dialogs scroll with the page instead of being cut off at the top and bottom. */}
-      <div className="relative flex min-h-full items-center justify-center p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="relative flex min-h-full items-center justify-center p-3 sm:p-4"
+        onPointerDown={(e) => { pressedBackdrop.current = e.target === e.currentTarget; }}
+        onPointerUp={(e) => { releasedBackdrop.current = e.target === e.currentTarget; }}
+        onClick={(e) => {
+          if (pressedBackdrop.current && releasedBackdrop.current && e.target === e.currentTarget) onClose();
+          pressedBackdrop.current = releasedBackdrop.current = false;
+        }}>
       <div className="anim-pop relative w-full rounded-2xl border border-line bg-[var(--raised)] shadow-2xl" style={{ maxWidth: width }}>
         <div className="flex items-center justify-between px-5 pt-4"><h3 className="text-[15px] font-semibold">{title}</h3>
           <button onClick={onClose} className="rounded-md p-1 text-muted hover:bg-[var(--hl)] cursor-pointer"><X size={17} /></button></div>
