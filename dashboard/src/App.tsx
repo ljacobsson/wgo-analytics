@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { Project } from './api/contract';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from './auth/cognito';
@@ -39,6 +39,9 @@ import { OtelDocs } from './docs/OtelDocs';
 import { Docs } from './docs/Docs';
 import { DashboardsPage } from './dashboards/DashboardsPage';
 import { DashboardPage } from './dashboards/DashboardPage';
+
+// the SQL editor brings CodeMirror: loaded only when the page is opened
+const SqlPage = lazy(() => import('./pages/Sql'));
 
 function Authed({ email }: { email: string }) {
   const me = useMe();
@@ -86,6 +89,7 @@ function Authed({ email }: { email: string }) {
       case 'widget': return <WidgetPage />;
       case 'kiosks': return <KiosksPage />;
       case 'uptime': return <UptimePage />;
+      case 'sql': return <Suspense fallback={<Skeleton className="h-[70vh]" />}><SqlPage /></Suspense>;
       case 'costs': return <CostsPage />;
       case 'fix-agent': return <GithubAgentPage />;
       case 'mcp': return <McpPage />;

@@ -135,6 +135,11 @@ Resources:
             Status: Enabled
             Prefix: sites/
             ExpirationInDays: 30
+          # SQL editor exports (lib/sql.ts): downloaded through a 15-minute link right after they're written
+          - Id: expire-sql-exports
+            Status: Enabled
+            Prefix: exports/
+            ExpirationInDays: 1
 
   # DuckDB (bindings + httpfs) for the functions that query raw data; built by layers/duckdb/Makefile
   DuckDbLayer:
@@ -542,6 +547,8 @@ Resources:
       CodeUri: ./
       Handler: api.handler
       MemorySize: 2048
+      # SQL editor queries run up to 24 s (lib/sql.ts); API Gateway gives up at 30 s
+      Timeout: 29
       Layers: [!Ref DuckDbLayer]
       Environment:
         Variables:

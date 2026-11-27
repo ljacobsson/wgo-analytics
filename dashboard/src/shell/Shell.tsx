@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronsUpDown, Check, Plus, LayoutGrid, Search, RefreshCw, Sun, Moon, LogOut, PanelLeft, History, Menu, X } from 'lucide-react';
+import { ChevronsUpDown, Check, Plus, LayoutGrid, Search, RefreshCw, Sun, Moon, BookOpen, LogOut, PanelLeft, History, Menu, X } from 'lucide-react';
 import { Logo, LogoMark } from '../ui/Logo';
-import { PAGES, useProject } from '../lib/project';
+import { NAV_GROUPS, PAGES, useProject } from '../lib/project';
 import { navigate, pageHref, useRoute } from '../lib/router';
 import { resolveRange, TimeCtx, type TimeRange } from '../lib/time';
 import { prefetchPage, useCollection, useMe } from '../api/hooks';
@@ -18,6 +18,8 @@ import { signOut } from '../auth/cognito';
 import { Kbd, Switch } from '../ui/kit';
 import { cn } from '../lib/format';
 import { useLive } from '../live/store';
+
+const DOCS_URL = 'https://wgo-analytics.com/docs/';
 
 export function useTheme() {
   const [t, setT] = useState<'dark' | 'light'>(() => (document.documentElement.dataset.theme as 'dark' | 'light') || 'dark');
@@ -119,7 +121,15 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
   }, [project.id, paramsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const title = page === 'settings' ? 'Settings' : page === 'widget' ? 'Mobile widget' : page === 'kiosks' ? 'Kiosks' : page === 'costs' ? 'Costs' : page === 'fix-agent' ? 'GitHub Agent' : page === 'mcp' ? 'AI assistants (MCP)' : PAGES.find((p) => p.id === page)?.label ?? '';
-  const groups = ['Product', 'Observability'] as const;
+  // Pages outside PAGES that sit in the "Connect" section, after Triggers.
+  const connectExtras: [string, string][] = [
+    ...((me.data?.features?.fixAgent || me.data?.admin) ? [['fix-agent', 'GitHub Agent'] as [string, string]] : []),
+    ['mcp', 'AI assistants (MCP)'], ['kiosks', 'Kiosks'], ['widget', 'Mobile widget'],
+  ];
+  const sections = NAV_GROUPS.map((g) => ({
+    group: g,
+    items: [...PAGES.filter((p) => p.group === g).map((p) => [p.id, p.label] as [string, string]), ...(g === 'Connect' ? connectExtras : [])],
+  }));
 
   const navItem = (id: string, label: string) => (
     <a key={id} href={'#' + pageHref(project.id, id, route.params)} title={collapsed ? label : undefined}
@@ -145,20 +155,18 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
               : !collapsed && <button onClick={() => setForceOpen(false)} className="rounded-md p-1 text-faint hover:text-fg cursor-pointer" title="Collapse"><PanelLeft size={15} /></button>}
           </div>
           <ProjectSwitcher collapsed={collapsed} />
-          <nav className="mt-5 flex-1 space-y-5 overflow-y-auto">
-            {groups.map((g) => (
-              <div key={g}>
-                {!collapsed && <div className="mb-1 px-2.5 text-[10.5px] font-semibold uppercase tracking-wider text-faint">{g}</div>}
-                <div className="space-y-0.5">{PAGES.filter((p) => p.group === g).map((p) => navItem(p.id, p.label))}</div>
+          <nav className={cn('mt-4 flex-1 overflow-y-auto', collapsed ? 'space-y-2' : 'space-y-4')}>
+            {sections.map(({ group, items }, i) => (
+              <div key={group}>
+                {i > 0 && (collapsed
+                  ? <div className="mx-auto mb-2 h-px w-6 bg-[var(--line-strong)]" />
+                  : <div className="mb-1 px-2.5 text-[12px] font-medium text-faint">{group}</div>)}
+                <div className="space-y-0.5">{items.map(([id, label]) => navItem(id, label))}</div>
               </div>
             ))}
           </nav>
           <div className="space-y-1 border-t border-line pt-3">
-            {navItem('kiosks', 'Kiosks')}
-            {navItem('widget', 'Mobile widget')}
-            {navItem('mcp', 'AI assistants (MCP)')}
             {me.data?.admin && navItem('costs', 'Costs')}
-            {(me.data?.features?.fixAgent || me.data?.admin) && navItem('fix-agent', 'GitHub Agent')}
             {navItem('settings', 'Settings')}
             <div className={cn('flex items-center gap-2 rounded-lg px-2 py-1.5', collapsed && 'justify-center px-0')}>
               {collapsed ? (
@@ -166,6 +174,7 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
               ) : (<>
                 <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--line-strong)] text-[11px] font-semibold">{email.slice(0, 1).toUpperCase()}</span>
                 <span className="min-w-0 flex-1 truncate text-[12px] text-muted" title={email}>{email}</span>
+                {mobile && <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" title="Docs" className="rounded-md p-1 text-faint hover:text-fg"><BookOpen size={14} /></a>}
                 {mobile && <button onClick={toggleTheme} title="Toggle theme" className="rounded-md p-1 text-faint hover:text-fg cursor-pointer">{theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}</button>}
                 <button onClick={() => void signOut()} title="Sign out" className="rounded-md p-1 text-faint hover:text-fg cursor-pointer"><LogOut size={14} /></button>
               </>)}
@@ -191,6 +200,7 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
                 <span className="hidden sm:contents"><Switch checked={auto} onChange={setAuto} label="Auto" /></span>
               </div>
               {!mobile && <button onClick={toggleTheme} title="Toggle theme" className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-[var(--hl)] text-muted hover:text-fg cursor-pointer">{theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}</button>}
+              {!mobile && <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" title="Docs" aria-label="Docs" className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-[var(--hl)] text-muted hover:text-fg"><BookOpen size={15} /></a>}
             </div>
           </header>
           <main className="min-h-0 flex-1 overflow-y-auto"><div key={page} className="page-in mx-auto w-full max-w-[1680px] p-3 sm:p-4 md:p-6"><RetentionNote page={page} range={range} /><CollectionPausedBanner pid={project.id} paused={!!collection.data?.paused} />{children}</div></main>

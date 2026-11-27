@@ -19,6 +19,8 @@ export interface Location {
   get(key: string): Promise<Uint8Array | null>;
   /** presigned URL for a client PUT of `key`; null when there is no S3 (local directory) */
   presignPut(key: string, expiresInSeconds: number): Promise<string | null>;
+  /** presigned URL that downloads `key` as an attachment named `filename`; null when there is no S3 (local directory) */
+  presignGet(key: string, expiresInSeconds: number, filename: string): Promise<string | null>;
   /** keys under `prefix` in lexicographic order, after `startAfter`, until `until` returns true for a key */
   list(prefix: string, opts?: { startAfter?: string; until?: (key: string) => boolean }): Promise<StoredFile[]>;
   remove(keys: string[]): Promise<void>;
@@ -72,6 +74,9 @@ function localLocation(root: string): Location {
     async presignPut() {
       return null;
     },
+    async presignGet() {
+      return null;
+    },
     async list(prefix, opts = {}) {
       const base = prefix.endsWith('/') ? prefix : prefix.slice(0, prefix.lastIndexOf('/') + 1);
       const out: StoredFile[] = [];
@@ -122,6 +127,11 @@ function s3Location(bucket: string, root: string): Location {
     async presignPut(key, expiresInSeconds) {
       const [{ PutObjectCommand }, { getSignedUrl }] = await Promise.all([import('@aws-sdk/client-s3'), import('@aws-sdk/s3-request-presigner')]);
       return getSignedUrl(await s3(), new PutObjectCommand({ Bucket: bucket, Key: root + key }), { expiresIn: expiresInSeconds });
+    },
+    async presignGet(key, expiresInSeconds, filename) {
+      const [{ GetObjectCommand }, { getSignedUrl }] = await Promise.all([import('@aws-sdk/client-s3'), import('@aws-sdk/s3-request-presigner')]);
+      const disposition = `attachment; filename="${filename.replace(/[^\w.-]/g, '_')}"`;
+      return getSignedUrl(await s3(), new GetObjectCommand({ Bucket: bucket, Key: root + key, ResponseContentDisposition: disposition }), { expiresIn: expiresInSeconds });
     },
     async list(prefix, opts = {}) {
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');

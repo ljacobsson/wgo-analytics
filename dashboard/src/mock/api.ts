@@ -16,6 +16,7 @@ import { retention as mockRetention } from './retention';
 interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; recordingSettings?: Record<string, RecordingSettings>; uploadKeys?: Record<string, string> }
 import * as UP from './uptime';
 import * as QY from './query';
+import * as SQLM from './sql';
 import type { Dashboard, DashboardInput, DashboardSummary, DashboardTile } from '../api/contract';
 import { mockSite, mockSiteImage } from './site';
 
@@ -477,6 +478,15 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     case 'explain': return EX.explain({ metric: (qp('metric') ?? 'events') as never, where: F.parse(qp('where')), goalId: qp('goalId'), label: qp('label'), from, to, goals: db.goals?.[pid] ?? [] });
     case 'releases': return REL.releases(from, to, db.goals?.[pid] ?? [], qp('markers') === '1');
     case 'geo': return D.geo(from, to);
+    case 'sql':
+      try {
+        if (parts[3] === 'schema') return SQLM.sqlSchema();
+        if (method !== 'POST') throw new MockHttpError(405, 'Method not allowed');
+        return parts[3] === 'export' ? SQLM.sqlExport(body as never) : SQLM.sqlRun(body as never);
+      } catch (e) {
+        if (e instanceof SQLM.SqlMockError) throw new MockHttpError(400, e.message);
+        throw e;
+      }
     case 'query': {
       let spec;
       try { spec = JSON.parse(qp('q') ?? ''); } catch { throw new MockHttpError(400, 'q must be JSON'); }

@@ -25,6 +25,7 @@ import * as T from '../lib/triggers';
 import * as SUP from '../lib/suppressions';
 import * as M from '../lib/monitor';
 import * as V from '../lib/views';
+import * as SQL from '../lib/sql';
 
 type Q = Record<string, string | undefined>;
 
@@ -292,6 +293,15 @@ async function route(method: string, parts: string[], q: Q, email: string, event
     if (!id && method === 'POST') return FX.startRun(pid, email, jsonBody(event));
     if (id && !action && method === 'GET') return FX.getRun(pid, id);
     if (id && action === 'cancel' && method === 'POST') return FX.cancelRun(pid, id);
+    throw new HttpError(405, 'Method not allowed');
+  }
+
+  // the SQL editor (lib/sql.ts): any member, never on kiosks
+  if (sub === 'sql') {
+    const project = await P.getProject(email, pid); // authorization: caller must be a member
+    if (!rest[0] && method === 'POST') return SQL.run(pid, jsonBody(event));
+    if (rest[0] === 'export' && method === 'POST') return SQL.exportResult(pid, jsonBody(event), project.name);
+    if (rest[0] === 'schema' && method === 'GET') return SQL.schema();
     throw new HttpError(405, 'Method not allowed');
   }
 

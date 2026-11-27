@@ -11,6 +11,7 @@ import type {
   Dashboard, DashboardInput, DashboardSummary, DashboardTile, MeasureNames, QueryResult, QuerySpec,
   FixRun, FixSettings, FixSettingsInput, GithubAppStatus, GithubManifestForm, GithubRepo, FixAgentAdmin, FixAgentConfigInput, FixTarget, FixTargetInfo, InstallFeatures, InstallSettings,
 } from './contract';
+import type { SqlExport, SqlExportRequest, SqlRequest, SqlResult, SqlSchema } from './contract';
 import { previousWindow, type TimeRange } from '../lib/time';
 import { botsParam, filtersParam, type FieldScope } from '../lib/filters';
 
@@ -793,3 +794,9 @@ function useInstallMutation<T>(fn: (b: T) => Promise<InstallSettings>) {
 export const useSetMcp = () => useInstallMutation((enabled: boolean) => api<InstallSettings>('/api/install/mcp', { method: 'PATCH', body: { enabled } }));
 export const useSetSlackApp = () => useInstallMutation((b: { clientId: string; clientSecret?: string }) => api<InstallSettings>('/api/install/slack', { method: 'PUT', body: b }));
 export const useDeleteSlackApp = () => useInstallMutation((_: void) => api<InstallSettings>('/api/install/slack', { method: 'DELETE' }));
+
+// ---------- SQL editor ----------
+export const useSqlSchema = (pid: string) =>
+  useQuery({ queryKey: ['sql-schema', pid], queryFn: ({ signal }) => api<SqlSchema>(`${base(pid)}/sql/schema`, { signal }), staleTime: Infinity });
+export const runSql = (pid: string, req: SqlRequest, signal?: AbortSignal) => api<SqlResult>(`${base(pid)}/sql`, { method: 'POST', body: req, signal });
+export const exportSql = (pid: string, req: SqlExportRequest, signal?: AbortSignal) => api<SqlExport>(`${base(pid)}/sql/export`, { method: 'POST', body: req, signal });

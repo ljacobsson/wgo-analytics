@@ -29,9 +29,22 @@ const sqlString = (s: string) => `'${s.replace(/'/g, "''")}'`;
  * Loaded with require: deployed, the package comes from the DuckDB layer (/opt/nodejs/node_modules), which
  * Lambda puts on NODE_PATH. require() honours NODE_PATH, import() does not.
  */
-function loadDuckDb(): typeof import('@duckdb/node-api') {
+export function loadDuckDb(): typeof import('@duckdb/node-api') {
   const req = typeof require === 'function' ? require : createRequire(import.meta.url);
   return req('@duckdb/node-api');
+}
+
+/** CREATE SECRET for the data bucket (deployed), from the function's own credentials; null for a local store. */
+export function storeSecretSql(name = 'store'): string | null {
+  if (!location().s3) return null;
+  const e = process.env;
+  const parts = [
+    'TYPE s3',
+    `REGION ${sqlString(e.AWS_REGION ?? 'us-east-1')}`,
+    ...(e.AWS_ACCESS_KEY_ID ? [`KEY_ID ${sqlString(e.AWS_ACCESS_KEY_ID)}`, `SECRET ${sqlString(e.AWS_SECRET_ACCESS_KEY ?? '')}`] : []),
+    ...(e.AWS_SESSION_TOKEN ? [`SESSION_TOKEN ${sqlString(e.AWS_SESSION_TOKEN)}`] : []),
+  ];
+  return `CREATE SECRET ${name} (${parts.join(', ')})`;
 }
 
 async function createInstance(): Promise<DuckDBInstance> {
@@ -62,16 +75,10 @@ async function createInstance(): Promise<DuckDBInstance> {
   }
   const inst = await DuckDBInstance.create(':memory:', opts);
   const c = await inst.connect();
-  if (location().s3) {
+  const secret = storeSecretSql();
+  if (secret) {
     await c.run('LOAD httpfs');
-    const e = process.env;
-    const parts = [
-      'TYPE s3',
-      `REGION ${sqlString(e.AWS_REGION ?? 'us-east-1')}`,
-      ...(e.AWS_ACCESS_KEY_ID ? [`KEY_ID ${sqlString(e.AWS_ACCESS_KEY_ID)}`, `SECRET ${sqlString(e.AWS_SECRET_ACCESS_KEY ?? '')}`] : []),
-      ...(e.AWS_SESSION_TOKEN ? [`SESSION_TOKEN ${sqlString(e.AWS_SESSION_TOKEN)}`] : []),
-    ];
-    await c.run(`CREATE SECRET store (${parts.join(', ')})`);
+    await c.run(secret);
   }
   // typed empty tables: every view unions with one, so a range without files (or files from before a column
   // was added) still has every column with the right type
@@ -171,10 +178,10 @@ export const isMerged = (key: string) => key.slice(key.lastIndexOf('/') + 1).sta
  * the table's key (an SDK retry or SQS redelivery writes the same rows twice); those files are the recent,
  * small ones, so this stays cheap.
  */
-export function relation(table: RawTable, files: StoredFile[]): string {
+export function relation(table: RawTable, files: StoredFile[], empty = `empty_${table}`): string {
   const merged = files.filter((f) => isMerged(f.key));
   const fresh = files.filter((f) => !isMerged(f.key));
-  const parts = [`SELECT * FROM empty_${table}`];
+  const parts = [`SELECT * FROM ${empty}`];
   if (merged.length) parts.push(`SELECT * FROM ${readFiles(merged)}`);
   if (fresh.length) {
     parts.push(`SELECT * FROM (SELECT * FROM ${readFiles(fresh)} QUALIFY row_number() OVER (PARTITION BY ${TABLES[table].key.join(', ')}) = 1)`);
@@ -216,10 +223,16 @@ const resolvedEvents = (pid: string, rel: string) =>
   `SELECT e.* REPLACE (coalesce(e.user_id, i.user_id) AS user_id) FROM (${rel}) e
    LEFT JOIN identities i ON i.project_id = ${sqlString(pid)} AND i.anon_id = e.anon_id`;
 
+/** The project's anon_id → user_id pairs, brought up to date first (see syncIdentities). */
+export async function identityPairs(pid: string): Promise<Array<{ anon_id: string; user_id: string }>> {
+  if (!(await syncIdentities(pid, (rows) => insertIdentities(pid, rows)))) return [];
+  return duckQuery('SELECT anon_id, user_id FROM identities WHERE project_id = $1', [pid]);
+}
+
 const TABLE_REF = new RegExp(`\\b(?:FROM|JOIN)\\s+(${RAW_TABLES.join('|')})\\b`, 'gi');
 
 /** True for errors that mean a listed file disappeared (merged or expired) before it was read. */
-const isMissingFile = (err: unknown) => /404|No files found|No such file|not found|does not exist|NoSuchKey/i.test((err as Error)?.message ?? '');
+export const isMissingFile =(err: unknown) => /404|No files found|No such file|not found|does not exist|NoSuchKey/i.test((err as Error)?.message ?? '');
 
 /**
  * Query raw tables of one project over a time window. Every raw table named after FROM/JOIN reads only the

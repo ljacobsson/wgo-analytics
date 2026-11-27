@@ -1489,6 +1489,63 @@ export interface MeasureNames {
   metrics: Array<{ name: string; type: MetricInfo['type']; unit: string | null; description: string | null }>;
 }
 
+// ---------- SQL editor ----------
+// DuckDB SQL over the project's raw tables, for project members (not kiosks). Read-only and sandboxed: the query
+// sees this project's tables and nothing else (no files, no network, no settings).
+// POST /api/projects/{pid}/sql          body SqlRequest       -> SqlResult
+// POST /api/projects/{pid}/sql/export   body SqlExportRequest -> SqlExport
+// GET  /api/projects/{pid}/sql/schema                          -> SqlSchema
+// Every table holds the rows of [from, to) only (default the last 24 hours, at most 92 days). One statement per
+// request. A query that fails is a 400 with DuckDB's message, which usually ends in a `LINE n: …` excerpt with a ^
+// under the position.
+export interface SqlRequest {
+  sql: string;
+  from?: string;
+  to?: string;
+  limit?: number; // rows to return: default 1000, max 10000
+}
+export interface SqlColumn {
+  name: string;
+  type: string; // DuckDB type: VARCHAR, TIMESTAMP, JSON, BIGINT, INTEGER[], STRUCT(...)
+}
+export interface SqlResult {
+  columns: SqlColumn[];
+  // one array per row in column order. Numbers are numbers (strings past 2^53), timestamps 'YYYY-MM-DD HH:MM:SS[.fff]'
+  // in UTC, JSON columns parsed, lists arrays, structs objects, maps [{ key, value }]
+  rows: unknown[][];
+  truncated: boolean; // there were more rows than `limit`, or than fit in one response
+  elapsedMs: number;
+  scanned: { files: number; bytes: number }; // the Parquet files behind the tables the query used
+}
+export interface SqlExportRequest {
+  sql: string;
+  from?: string;
+  to?: string;
+  format: 'csv' | 'ndjson';
+}
+export interface SqlExport {
+  url: string | null; // download link, valid for 15 minutes. null from a local dev server, which sends `content` instead
+  content?: string;
+  filename: string;
+  rows: number;
+}
+export interface SqlSchema {
+  tables: Array<{
+    name: string;
+    description: string;
+    timeColumn: string;
+    columns: Array<{ name: string; type: string; description?: string }>;
+  }>;
+  functions: Array<{
+    name: string;
+    kind: 'scalar' | 'aggregate' | 'table' | 'macro' | 'table_macro' | 'pragma';
+    signature: string; // e.g. "date_trunc(part VARCHAR, timestamp TIMESTAMP) → TIMESTAMP"; the first overload
+    overloads: number;
+    description: string | null;
+  }>;
+  keywords: string[];
+}
+
 // ---------- custom dashboards ----------
 // A dashboard belongs to its project: every member sees and edits it.
 // GET    /api/projects/{pid}/dashboards                 -> DashboardSummary[] (most recently updated first)
