@@ -11,13 +11,14 @@ import { navigate, pageHref, useRoute } from '../lib/router';
 import { Button } from './kit';
 import { Popover } from './Popover';
 
-/** Link to the Triggers page that opens "New trigger" for these conditions. */
-export function newTriggerHref(pid: string, params: URLSearchParams, scope: FilterScope, filters: Filter[]) {
+/** Link to the Triggers page that opens "New trigger" for these conditions (`name`: start with this name instead of one made from them). */
+export function newTriggerHref(pid: string, params: URLSearchParams, scope: FilterScope, filters: Filter[], name?: string) {
   const p = new URLSearchParams();
   for (const k of ['range', 'from', 'to']) { const v = params.get(k); if (v) p.set(k, v); }
   p.set('new', '1');
   p.set('scope', scope);
   p.set('pf', JSON.stringify(filters));
+  if (name) p.set('name', name);
   return `/p/${pid}/triggers?${p}`;
 }
 

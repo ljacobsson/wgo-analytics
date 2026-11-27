@@ -48,7 +48,7 @@ function isSlackUrl(url: string): boolean {
 }
 const optionLabel = (d: Pick<Destination, 'type' | 'name' | 'detail'>) => `${d.type === 'slack' ? 'Slack ' : ''}${d.name}${d.detail ? ` · ${d.detail}` : ''}`;
 
-interface Prefill { scope: FilterScope; filters: Filter[] }
+interface Prefill { scope: FilterScope; filters: Filter[]; name?: string }
 const NO_PREFILL: Prefill = { scope: 'events', filters: [] };
 const SCOPES: FilterScope[] = ['events', 'logs', 'spans'];
 const SCOPE_HINT: Record<FilterScope, string> = {
@@ -116,8 +116,8 @@ function TriggerDialog({ open, initial, prefill, onClose }: { open: boolean; ini
   useEffect(() => {
     if (!open) return;
     setError('');
-    setName(initial?.name ?? (prefill.filters.length ? suggestName(prefill.scope, prefill.filters) : ''));
-    setNameTouched(!!initial);
+    setName(initial?.name ?? prefill.name ?? (prefill.filters.length ? suggestName(prefill.scope, prefill.filters) : ''));
+    setNameTouched(!!initial || !!prefill.name);
     setScope(initial?.scope ?? prefill.scope);
     setFilters(initial?.filters ?? prefill.filters);
     const d = initial?.destination;
@@ -529,18 +529,18 @@ export function TriggersPage() {
   const triggers = useTriggers(project.id);
   const [dialog, setDialog] = useState<{ open: boolean; t: Trigger | null; prefill: Prefill }>({ open: false, t: null, prefill: NO_PREFILL });
 
-  // "Create trigger" from a filter bar or a table row lands here with ?new=1&scope=…&pf=<filters JSON>
+  // "Create trigger" from a filter bar, a table row or a goal lands here with ?new=1&scope=…&pf=<filters JSON>[&name=…]
   // (older links: the events filters in ?f=)
   const wantsNew = route.params.get('new') === '1';
   const prefill = useMemo((): Prefill => {
     const raw = route.params.get('scope');
     const scope: FilterScope = raw === 'logs' || raw === 'spans' ? raw : 'events';
-    return { scope, filters: decodeFilters(route.params.get('pf') ?? route.params.get(FILTER_PARAM.events)) };
+    return { scope, filters: decodeFilters(route.params.get('pf') ?? route.params.get(FILTER_PARAM.events)), name: route.params.get('name') || undefined };
   }, [route.params]);
   useEffect(() => {
     if (!wantsNew) return;
     setDialog({ open: true, t: null, prefill });
-    set({ new: null, pf: null, scope: null });
+    set({ new: null, pf: null, scope: null, name: null });
   }, [wantsNew]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // back from Slack's consent screen: a workspace was connected, so pick a channel of it

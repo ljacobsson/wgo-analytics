@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ListTree, Pencil, Plus, Target, Trash2, Workflow } from 'lucide-react';
+import { BellPlus, ListTree, Pencil, Plus, Target, Trash2, Workflow } from 'lucide-react';
 import type { ConversionsResponse, Filter, Goal, GoalConversions } from '../api/contract';
 import { useConversions, useDeleteGoal, useGoals, usePreviousConversions, useSaveGoal } from '../api/hooks';
 import { Sparkline } from '../charts/Sparkline';
@@ -14,6 +14,7 @@ import { AddToDashboard } from '../dashboards/AddToDashboard';
 import { FilterBar, FilterChips } from '../ui/FilterBar';
 import { Badge, Button, Card, Delta, Dialog, EmptyState, ErrorState, Field, useToast } from '../ui/kit';
 import { InfoTip } from '../ui/InfoTip';
+import { newTriggerHref } from '../ui/RowActions';
 import { RowsSkeleton, TableHead } from './common';
 
 /** Converting sessions / all sessions, or null when there were no sessions to compare with. */
@@ -90,7 +91,7 @@ function GoalDialog({ open, initial, prefill, onClose }: { open: boolean; initia
   );
 }
 
-const COLS = 'grid-cols-[minmax(220px,2fr)_100px_110px_130px_minmax(120px,1fr)_124px]';
+const COLS = 'grid-cols-[minmax(220px,2fr)_100px_110px_130px_minmax(120px,1fr)_152px]';
 
 function GoalRow({ g, all, prevRate, goal, onEdit }: { g: GoalConversions; all: ConversionsResponse; prevRate: number | null; goal: Goal | undefined; onEdit: (g: Goal) => void }) {
   const { project } = useProject(); const route = useRoute();
@@ -115,6 +116,7 @@ function GoalRow({ g, all, prevRate, goal, onEdit }: { g: GoalConversions; all: 
         <button onClick={() => navigate(goalEventsHref(project.id, route.params, g.filters))} className="rounded-md p-1.5 text-muted hover:bg-[var(--hl)] hover:text-fg cursor-pointer" title="Show this goal’s events"><ListTree size={14} /></button>
         <AddToDashboard label={false} className="!h-auto !border-transparent !px-1.5 !py-1.5 hover:!bg-[var(--hl)]" tile={() => ({ viz: 'number', measures: [{ source: 'events', agg: 'session_rate', filters: g.filters, label: `${g.name} conversion`, unit: 'percent', better: 'up' }] })} />
         {!kiosk && goal && <>
+          <button onClick={() => navigate(newTriggerHref(project.id, route.params, 'events', g.filters, g.name))} className="rounded-md p-1.5 text-muted hover:bg-[var(--hl)] hover:text-fg cursor-pointer" title="Create a trigger for this goal"><BellPlus size={14} /></button>
           <button onClick={() => onEdit(goal)} className="rounded-md p-1.5 text-muted hover:bg-[var(--hl)] hover:text-fg cursor-pointer" title="Edit"><Pencil size={14} /></button>
           <button onClick={() => { if (confirm(`Delete goal “${g.name}”?`)) del.mutate(g.id); }} className="rounded-md p-1.5 text-muted hover:bg-bad/15 hover:text-bad cursor-pointer" title="Delete"><Trash2 size={14} /></button>
         </>}

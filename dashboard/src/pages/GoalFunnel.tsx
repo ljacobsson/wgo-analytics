@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronRight, Filter as FilterIcon, ListTree, Plus, Route, Target, ThumbsDown, ThumbsUp, Trash2, Workflow } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, BellPlus, ChevronDown, ChevronRight, Filter as FilterIcon, ListTree, Plus, Route, Target, ThumbsDown, ThumbsUp, Trash2, Workflow } from 'lucide-react';
 import type { DriverDim, DriverRow, Filter, FunnelStepResult, Goal, GoalFunnel, GoalStep, JourneyRow } from '../api/contract';
 import { useGoalFunnel, useGoals, usePreviousConversions, useSaveGoal } from '../api/hooks';
 import { cn, fmtNum } from '../lib/format';
@@ -12,6 +12,7 @@ import { useTime } from '../lib/time';
 import { AddToDashboard } from '../dashboards/AddToDashboard';
 import { FilterBar, FilterChips, useAddFilter } from '../ui/FilterBar';
 import { InfoTip } from '../ui/InfoTip';
+import { newTriggerHref } from '../ui/RowActions';
 import { Badge, Button, Card, CardHeader, Delta, EmptyState, ErrorState, Segmented, Skeleton, useDebounced, useToast } from '../ui/kit';
 import { RowsSkeleton } from './common';
 import { fmtRate, goalEventsHref, previousRate } from './Goals';
@@ -372,6 +373,7 @@ export function GoalFunnelPage({ goalId }: { goalId: string }) {
         <div className="flex shrink-0 gap-2">
           {goal && <Button onClick={() => navigate(goalEventsHref(project.id, route.params, goal.filters))}><ListTree size={14} />Show events</Button>}
           {goal && <AddToDashboard tile={() => ({ viz: 'number', measures: [{ source: 'events', agg: 'session_rate', filters: goal.filters, label: `${goal.name} conversion`, unit: 'percent', better: 'up' }] })} />}
+          {goal && !isKiosk() && <Button onClick={() => navigate(newTriggerHref(project.id, route.params, 'events', goal.filters, goal.name))}><BellPlus size={14} />Create trigger</Button>}
           {goal && !isKiosk() && !editing && <Button onClick={startEditing}><Workflow size={14} />{goal.steps?.length ? 'Edit steps' : 'Define steps'}</Button>}
         </div>
       </div>
