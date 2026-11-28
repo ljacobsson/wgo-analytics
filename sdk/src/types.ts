@@ -114,6 +114,7 @@ export interface SurveyDisplay {
   mode: 'popover' | 'inline'
   selector?: string
   position?: 'bottom-right' | 'bottom-left'
+  collapse?: 'mobile' | 'always' | 'never'
   layout: 'steps' | 'form'
   theme: 'auto' | 'light' | 'dark'
   accent?: string
@@ -124,9 +125,11 @@ export interface SurveyTargeting {
   paths: string[]
   delaySec?: number
   scrollPct?: number
-  event?: string
+  /** an event on the page matching all of these (see surveys/match.ts) */
+  trigger?: SurveyFilter[]
   frequency: 'once' | 'until_answered' | 'always'
 }
+export interface SurveyFilter { field: string; op: 'eq' | 'neq' | 'contains' | 'not_contains' | 'starts_with' | 'ends_with' | 'gt' | 'gte' | 'lt' | 'lte' | 'set' | 'not_set'; value?: string }
 export interface PublicSurvey { id: string; name: string; questions: SurveyQuestion[]; display: SurveyDisplay; targeting: SurveyTargeting }
 export type SurveyAnswer = string | string[] | number | boolean
 

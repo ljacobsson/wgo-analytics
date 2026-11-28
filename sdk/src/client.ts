@@ -63,7 +63,7 @@ export class Client {
   subs: ((e: WireEvent) => void)[] = []
   /** @internal the project's recording settings, once this page may record */
   rc?: ReplayConfig
-  /** @internal custom events of this page until wgo-surveys.js takes over (its event triggers look back at them) */
+  /** @internal events of this page until wgo-surveys.js takes over (its event triggers look back at them) */
   ev?: WireEvent[]
   /** @internal the survey WGO.showSurvey() asked for while wgo-surveys.js was loading */
   want?: string
@@ -204,7 +204,7 @@ export class Client {
       }
       this.transport.push(e, o.priority || t === 'error' || t === 'http_error')
       this.subs.forEach((f) => { try { f(e) } catch { /* the recorder must not break tracking */ } })
-      if (t === 'custom' && this.ev && this.ev.push(e) > 20) this.ev.shift()
+      if (this.ev && this.ev.push(e) > 20) this.ev.shift()
       return e
     } catch (err) {
       if (this.cfg.debug) console.debug('[wgo] emit failed', err)

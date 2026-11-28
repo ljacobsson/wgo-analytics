@@ -10,6 +10,8 @@ export interface RenderOptions {
   fixed?: boolean
   /** start at this question (steps layout), for the editor */
   step?: number
+  /** lay it out for a phone (and start collapsed with `collapse: 'mobile'`); default: the viewport is at most 640px wide */
+  narrow?: boolean
   onSubmit(answers: Record<string, SurveyAnswer>): void
   /** the visitor closed it before answering */
   onDismiss(): void
@@ -27,15 +29,27 @@ const CSS = `
 .w *{box-sizing:border-box;font:inherit;color:inherit;margin:0}
 .pop{position:fixed;bottom:20px;z-index:2147483000;width:min(360px,calc(100vw - 24px));animation:in .22s ease-out}
 .pop.abs{position:absolute}.pop.r{right:20px}.pop.l{left:20px}
-@media (max-width:480px){.pop{bottom:12px}.pop.r{right:12px}.pop.l{left:12px}}
+.pop.sm{bottom:max(12px,env(safe-area-inset-bottom))}.pop.sm.r{right:12px}.pop.sm.l{left:12px}.pop.sm.abs{width:calc(100% - 24px)}
 @keyframes in{from{opacity:0;transform:translateY(8px)}}
 .c{position:relative;background:var(--bg);border:1px solid var(--ln);border-radius:14px;padding:18px;box-shadow:0 12px 32px -8px rgba(0,0,0,.25),0 2px 6px rgba(0,0,0,.06)}
+.pop:not(.abs) .c{max-height:calc(100vh - 32px);overflow-y:auto}
+.c.ex{animation:in .18s ease-out}
 .in .c{box-shadow:none}
-.x{position:absolute;top:10px;right:10px;width:28px;height:28px;border:0;border-radius:8px;background:none;color:var(--mu);cursor:pointer;font-size:18px;line-height:1}
+.x{position:absolute;top:10px;right:10px;width:28px;height:28px;border:0;border-radius:8px;background:none;color:var(--mu);cursor:pointer;font-size:18px;line-height:1;display:grid;place-items:center}
 .x:hover{background:var(--hv);color:var(--fg)}
+.x2{right:40px}
+.x2:after{content:"";width:7px;height:7px;border:solid currentColor;border-width:0 2px 2px 0;transform:translateY(-2px) rotate(45deg)}
+.c.min{padding:0;border-radius:12px}
+.min .x{top:50%;transform:translateY(-50%)}
+.cb{display:flex;align-items:center;gap:12px;width:100%;padding:12px 48px 12px 16px;border:0;border-radius:12px;background:none;cursor:pointer;text-align:left}
+.cb span{flex:1;min-width:0;font-weight:600;font-size:14px;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.cb i{flex:none;width:28px;height:28px;border-radius:8px;background:var(--a);display:grid;place-items:center}
+.cb i:after{content:"";width:7px;height:7px;border:solid var(--on);border-width:2px 2px 0 0;transform:translateY(2px) rotate(-45deg)}
 .q+.q{margin-top:22px}
-.t{font-weight:600;font-size:15px;padding-right:26px}
-.in .t{padding-right:0}
+.t{font-weight:600;font-size:15px}
+.pop .top .t{padding-right:26px}
+.mn .top .t{padding-right:58px}
+.mn .bar{margin-right:58px}
 .rq{color:var(--mu);font-weight:400}
 .d{color:var(--mu);font-size:13px;margin-top:3px}
 .b{margin-top:12px;display:grid;gap:6px}
@@ -88,7 +102,8 @@ export function render(host: HTMLElement, s: PublicSurvey, o: RenderOptions): ()
   style.textContent = CSS
   const d = s.display
   const pop = d.mode !== 'inline'
-  const w = el('div', `w ${d.theme || 'auto'} ${pop ? `pop ${d.position === 'bottom-left' ? 'l' : 'r'}${o.fixed === false ? ' abs' : ''}` : 'in'}`)
+  const narrow = o.narrow ?? (typeof matchMedia === 'function' && matchMedia('(max-width: 640px)').matches)
+  const w = el('div', `w ${d.theme || 'auto'} ${pop ? `pop ${d.position === 'bottom-left' ? 'l' : 'r'}${o.fixed === false ? ' abs' : ''}${narrow ? ' sm' : ''}` : 'in'}`)
   if (d.accent) w.style.setProperty('--a', d.accent)
   const card = el('div', 'c')
   if (pop) { card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', s.name) }
@@ -100,6 +115,9 @@ export function render(host: HTMLElement, s: PublicSurvey, o: RenderOptions): ()
   const ans: Answers = {}
   let step = Math.min(Math.max(o.step ?? 0, 0), qs.length - 1)
   let done = false
+  // a floating survey can shrink to a slim bar with just the question; it starts that way on phones (by default)
+  const canCollapse = pop && d.collapse !== 'never'
+  let collapsed = canCollapse && (d.collapse === 'always' || narrow)
   let timer: ReturnType<typeof setTimeout> | undefined
 
   const close = () => { o.onDismiss(); remove() }
@@ -220,6 +238,7 @@ export function render(host: HTMLElement, s: PublicSurvey, o: RenderOptions): ()
     done = true
     o.onSubmit(out)
     card.textContent = ''
+    card.classList.remove('mn')
     if (pop) card.appendChild(xButton())
     card.appendChild(el('div', 'ty', d.thankYou || 'Thanks for your feedback!'))
     if (pop) timer = setTimeout(() => { o.onDone?.(); remove() }, 3500)
@@ -246,7 +265,30 @@ export function render(host: HTMLElement, s: PublicSurvey, o: RenderOptions): ()
 
   const page = () => {
     card.textContent = ''
+    card.classList.toggle('min', collapsed)
+    card.classList.toggle('mn', canCollapse && !collapsed)
+    if (collapsed) {
+      const b = el('button', 'cb')
+      b.type = 'button'
+      b.setAttribute('aria-expanded', 'false')
+      b.append(el('span', '', qs[steps ? step : 0].title), el('i'))
+      b.onclick = (e) => {
+        collapsed = false
+        page()
+        card.classList.add('ex')
+        if (!e.detail) card.querySelector<HTMLElement>('.x2')?.focus() // opened with the keyboard: keep focus in the survey
+      }
+      card.append(b, xButton())
+      return
+    }
     if (pop) card.appendChild(xButton())
+    if (canCollapse) {
+      const m = el('button', 'x x2')
+      m.type = 'button'
+      m.setAttribute('aria-label', 'Minimize')
+      m.onclick = () => { collapsed = true; card.classList.remove('ex'); page() }
+      card.appendChild(m)
+    }
     if (steps) {
       const q = qs[step]
       const last = step === qs.length - 1
@@ -272,6 +314,7 @@ export function render(host: HTMLElement, s: PublicSurvey, o: RenderOptions): ()
       sync = s2
       card.appendChild(f)
     }
+    card.querySelector('.q')?.classList.add('top')
   }
   page()
   return remove

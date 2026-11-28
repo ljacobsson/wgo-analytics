@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { SURVEY_TRIGGER_FIELDS, type Filter } from '../contract';
 import type {
   Survey, SurveyAnswer, SurveyDisplay, SurveyInput, SurveyQuestion, SurveyQuestionResult, SurveyResponse, SurveyResponsesPage,
   SurveyResults, SurveyStatus, SurveyTargeting,
 } from '../contract';
 import { parseRange } from './analytics';
 import { execute, query } from './db';
+import { parseFilters } from './filters';
 import { HttpError } from './http';
 import { isUuid, projectIdForWriteKey } from './projects';
 import { rawQuery } from './store/duck';
@@ -101,7 +103,10 @@ export function parseDisplay(v: unknown): SurveyDisplay {
     theme: d.theme === 'light' || d.theme === 'dark' ? d.theme : 'auto',
   };
   if (mode === 'inline') out.selector = reqStr(d.selector, 300, 'The CSS selector of an inline survey');
-  else out.position = d.position === 'bottom-left' ? 'bottom-left' : 'bottom-right';
+  else {
+    out.position = d.position === 'bottom-left' ? 'bottom-left' : 'bottom-right';
+    if (d.collapse === 'always' || d.collapse === 'never') out.collapse = d.collapse; // absent: 'mobile'
+  }
   if (d.accent != null && d.accent !== '') {
     if (typeof d.accent !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(d.accent)) bad('The accent colour must look like #4f46e5');
     out.accent = (d.accent as string).toLowerCase();
@@ -132,11 +137,38 @@ export function parseTargeting(v: unknown): SurveyTargeting {
   };
   const delaySec = num(t.delaySec, 'The delay', 0, 3600);
   const scrollPct = num(t.scrollPct, 'The scroll depth', 1, 100);
-  const event = optStr(t.event, 200, 'The event name');
+  const trigger = t.trigger != null ? parseTrigger(t.trigger) : legacyTrigger(optStr(t.event, 200, 'The event name'))
   if (delaySec) out.delaySec = delaySec;
   if (scrollPct) out.scrollPct = scrollPct;
-  if (event) out.event = event;
+  if (trigger?.length) out.trigger = trigger;
   return out;
+}
+
+const TRIGGER_FIELDS = new Set<string>(SURVEY_TRIGGER_FIELDS);
+
+/** Event filters the SDK checks in the browser: only fields it knows when the event happens. */
+function parseTrigger(v: unknown): Filter[] {
+  if (!Array.isArray(v)) bad('trigger must be a list of filters');
+  if ((v as unknown[]).length > 10) bad('A trigger can have at most 10 filters');
+  const list = parseFilters(JSON.stringify(v));
+  for (const f of list) {
+    if (!TRIGGER_FIELDS.has(f.field) && !/^props\.[^.]/.test(f.field)) {
+      bad(`${f.field} can't be checked in the browser; use one of ${SURVEY_TRIGGER_FIELDS.join(', ')} or props.<path>`);
+    }
+  }
+  return list;
+}
+
+/** Surveys from before trigger filters had a custom event name (`event`). */
+const legacyTrigger = (name: string | undefined): Filter[] | undefined =>
+  name ? [{ field: 'type', op: 'eq', value: 'custom' }, { field: 'name', op: 'eq', value: name }] : undefined;
+
+/** Stored targeting, upgraded: an old `event` becomes a trigger. */
+function storedTargeting(v: unknown): SurveyTargeting {
+  const t = j<SurveyTargeting & { event?: string }>(v);
+  if (!t.event) return t;
+  const { event, ...rest } = t;
+  return { ...rest, trigger: rest.trigger ?? legacyTrigger(event) };
 }
 
 const status = (v: unknown): SurveyStatus => (STATUSES.includes(v as SurveyStatus) ? v as SurveyStatus : bad(`Unknown status: ${String(v)}`));
@@ -156,7 +188,7 @@ const toSurvey = (r: SurveyRow, stats?: { n: number; last: Date | null }): Surve
   status: r.status,
   questions: j(r.questions),
   display: j(r.display),
-  targeting: j(r.targeting),
+  targeting: storedTargeting(r.targeting),
   createdBy: r.created_by,
   createdAt: r.created_at.toISOString(),
   updatedAt: r.updated_at.toISOString(),
@@ -226,7 +258,7 @@ export async function updateSurvey(pid: string, id: string, body: Partial<Survey
       b.status !== undefined ? status(b.status) : cur.status,
       JSON.stringify(b.questions !== undefined ? parseQuestions(b.questions) : j(cur.questions)),
       JSON.stringify(b.display !== undefined ? parseDisplay(b.display) : j(cur.display)),
-      JSON.stringify(b.targeting !== undefined ? parseTargeting(b.targeting) : j(cur.targeting)),
+      JSON.stringify(b.targeting !== undefined ? parseTargeting(b.targeting) : storedTargeting(cur.targeting)),
     ],
   );
   forget(pid);
@@ -261,7 +293,7 @@ export async function activeSurveys(pid: string): Promise<PublicSurvey[]> {
   const hit = activeCache.get(pid);
   if (hit && hit.exp > Date.now()) return hit.list;
   const rows = await query<SurveyRow>(`SELECT * FROM surveys WHERE project_id = $1 AND status = 'active' ORDER BY created_at, id`, [pid]);
-  const list = rows.map((r) => ({ id: r.id, name: r.name, questions: j<SurveyQuestion[]>(r.questions), display: j<SurveyDisplay>(r.display), targeting: j<SurveyTargeting>(r.targeting) }));
+  const list = rows.map((r) => ({ id: r.id, name: r.name, questions: j<SurveyQuestion[]>(r.questions), display: j<SurveyDisplay>(r.display), targeting: storedTargeting(r.targeting) }));
   activeCache.set(pid, { list, exp: Date.now() + 30_000 });
   if (activeCache.size > 5000) activeCache.delete(activeCache.keys().next().value!);
   return list;

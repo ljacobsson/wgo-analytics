@@ -1,6 +1,7 @@
 import type { Client } from '../client'
 import type { PublicSurvey, SurveyAnswer, WireEvent } from '../types'
 import { ls, memoryStore, on, uuid } from '../util'
+import { matches } from './match'
 import { render } from './render'
 
 /**
@@ -9,7 +10,7 @@ import { render } from './render'
  * definitions, decides which survey this page shows and when (targeting), draws it (./render.ts) and posts the answers.
  *
  * Targeting: a survey waits for a page whose path matches one of its globs (any page without globs), then for its
- * delay, scroll depth and custom event, all that are set. Frequency is remembered per browser (in memory only with
+ * delay, scroll depth and an event matching its trigger filters (./match.ts), all that are set. Frequency is remembered per browser (in memory only with
  * `cookieless`). At most one floating survey is open at a time; inline ones render wherever their element exists.
  */
 
@@ -44,8 +45,8 @@ export function start(cl: Client): () => void {
   const open = new Map<string, () => void>()
   /** what to cancel when the page changes: timers, scroll listeners, observers */
   let pending: (() => void)[] = []
-  /** custom events seen on the current page */
-  let events = new Set<string>()
+  /** the SDK's events on the current page (the newest 50), for event triggers */
+  let seen: WireEvent[] = []
   /** surveys waiting for their delay, scroll depth or event on the current page, and their re-check */
   const armed = new Map<string, () => void>()
   /** surveys already shown on the current page (also `always` ones: once per page view) */
@@ -120,7 +121,7 @@ export function start(cl: Client): () => void {
     let scrolled = !t.scrollPct
     let watching = false
     const fire = () => {
-      if (gen !== page || watching || !delayed || !scrolled || (t.event && !events.has(t.event))) return
+      if (gen !== page || watching || !delayed || !scrolled || (t.trigger?.length && !seen.some((e) => matches(t.trigger!, e)))) return
       if (show(s)) { armed.delete(s.id); return }
       // a floating survey is already open (it re-evaluates once closed), or the inline element isn't there yet
       if (s.display.mode === 'inline' && typeof MutationObserver !== 'undefined') {
@@ -155,7 +156,7 @@ export function start(cl: Client): () => void {
     pending = []
     armed.clear()
     shownHere.clear()
-    events = new Set()
+    seen = []
     for (const [id, rm] of open) {
       const s = list.find((x) => x.id === id)
       if (s?.display.mode === 'inline') { rm(); open.delete(id) } // its element likely went with the old page
@@ -164,10 +165,9 @@ export function start(cl: Client): () => void {
   }
 
   const onEvent = (e: WireEvent) => {
-    if (e.t === 'pageview') return navigate()
-    const name = e.t === 'custom' ? String((e.d as { name?: unknown } | undefined)?.name ?? '') : ''
-    if (!name || name.startsWith('survey_')) return
-    events.add(name)
+    if (e.t === 'pageview') navigate()
+    if (e.t === 'custom' && String((e.d as { name?: unknown } | undefined)?.name ?? '').startsWith('survey_')) return // our own
+    if (seen.push(e) > 50) seen.shift()
     armed.forEach((f) => f())
   }
   cl.subs.push(onEvent)

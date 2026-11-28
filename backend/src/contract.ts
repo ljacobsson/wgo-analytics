@@ -1811,6 +1811,9 @@ export interface SurveyDisplay {
   mode: 'popover' | 'inline'; // a floating card, or inside the element matching `selector`
   selector?: string; // inline: CSS selector of the element the survey is rendered into (required for inline)
   position?: 'bottom-right' | 'bottom-left'; // popover (default bottom-right)
+  // popover: start as a slim bar showing just the question, expanded with a tap: on phones (default, screens up to
+  // 640px wide), always or never
+  collapse?: 'mobile' | 'always' | 'never';
   layout: 'steps' | 'form'; // one question at a time, or all questions on one form
   theme: 'auto' | 'light' | 'dark'; // auto follows the visitor's colour scheme
   accent?: string; // #rrggbb, buttons and selected answers
@@ -1821,11 +1824,18 @@ export interface SurveyTargeting {
   paths: string[]; // path globs (`/pricing`, `/docs/*`); [] = every page
   delaySec?: number; // show after this many seconds on a matching page
   scrollPct?: number; // ...and once the visitor scrolled this far down the page (1-100)
-  event?: string; // ...only after the page tracked this custom event (WGO.track name)
+  // ...only after an event on the page matches all these filters (events scope, fields in SURVEY_TRIGGER_FIELDS or
+  // props.<path>): a click on a button, a custom event, an error, a failed request. The SDK checks them in the browser.
+  trigger?: Filter[];
   // once: never again after it was answered or closed; until_answered: closed surveys come back next session;
   // always: on every matching page view (e.g. an inline feedback form)
   frequency: 'once' | 'until_answered' | 'always';
 }
+// Event fields the browser SDK knows when the event happens (not ones the backend adds, like country or browser)
+export const SURVEY_TRIGGER_FIELDS = [
+  'type', 'path', 'url', 'title', 'referrer', 'selector', 'elementText', 'elementTag', 'trackName', 'name',
+  'errorMessage', 'errorSource', 'httpMethod', 'httpUrl', 'httpStatus', 'durationMs', 'userId',
+] as const;
 export interface SurveyInput {
   name: string; // 1-120 characters, internal
   status: SurveyStatus;

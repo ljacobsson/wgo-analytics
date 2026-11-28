@@ -3,6 +3,7 @@ import * as A from '../src/index'
 import type { Client } from '../src/client'
 import { render } from '../src/surveys/render'
 import { allowed, pathMatches, start } from '../src/surveys/index'
+import { fieldOf, matches } from '../src/surveys/match'
 import type { PublicSurvey, SurveyQuestion } from '../src/types'
 import { EP, cfg, eventsOf, mockFetch } from './helpers'
 
@@ -174,7 +175,7 @@ describe('showing surveys', () => {
 
   it('waits for the path, delay and custom event', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    setup([survey([{}], { targeting: { paths: [location.pathname], delaySec: 5, event: 'paid', frequency: 'always' } }),
+    setup([survey([{}], { targeting: { paths: [location.pathname], delaySec: 5, trigger: [{ field: 'type', op: 'eq', value: 'custom' }, { field: 'name', op: 'eq', value: 'paid' }], frequency: 'always' } }),
       survey([{}], { id: '22222222-2222-4222-8222-222222222222', targeting: { paths: ['/elsewhere'], frequency: 'always' } })])
     await vi.advanceTimersByTimeAsync(10)
     expect(hostOf()).toBeNull()
@@ -203,5 +204,100 @@ describe('showing surveys', () => {
     expect(hostOf()).toBeNull()
     expect(JSON.parse(localStorage.getItem('wgo:sv')!)).toEqual({ [survey([]).id]: { x: client().session.peek() } })
     stop()
+  })
+})
+
+describe('collapsed floating surveys', () => {
+  const qs = [{ type: 'single', title: 'Role?', options: ['Dev', 'PM'], required: true }, { type: 'text', title: 'Why?' }] as Partial<SurveyQuestion>[]
+
+  it('start as a bar with the question on phones, expand on tap and keep answers when minimized', () => {
+    const host = document.createElement('div')
+    const onSubmit = vi.fn()
+    render(host, survey(qs), { narrow: true, onSubmit, onDismiss: vi.fn() })
+    const root = sr(host)
+    expect(root.querySelector('.w')!.classList.contains('sm')).toBe(true)
+    expect(root.querySelector('.cb span')!.textContent).toBe('Role?')
+    expect(root.querySelector('.q')).toBeNull()
+    click(root, '.cb')
+    expect(root.querySelector('.cb')).toBeNull()
+    click(root, '.o', 'PM')
+    nextBtn(root).click()
+    click(root, '.x2') // minimize on question 2
+    expect(root.querySelector('.cb span')!.textContent).toBe('Why?')
+    click(root, '.cb')
+    click(root, '.btn.bk') // back to question 1: the answer is still there
+    expect(root.querySelector('.o[aria-checked=true]')!.textContent).toBe('PM')
+    nextBtn(root).click(); nextBtn(root).click()
+    expect(onSubmit).toHaveBeenCalledWith({ q1: 'PM' })
+  })
+
+  it('stay expanded on wide screens unless set to always; never means no minimize button', () => {
+    const at = (collapse: PublicSurvey['display']['collapse'], narrow: boolean) => {
+      const host = document.createElement('div')
+      render(host, survey(qs, { display: { mode: 'popover', layout: 'steps', theme: 'auto', collapse } }), { narrow, onSubmit: vi.fn(), onDismiss: vi.fn() })
+      return sr(host)
+    }
+    expect(at(undefined, false).querySelector('.cb')).toBeNull()
+    expect(at(undefined, false).querySelector('.x2')).not.toBeNull()
+    expect(at('always', false).querySelector('.cb')).not.toBeNull()
+    expect(at('never', true).querySelector('.cb')).toBeNull()
+    expect(at('never', true).querySelector('.x2')).toBeNull()
+  })
+
+  it('closes from the bar', () => {
+    const host = document.createElement('div')
+    const onDismiss = vi.fn()
+    render(host, survey(qs), { narrow: true, onSubmit: vi.fn(), onDismiss })
+    click(sr(host), '.x')
+    expect(onDismiss).toHaveBeenCalled()
+  })
+})
+
+describe('event triggers', () => {
+  const wire = (t: string, d: Record<string, unknown> = {}, extra = {}) => ({ id: 'e', t, ts: 1, s: 's', url: 'https://x.test/p?a=1', path: '/p', d, ...extra }) as never
+
+  it('read fields the way the backend stores them', () => {
+    const click = wire('click', { sel: 'button.buy', text: 'Buy now', tag: 'button', name: 'buy' }, { u: 'ada@x.test' })
+    expect(fieldOf(click, 'trackName')).toBe('buy')
+    expect(fieldOf(click, 'elementText')).toBe('Buy now')
+    expect(fieldOf(click, 'userId')).toBe('ada@x.test')
+    expect(fieldOf(click, 'name')).toBeUndefined() // only custom events have a name
+    expect(fieldOf(wire('custom', { name: 'paid', props: { plan: 'pro' } }), 'props.props.plan')).toBe('pro')
+    expect(fieldOf(wire('http_error', { method: 'post', status: 502, dur: 12.6 }), 'httpMethod')).toBe('POST')
+    expect(fieldOf(wire('http_error', { method: 'post', status: 502, dur: 12.6 }), 'durationMs')).toBe(13)
+    expect(fieldOf(wire('error', { msg: 'boom' }), 'errorMessage')).toBe('boom')
+  })
+
+  it('match with the filter bar\'s semantics', () => {
+    const fail = wire('http_error', { method: 'GET', url: '/api/cart', status: 503 })
+    expect(matches([{ field: 'type', op: 'eq', value: 'http_error' }, { field: 'httpStatus', op: 'gte', value: '500' }], fail)).toBe(true)
+    expect(matches([{ field: 'httpStatus', op: 'lt', value: '500' }], fail)).toBe(false)
+    expect(matches([{ field: 'httpUrl', op: 'contains', value: 'CART' }], fail)).toBe(true)
+    expect(matches([{ field: 'errorMessage', op: 'not_set' }], fail)).toBe(true)
+    expect(matches([{ field: 'path', op: 'starts_with', value: '/p' }, { field: 'title', op: 'set' }], fail)).toBe(false)
+  })
+})
+
+describe('showing surveys on events', () => {
+  it('shows after a click with a data-track name, also one from before the script loaded', async () => {
+    const list = [survey([{}], { targeting: { paths: [], frequency: 'always', trigger: [{ field: 'type', op: 'eq', value: 'click' }, { field: 'trackName', op: 'eq', value: 'buy' }] } })]
+    mockFetch((url) => (url.includes('/surveys/config') ? { ok: true, json: async () => ({ s: list }) } : { ok: true, status: 200 }))
+    A.init(cfg({ autocapture: { clicks: true, errors: false, http: false, pageviews: false, vitals: false } }))
+    client().ev = []
+    document.body.innerHTML = '<button data-track="other">x</button><button data-track="buy">Buy</button>'
+    ;(document.querySelector('[data-track=other]') as HTMLElement).click()
+    const stop = start(client())
+    await tick(); await tick()
+    expect(document.querySelector('[data-wgo-survey]')).toBeNull()
+    ;(document.querySelector('[data-track=buy]') as HTMLElement).click()
+    expect(document.querySelector('[data-wgo-survey]')).not.toBeNull()
+    stop()
+    // the click came before the survey script: the look-back still finds it
+    document.querySelectorAll('[data-wgo-survey]').forEach((e) => e.remove())
+    client().ev = []
+    ;(document.querySelector('[data-track=buy]') as HTMLElement).click()
+    start(client())
+    await tick(); await tick()
+    expect(document.querySelector('[data-wgo-survey]')).not.toBeNull()
   })
 })

@@ -204,8 +204,8 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
             <H3>Surveys</H3>
             <P>Build a survey under <B>Surveys</B> with single and multiple choice, text, yes/no, rating and NPS questions, and watch the preview as you go. Once it's active, the script you already installed shows it within about a minute: there's nothing to deploy.</P>
             <List items={[
-              <>A <B>floating card</B> slides in at a bottom corner. An <B>inline</B> survey renders into the element its CSS selector names, e.g. <C>{'<div id="feedback"></div>'}</C>.</>,
-              <>Show it on pages matching path globs (<C>/docs/*</C>), after a delay, a scroll depth or a custom event, once per visitor, until answered, or every time.</>,
+              <>A <B>floating card</B> slides in at a bottom corner. An <B>inline</B> survey renders into the element its CSS selector names, e.g. <C>{'<div id="feedback"></div>'}</C>. On phones a floating survey starts as a slim bar with just the question, opened with a tap.</>,
+              <>Show it on pages matching path globs (<C>/docs/*</C>), after a delay, a scroll depth or an event that matches filters (a click on a <C>data-track</C> element, a custom event, an error, a failed request), once per visitor, until answered, or every time.</>,
               <><C>WGO.showSurvey('survey id')</C> opens one from your code. <C>data-surveys="false"</C> keeps surveys off a site.</>,
               <>Showing, closing and answering send <C>survey_shown</C>, <C>survey_dismissed</C> and <C>survey_sent</C> custom events, so surveys work in goals and funnels. Answers are kept until you delete the survey and export as CSV.</>,
             ]} />

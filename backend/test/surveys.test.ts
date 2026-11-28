@@ -33,11 +33,21 @@ describe('survey validation', () => {
     expect(parseDisplay({})).toEqual({ mode: 'popover', layout: 'steps', theme: 'auto', position: 'bottom-right' });
     expect(parseDisplay({ mode: 'inline', selector: '#fb' })).toEqual({ mode: 'inline', layout: 'form', theme: 'auto', selector: '#fb' });
     expect(() => parseDisplay({ mode: 'inline' })).toThrow(/selector/);
+    expect(parseDisplay({ collapse: 'always' }).collapse).toBe('always');
+    expect(parseDisplay({ collapse: 'mobile' }).collapse).toBeUndefined();
+    expect(parseDisplay({ mode: 'inline', selector: '#x', collapse: 'always' }).collapse).toBeUndefined();
     expect(() => parseDisplay({ accent: 'red' })).toThrow(/#4f46e5/);
     expect(parseTargeting({})).toEqual({ paths: [], frequency: 'once' });
-    expect(parseTargeting({ paths: ['/a', '/a', '/docs/*'], delaySec: '5', scrollPct: 50, event: 'paid', frequency: 'always' }))
-      .toEqual({ paths: ['/a', '/docs/*'], delaySec: 5, scrollPct: 50, event: 'paid', frequency: 'always' });
+    expect(parseTargeting({ paths: ['/a', '/a', '/docs/*'], delaySec: '5', scrollPct: 50, frequency: 'always' }))
+      .toEqual({ paths: ['/a', '/docs/*'], delaySec: 5, scrollPct: 50, frequency: 'always' });
     expect(() => parseTargeting({ paths: ['pricing'] })).toThrow(/start with \//);
+    const click = [{ field: 'type', op: 'eq', value: 'click' }, { field: 'trackName', op: 'eq', value: 'signup' }, { field: 'props.props.plan', op: 'set' }];
+    expect(parseTargeting({ trigger: click }).trigger).toEqual(click);
+    expect(parseTargeting({ trigger: [] }).trigger).toBeUndefined();
+    expect(() => parseTargeting({ trigger: [{ field: 'country', op: 'eq', value: 'SE' }] })).toThrow(/can't be checked in the browser/);
+    expect(() => parseTargeting({ trigger: [{ field: 'nope', op: 'eq', value: 'x' }] })).toThrow(/can't be checked|Unknown/);
+    // surveys from before trigger filters
+    expect(parseTargeting({ event: 'paid' }).trigger).toEqual([{ field: 'type', op: 'eq', value: 'custom' }, { field: 'name', op: 'eq', value: 'paid' }]);
     expect(() => parseTargeting({ scrollPct: 150 })).toThrow(/between 1 and 100/);
   });
 

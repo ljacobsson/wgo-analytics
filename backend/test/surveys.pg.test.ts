@@ -70,6 +70,16 @@ d('surveys (PostgreSQL)', async () => {
     expect(await S.listSurveys(pid)).toEqual([]);
   });
 
+  it('reads surveys saved with a custom event name as a trigger', async () => {
+    const s = await S.createSurvey(pid, email, { ...input, status: 'active' } as never);
+    await query(`UPDATE surveys SET targeting = $3::jsonb WHERE project_id = $1 AND id = $2`, [pid, s.id, JSON.stringify({ paths: [], frequency: 'once', event: 'paid' })]);
+    const paid = [{ field: 'type', op: 'eq', value: 'custom' }, { field: 'name', op: 'eq', value: 'paid' }];
+    expect((await S.getSurvey(pid, s.id)).targeting).toEqual({ paths: [], frequency: 'once', trigger: paid });
+    await S.updateSurvey(pid, s.id, { name: 'Renamed' }); // forgets the active-surveys cache
+    expect((await S.publicSurveys(key)).s[0].targeting.trigger).toEqual(paid);
+    await S.deleteSurvey(pid, s.id);
+  });
+
   it('stores responses once, validates them and aggregates', async () => {
     const s = await S.createSurvey(pid, email, { ...input, status: 'active' } as never);
     const rid = randomUUID();

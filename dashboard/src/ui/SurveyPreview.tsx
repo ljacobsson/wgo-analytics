@@ -13,6 +13,7 @@ import { Segmented } from './kit';
 export function SurveyPreview({ survey, step, path }: { survey: SurveyInput; step: number; path?: string }) {
   const host = useRef<HTMLDivElement>(null);
   const [scheme, setScheme] = useState<'light' | 'dark'>(() => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'));
+  const [device, setDevice] = useState<'desktop' | 'phone'>('desktop');
   const [run, setRun] = useState(0);
   const [closed, setClosed] = useState(false);
   const inline = survey.display.mode === 'inline';
@@ -31,12 +32,12 @@ export function SurveyPreview({ survey, step, path }: { survey: SurveyInput; ste
     const display = { ...survey.display, theme: survey.display.theme === 'auto' ? scheme : survey.display.theme };
     try {
       return render(el, { id: 'preview', name: survey.name || 'Survey', questions, display, targeting: survey.targeting }, {
-        fixed: false, step, onSubmit: () => {}, onDismiss: () => setClosed(true), onDone: () => setClosed(true),
+        fixed: false, step, narrow: device === 'phone', onSubmit: () => {}, onDismiss: () => setClosed(true), onDone: () => setClosed(true),
       });
     } catch {
       return undefined;
     }
-  }, [survey, step, scheme, run, closed]);
+  }, [survey, step, scheme, run, closed, device]);
 
   const page = dark ? 'bg-[#0f0f12]' : 'bg-[#f6f6f7]';
   const block = dark ? 'bg-white/[.06]' : 'bg-black/[.06]';
@@ -48,15 +49,16 @@ export function SurveyPreview({ survey, step, path }: { survey: SurveyInput; ste
           {(closed || survey.display.mode === 'popover') && (
             <button onClick={() => { setClosed(false); setRun((n) => n + 1); }} title="Show it again from the start" className="rounded-md p-1.5 text-muted hover:bg-[var(--hl)] hover:text-fg cursor-pointer"><RotateCcw size={13} /></button>
           )}
+          <Segmented value={device} onChange={(v) => { setDevice(v); setClosed(false); }} options={[{ value: 'desktop', label: 'Desktop' }, { value: 'phone', label: 'Phone' }]} />
           {survey.display.theme === 'auto' && <Segmented value={scheme} onChange={setScheme} options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} />}
         </div>
       </div>
-      <div className="overflow-hidden rounded-xl border border-line shadow-sm">
+      <div className={cn('overflow-hidden rounded-xl border border-line shadow-sm', device === 'phone' && 'mx-auto w-[360px] max-w-full rounded-[22px]')}>
         <div className={cn('flex items-center gap-2 border-b px-3 py-2', dark ? 'border-white/10 bg-[#1b1b20]' : 'border-black/10 bg-white')}>
           <span className="flex gap-1">{[0, 1, 2].map((i) => <i key={i} className={cn('h-2.5 w-2.5 rounded-full', dark ? 'bg-white/15' : 'bg-black/15')} />)}</span>
           <span className={cn('ml-2 flex-1 truncate rounded-md px-2 py-0.5 font-mono text-[11px]', dark ? 'bg-white/[.06] text-white/50' : 'bg-black/[.05] text-black/50')}>yoursite.com{path || '/'}</span>
         </div>
-        <div className={cn('relative min-h-[460px] p-6', page)}>
+        <div className={cn('relative p-6', device === 'phone' ? 'min-h-[600px] p-4' : 'min-h-[460px]', page)}>
           <div className={cn('h-5 w-2/5 rounded', block)} />
           <div className={cn('mt-3 h-3 w-4/5 rounded', block)} />
           <div className={cn('mt-2 h-3 w-3/5 rounded', block)} />

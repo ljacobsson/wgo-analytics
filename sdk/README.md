@@ -219,9 +219,18 @@ already makes on each page load (`GET <endpoint>/replay/config`) says so, and th
 * A **floating card** slides in at a bottom corner. An **inline** survey is rendered into the first element matching its
   CSS selector, so add that element (e.g. `<div id="feedback"></div>`) where it should appear. When the element shows up
   later (single-page apps), the survey waits for it.
+* A floating survey can start as a slim bar with just the current question, which the visitor taps to open. By default
+  it does on phones (screens up to 640px wide); a survey can set it to always or never. The expanded card has a button
+  to shrink it back, and answers given so far are kept.
 * **Targeting**: path globs (`/pricing`, `/docs/*`; none means every page), and any of a delay in seconds, a scroll depth
-  and a custom event (a `WGO.track` name). All the conditions that are set must be met on the same page. Single-page app
-  navigations start over.
+  and an event trigger. All the conditions that are set must be met on the same page. Single-page app navigations
+  start over.
+* An **event trigger** is a set of event filters, like the dashboard's filter bar, that one of the SDK's events on the
+  page must match: a click (`type` click, `trackName` buy), a custom event (`type` custom, `name` checkout_completed,
+  `props.props.plan` pro), a JavaScript error, a failed request (`httpStatus` ≥ 500) or an identify. The SDK checks it in
+  the browser, so the fields are the ones it knows when the event happens: `type`, `path`, `url`, `title`, `referrer`,
+  `selector`, `elementText`, `elementTag`, `trackName`, `name`, `errorMessage`, `errorSource`, `httpMethod`, `httpUrl`,
+  `httpStatus`, `durationMs`, `userId` and `props.<path>`. Events from before `wgo-surveys.js` loaded count too.
 * **Frequency**, remembered per browser in `localStorage` (`wgo:sv`, in memory in cookieless mode): once per visitor,
   until answered (a closed survey comes back next session), or on every matching page view. At most one floating survey
   is open at a time.

@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlignLeft, ArrowDown, ArrowLeft, ArrowUp, CircleDot, Copy, Gauge, ListChecks, Plus, Star, ThumbsUp, Trash2,
 } from 'lucide-react';
-import type { SurveyDisplay, SurveyInput, SurveyQuestion, SurveyQuestionType, SurveyStatus, SurveyTargeting } from '../api/contract';
+import { SURVEY_TRIGGER_FIELDS, type SurveyDisplay, type SurveyInput, type SurveyQuestion, type SurveyQuestionType, type SurveyStatus, type SurveyTargeting } from '../api/contract';
 import { useSaveSurvey, useSurvey } from '../api/hooks';
 import { cn } from '../lib/format';
 import { useProject } from '../lib/project';
 import { navigate, pageHref, useRoute } from '../lib/router';
 import { CodeBlock } from '../ui/CodeBlock';
 import { Button, Card, ErrorState, Field, Segmented, Skeleton, Switch, useToast } from '../ui/kit';
+import { FilterChips } from '../ui/FilterBar';
 import { Popover } from '../ui/Popover';
 import { SurveyPreview } from '../ui/SurveyPreview';
 
@@ -21,6 +22,12 @@ export const QUESTION_TYPES: { type: SurveyQuestionType; label: string; hint: st
   { type: 'nps', label: 'Net Promoter Score', hint: '0 to 10, how likely to recommend', icon: <Gauge size={15} /> },
 ];
 export const typeLabel = (t: SurveyQuestionType) => QUESTION_TYPES.find((x) => x.type === t)?.label ?? t;
+
+/** One click to a trigger on a kind of event, to narrow down with more filters. */
+const EVENT_STARTS = [
+  { label: 'a click', type: 'click' }, { label: 'a custom event', type: 'custom' }, { label: 'a JavaScript error', type: 'error' },
+  { label: 'a failed request', type: 'http_error' }, { label: 'a sign-in (identify)', type: 'identify' },
+];
 
 const nextId = (qs: SurveyQuestion[]) => {
   let n = qs.length + 1;
@@ -130,7 +137,7 @@ function cleaned(s: SurveyInput): SurveyInput {
       highLabel: q.highLabel?.trim() || undefined,
     })),
     display: { ...s.display, selector: s.display.selector?.trim() || undefined, submitLabel: s.display.submitLabel?.trim() || undefined, thankYou: s.display.thankYou?.trim() || undefined },
-    targeting: { ...s.targeting, paths: s.targeting.paths.map((p) => p.trim()).filter(Boolean), event: s.targeting.event?.trim() || undefined },
+    targeting: { ...s.targeting, paths: s.targeting.paths.map((p) => p.trim()).filter(Boolean), trigger: s.targeting.trigger?.length ? s.targeting.trigger : undefined },
   };
 }
 
@@ -217,9 +224,9 @@ function QuestionEditor({ q, i, n, active, onFocus, onChange, onMove, onDuplicat
   );
 }
 
-function Section({ title, sub, children }: { title: string; sub?: ReactNode; children: ReactNode }) {
+function Section({ title, sub, children, className }: { title: string; sub?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <Card className="p-4 sm:p-5">
+    <Card className={cn('p-4 sm:p-5', className)}>
       <h3 className="text-[14px] font-semibold">{title}</h3>
       {sub && <p className="mt-0.5 text-[12.5px] text-muted">{sub}</p>}
       <div className="mt-4">{children}</div>
@@ -251,7 +258,12 @@ function DisplayEditor({ d, set }: { d: SurveyDisplay; set: (p: Partial<SurveyDi
       <div className="grid gap-4 sm:grid-cols-2">
         {d.mode === 'inline'
           ? <Field label="CSS selector of the element" hint="The survey is added at the end of the first element that matches."><input className="field font-mono text-[12.5px]" value={d.selector ?? ''} onChange={(e) => set({ selector: e.target.value })} placeholder="#feedback" maxLength={300} /></Field>
-          : <Field label="Corner"><Segmented value={d.position ?? 'bottom-right'} onChange={(position) => set({ position })} options={[{ value: 'bottom-left', label: 'Bottom left' }, { value: 'bottom-right', label: 'Bottom right' }]} /></Field>}
+          : <>
+            <Field label="Corner"><Segmented value={d.position ?? 'bottom-right'} onChange={(position) => set({ position })} options={[{ value: 'bottom-left', label: 'Bottom left' }, { value: 'bottom-right', label: 'Bottom right' }]} /></Field>
+            <Field label="Start as a bar with just the question" hint="Visitors tap the bar to open the survey.">
+              <Segmented value={d.collapse ?? 'mobile'} onChange={(v) => set({ collapse: v === 'mobile' ? undefined : v })} options={[{ value: 'mobile', label: 'On phones' }, { value: 'always', label: 'Always' }, { value: 'never', label: 'Never' }]} />
+            </Field>
+          </>}
         <Field label="Questions"><Segmented value={d.layout} onChange={(layout) => set({ layout })} options={[{ value: 'steps', label: 'One at a time' }, { value: 'form', label: 'All on one form' }]} /></Field>
         <Field label="Colours"><Segmented value={d.theme} onChange={(theme) => set({ theme })} options={[{ value: 'auto', label: 'Match visitor' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} /></Field>
         <Field label="Accent">
@@ -270,6 +282,7 @@ function DisplayEditor({ d, set }: { d: SurveyDisplay; set: (p: Partial<SurveyDi
 function TargetingEditor({ t, set }: { t: SurveyTargeting; set: (p: Partial<SurveyTargeting>) => void }) {
   const [paths, setPaths] = useState(t.paths.join('\n'));
   useEffect(() => { if (paths.split('\n').map((p) => p.trim()).filter(Boolean).join('\n') !== t.paths.join('\n')) setPaths(t.paths.join('\n')); }, [t.paths]); // eslint-disable-line react-hooks/exhaustive-deps
+  const trigger = t.trigger ?? [];
   const num = (v: string) => (v.trim() === '' ? undefined : Math.max(0, Math.round(Number(v)) || 0));
   return (
     <div className="space-y-4">
@@ -277,12 +290,24 @@ function TargetingEditor({ t, set }: { t: SurveyTargeting; set: (p: Partial<Surv
         <textarea className="field min-h-[72px] font-mono text-[12.5px]" value={paths} placeholder={'/pricing\n/docs/*'}
           onChange={(e) => { setPaths(e.target.value); set({ paths: e.target.value.split('\n').map((p) => p.trim()).filter(Boolean) }); }} />
       </Field>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="After seconds on the page"><input className="field" inputMode="numeric" value={t.delaySec ?? ''} onChange={(e) => set({ delaySec: num(e.target.value) })} placeholder="Right away" /></Field>
         <Field label="After scrolling (% of page)"><input className="field" inputMode="numeric" value={t.scrollPct ?? ''} onChange={(e) => set({ scrollPct: num(e.target.value) && Math.min(100, num(e.target.value)!) })} placeholder="No need" /></Field>
-        <Field label="After this custom event"><input className="field font-mono text-[12.5px]" value={t.event ?? ''} onChange={(e) => set({ event: e.target.value || undefined })} placeholder="checkout_completed" maxLength={200} /></Field>
       </div>
-      <p className="-mt-1 text-[11.5px] text-faint">All the conditions you set must be met on the same page. The event is the name your page sends with <code>WGO.track('…')</code>.</p>
+      <div>
+        <div className="mb-1 text-[11.5px] font-medium text-muted">After an event on the page that matches</div>
+        <div className="rounded-lg border border-line p-2.5">
+          <FilterChips scope="events" fields={SURVEY_TRIGGER_FIELDS} value={trigger} onChange={(f) => set({ trigger: f.length ? f : undefined })} />
+          {!trigger.length && (
+            <p className="mt-2 text-[11.5px] text-faint">
+              No event needed. Or start from {EVENT_STARTS.map((x, i) => (
+                <span key={x.label}>{i > 0 && (i === EVENT_STARTS.length - 1 ? ' or ' : ', ')}<button className="text-accent hover:underline cursor-pointer" onClick={() => set({ trigger: [{ field: 'type', op: 'eq', value: x.type }] })}>{x.label}</button></span>
+              ))}, then narrow it down, e.g. by Track name or Name.
+            </p>
+          )}
+        </div>
+        <p className="mt-1 text-[11.5px] text-faint">Any event the script records for this visitor works. Fields and values are suggested from your recent events. All the conditions you set must be met on the same page.</p>
+      </div>
       <Field label="How often">
         <Choice value={t.frequency} onChange={(frequency) => set({ frequency })} options={[
           { value: 'once', label: 'Once per visitor', hint: 'Never again after they answer or close it.' },
@@ -391,7 +416,8 @@ export function SurveyEditor({ id }: { id: string | null }) {
             <DisplayEditor d={draft.display} set={(p) => set({ display: { ...draft.display, ...p } })} />
           </Section>
 
-          <Section title="Who sees it, and when">
+          {/* above the next card: the trigger's filter editor opens over it */}
+          <Section title="Who sees it, and when" className="relative z-10">
             <TargetingEditor t={draft.targeting} set={(p) => set({ targeting: { ...draft.targeting, ...p } })} />
           </Section>
 

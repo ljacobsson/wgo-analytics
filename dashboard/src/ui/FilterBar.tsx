@@ -17,7 +17,7 @@ import { newTriggerHref } from './RowActions';
 /** Prefixes that address JSON properties/attributes, per scope (typed paths are accepted as-is). */
 const JSON_PREFIX: Record<FieldScope, string[]> = { events: ['props.'], logs: ['attributes.', 'resource.'], spans: ['attributes.', 'resource.'], metrics: ['attributes.'], checks: [] };
 
-function FilterEditor({ scope, metric, initial, onSave, onCancel }: { scope: FieldScope; metric?: string; initial?: Filter; onSave: (f: Filter) => void; onCancel: () => void }) {
+function FilterEditor({ scope, metric, fields: only, initial, onSave, onCancel }: { scope: FieldScope; metric?: string; fields?: readonly string[]; initial?: Filter; onSave: (f: Filter) => void; onCancel: () => void }) {
   const { project } = useProject(); const { range } = useTime();
   const [field, setField] = useState(initial?.field ?? '');
   const [fieldQ, setFieldQ] = useState('');
@@ -32,10 +32,10 @@ function FilterEditor({ scope, metric, initial, onSave, onCancel }: { scope: Fie
     const q = fieldQ.toLowerCase();
     const match = (f: string) => !q || f.toLowerCase().includes(q) || fieldLabel(f).toLowerCase().includes(q);
     return {
-      builtin: (fields.data?.builtin ?? []).filter((f) => match(f.field)),
+      builtin: (fields.data?.builtin ?? []).filter((f) => match(f.field) && (!only || only.includes(f.field))),
       discovered: (fields.data?.discovered ?? []).filter((f) => match(f.field)).slice(0, 60),
     };
-  }, [fields.data, fieldQ]);
+  }, [fields.data, fieldQ, only]);
   const typedPath = JSON_PREFIX[scope].some((p) => fieldQ.startsWith(p) && fieldQ.length > p.length) ? fieldQ.trim() : null;
 
   const pick = (f: string) => { setField(f); setFieldQ(''); setTimeout(() => valueRef.current?.focus(), 0); };
@@ -97,9 +97,12 @@ function FilterEditor({ scope, metric, initial, onSave, onCancel }: { scope: Fie
   );
 }
 
-/** Editable filter chips (controlled). Used by the page filter bar and the trigger editor. */
-export function FilterChips({ scope, metric, value: filters, onChange: setFilters, className, children }: {
-  scope: FieldScope; metric?: string; value: Filter[]; onChange: (f: Filter[]) => void; className?: string; children?: React.ReactNode;
+/**
+ * Editable filter chips (controlled). Used by the page filter bar and the trigger editor. `fields` limits the built-in
+ * fields offered (JSON properties stay available), e.g. to those the browser SDK can check.
+ */
+export function FilterChips({ scope, metric, fields, value: filters, onChange: setFilters, className, children }: {
+  scope: FieldScope; metric?: string; fields?: readonly string[]; value: Filter[]; onChange: (f: Filter[]) => void; className?: string; children?: React.ReactNode;
 }) {
   const [editing, setEditing] = useState<number | 'new' | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -133,7 +136,7 @@ export function FilterChips({ scope, metric, value: filters, onChange: setFilter
       {children}
       {editing !== null && (
         <div className="anim-pop absolute left-0 top-full z-40 mt-2 rounded-xl border border-line bg-[var(--raised)] p-3 shadow-2xl">
-          <FilterEditor scope={scope} metric={metric} initial={typeof editing === 'number' ? filters[editing] : undefined} onSave={save} onCancel={() => setEditing(null)} />
+          <FilterEditor scope={scope} metric={metric} fields={fields} initial={typeof editing === 'number' ? filters[editing] : undefined} onSave={save} onCancel={() => setEditing(null)} />
         </div>)}
     </div>
   );

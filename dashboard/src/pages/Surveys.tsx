@@ -5,7 +5,7 @@ import { fetchAllSurveyResponses, useDeleteSurvey, useSaveSurvey, useSurvey, use
 import { BarList } from '../charts/BarList';
 import { Sparkline } from '../charts/Sparkline';
 import { cn, fmtDateTime, fmtNum, relTime, shortId } from '../lib/format';
-import { FILTER_PARAM } from '../lib/filters';
+import { describeFilter, FILTER_PARAM } from '../lib/filters';
 import { useProject } from '../lib/project';
 import { navigate, pageHref, useRoute } from '../lib/router';
 import { useTime } from '../lib/time';
@@ -38,7 +38,7 @@ export function whereText(s: Pick<Survey, 'display' | 'targeting'>): string {
   const t = s.targeting;
   const how = s.display.mode === 'inline' ? `Inside ${s.display.selector}` : 'Floating card';
   const where = t.paths.length ? ` on ${t.paths.slice(0, 2).join(', ')}${t.paths.length > 2 ? ` +${t.paths.length - 2}` : ''}` : ' on every page';
-  const when = [t.delaySec && `after ${t.delaySec} s`, t.scrollPct && `at ${t.scrollPct}% scrolled`, t.event && `after ${t.event}`].filter(Boolean).join(', ');
+  const when = [t.delaySec && `after ${t.delaySec} s`, t.scrollPct && `at ${t.scrollPct}% scrolled`, t.trigger?.length && `after ${t.trigger.map(describeFilter).join(' and ')}`].filter(Boolean).join(', ');
   return how + where + (when ? `, ${when}` : '');
 }
 

@@ -10,7 +10,7 @@ import * as G from '../goals';
 import * as GF from '../funnel';
 import * as SV from '../surveys';
 import * as FL from '../flows';
-import { SLACK_TEMPLATE_VARIABLES, TRIGGER_WINDOWS, type Dashboard, type Project, type Trigger } from '../../contract';
+import { SLACK_TEMPLATE_VARIABLES, SURVEY_TRIGGER_FIELDS, TRIGGER_WINDOWS, type Dashboard, type Project, type Trigger } from '../../contract';
 import { OPS } from '../filters';
 import * as M from '../monitor';
 import * as DST from '../destinations';
@@ -198,6 +198,7 @@ const surveyShape = {
     mode: z.enum(['popover', 'inline']).default('popover').describe('popover: a floating card; inline: rendered inside the element matching `selector`'),
     selector: z.string().max(300).optional().describe('inline: CSS selector of an element on the page, e.g. "#feedback"'),
     position: z.enum(['bottom-right', 'bottom-left']).optional().describe('popover (default bottom-right)'),
+    collapse: z.enum(['mobile', 'always', 'never']).optional().describe('popover: start as a slim bar with just the question, expanded with a tap: mobile (default, on phones), always or never'),
     layout: z.enum(['steps', 'form']).optional().describe('steps: one question at a time (default for popover); form: all on one page (default for inline)'),
     theme: z.enum(['auto', 'light', 'dark']).optional().describe('auto (default) follows the visitor\'s colour scheme'),
     accent: z.string().optional().describe('Button and selection colour, #rrggbb'),
@@ -208,7 +209,8 @@ const surveyShape = {
     paths: z.array(z.string().max(200)).max(20).optional().describe('Page path globs starting with /, e.g. "/pricing", "/docs/*"; none = every page'),
     delaySec: z.number().int().min(0).max(3600).optional().describe('Show after this many seconds on the page'),
     scrollPct: z.number().int().min(1).max(100).optional().describe('...and once the visitor scrolled this far down'),
-    event: z.string().max(200).optional().describe('...only after the page tracked this custom event (WGO.track name)'),
+    trigger: z.array(filterOf(`A field the browser knows when the event happens: ${SURVEY_TRIGGER_FIELDS.join(', ')} (type: pageview, click, error, http_error, custom, identify; trackName: a click's data-track name; name: a custom event's name), or props.<path> (e.g. props.props.plan for a custom event's \`plan\`)`)).max(10).optional()
+      .describe('...only after an event on the page matches all these filters, e.g. [{field:"type",op:"eq",value:"click"},{field:"trackName",op:"eq",value:"signup"}] or [{field:"type",op:"eq",value:"error"}]. Check values with search_events first.'),
     frequency: z.enum(['once', 'until_answered', 'always']).optional().describe('once (default): never again after answered or closed; until_answered: comes back next session if closed; always: on every matching page view'),
   }).optional().describe('Where and when it shows (default: every page, once)'),
   status: z.enum(['draft', 'active', 'paused']).optional().describe('Default draft; only active surveys are shown'),
