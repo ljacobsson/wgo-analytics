@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { FLOW_OTHER, type FlowLink, type FlowNode, type FlowsResponse } from '../api/contract';
+import { clickLabel } from '../lib/events';
 import { cn, fmtNum } from '../lib/format';
 import { Popover } from '../ui/Popover';
 import { compact, useSize } from './util';
@@ -63,6 +64,17 @@ function band(l: LaidLink): string {
   return `M${l.x0},${l.sy} C${m},${l.sy} ${m},${l.ty} ${l.x1},${l.ty} L${l.x1},${l.ty + l.h} C${m},${l.ty + l.h} ${m},${l.sy + l.h} ${l.x0},${l.sy + l.h} Z`;
 }
 
+/** What to call a node: the page path, or a click target's alias / text / short selector. */
+export function flowNodeName(n: Pick<FlowNode, 'key' | 'kind' | 'label'>): string {
+  return n.kind === 'click' ? clickLabel({ alias: n.label ?? null, trackName: null, elementText: null, selector: n.key }) : n.key;
+}
+
+/** Column heading: pages mode counts pages, clicks mode counts steps (pages and clicks). */
+function stepName(data: FlowsResponse, step: number): string {
+  if (step === 0) return data.start ? 'Start' + (data.mode === 'clicks' ? '' : ' page') : 'Entry page';
+  return `${data.mode === 'clicks' ? 'Step' : 'Page'} ${step + 1}`;
+}
+
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, Math.max(1, max - 1)) + '…';
 }
@@ -102,7 +114,7 @@ export function FlowChart({ data, highlightErrors, panel }: {
           <svg width={width} height={height} className="block select-none" onMouseLeave={() => setHover(null)}>
             {Array.from({ length: data.steps }, (_, i) => (
               <text key={i} x={i * span} y={12} fontSize="11" className="fill-faint">
-                {i === 0 ? (data.start ? 'Start page' : 'Entry page') : `Page ${i + 1}`}
+                {stepName(data, i)}
                 <tspan className="tnum"> · {compact(colTotal(i))}</tspan>
               </text>
             ))}
@@ -120,7 +132,7 @@ export function FlowChart({ data, highlightErrors, panel }: {
             {nodes.map((n) => {
               const share = errShare(n);
               const dim = (highlightErrors && !n.errors) || (focus != null && focus !== n.id && !links.some((l) => (l.src === focus && l.dst === n.id) || (l.dst === focus && l.src === n.id)));
-              const fill = n.key === FLOW_OTHER ? 'var(--faint)' : highlightErrors && n.errors ? 'var(--bad)' : 'var(--accent)';
+              const fill = n.key === FLOW_OTHER ? 'var(--faint)' : highlightErrors && n.errors ? 'var(--bad)' : n.kind === 'click' ? 'var(--accent2)' : 'var(--accent)';
               const chars = Math.floor(((n.step === data.steps - 1 ? LABEL_W : span) - NODE_W - 16) / 6.4);
               const lx = n.x + NODE_W + 6, ly = n.y + 11;
               const twoLines = n.room >= LINE * 2 + 4;
@@ -134,7 +146,7 @@ export function FlowChart({ data, highlightErrors, panel }: {
                   {selected?.id === n.id && <rect x={n.x - 4} y={n.y - 4} width={NODE_W + 8} height={n.h + 8} rx={4} fill="none" stroke="var(--fg)" strokeWidth={1.25} />}
                   <rect x={n.x + NODE_W} y={n.y} width={Math.max(0, chars * 6.4)} height={Math.min(n.room - 4, twoLines ? LINE * 2 + 2 : LINE)} fill="transparent" />
                   <text x={lx} y={ly} fontSize="11.5" paintOrder="stroke" stroke="var(--bg)" strokeWidth={3} strokeLinejoin="round">
-                    <tspan className={cn('fill-fg', n.key === FLOW_OTHER && 'fill-muted')} fontWeight={500}>{truncate(n.key, Math.max(4, chars - 6))}</tspan>
+                    <tspan className={cn('fill-fg', n.key === FLOW_OTHER && 'fill-muted')} fontWeight={500}>{truncate(flowNodeName(n), Math.max(4, chars - 6))}</tspan>
                     <tspan className="fill-muted tnum"> {compact(n.sessions)}</tspan>
                   </text>
                   {twoLines && (n.exits > 0 || n.errors > 0) && (
@@ -163,12 +175,12 @@ function Tip({ hover, data, byId, width }: { hover: Hover; data: FlowsResponse; 
   const left = Math.min(width - 250, hover.x + 14), top = hover.y + 14;
   return (
     <div className="pointer-events-none absolute z-10 w-[240px] rounded-lg border border-line bg-[var(--raised)] px-2.5 py-2 text-[11.5px] shadow-xl" style={{ left: Math.max(0, left), top }}>
-      {hover.kind === 'node' ? <NodeSummary n={hover.n} last={hover.n.step === data.steps - 1} /> : (() => {
-        const from = byId.get(hover.l.src)!;
+      {hover.kind === 'node' ? <NodeSummary n={hover.n} last={hover.n.step === data.steps - 1} mode={data.mode} /> : (() => {
+        const from = byId.get(hover.l.src)!, to = byId.get(hover.l.dst)!;
         return (
           <>
-            <div className="break-all font-medium">{hover.l.from} <span className="text-faint">→</span> {hover.l.to}</div>
-            <div className="mt-1 text-muted tnum">{fmtNum(hover.l.sessions)} sessions, {pct(hover.l.sessions, from.sessions)} of {hover.l.from}</div>
+            <div className="break-all font-medium">{flowNodeName(from)} <span className="text-faint">→</span> {flowNodeName(to)}</div>
+            <div className="mt-1 text-muted tnum">{fmtNum(hover.l.sessions)} sessions, {pct(hover.l.sessions, from.sessions)} of {flowNodeName(from)}</div>
           </>
         );
       })()}
@@ -177,13 +189,16 @@ function Tip({ hover, data, byId, width }: { hover: Hover; data: FlowsResponse; 
 }
 
 /** Sessions, how many went on or left, and the errors hit there. Shared by the tooltip and the click panel. */
-export function NodeSummary({ n, last }: { n: FlowNode; last: boolean }) {
+export function NodeSummary({ n, last, mode }: { n: FlowNode; last: boolean; mode: FlowsResponse['mode'] }) {
   const on = n.sessions - n.exits;
   const others = n.sessions - n.errors;
+  const where = mode === 'clicks' ? (n.step === 0 ? 'First step' : `Step ${n.step + 1}`) : n.step === 0 ? 'First page' : `Page ${n.step + 1}`;
   return (
     <div className="space-y-1">
-      <div className="break-all font-medium">{n.key}</div>
-      <div className="text-faint">{n.step === 0 ? 'First page' : `Page ${n.step + 1}`} · {fmtNum(n.sessions)} sessions</div>
+      <div className="break-all font-medium">{flowNodeName(n)}</div>
+      {n.kind === 'click' && (
+        <div className="break-all text-muted">Click{n.page && <> on <span className="font-mono">{n.page}</span></>}{n.label && <> · <span className="font-mono text-faint">{n.key}</span></>}</div>)}
+      <div className="text-faint">{where} · {fmtNum(n.sessions)} sessions</div>
       <div className="tnum">
         <div><span className="text-muted">{last ? 'Went on' : 'Continued'}</span> {fmtNum(on)} ({pct(on, n.sessions)})</div>
         <div><span className="text-muted">Left here</span> <span className={n.exits ? 'text-bad' : ''}>{fmtNum(n.exits)} ({pct(n.exits, n.sessions)})</span></div>

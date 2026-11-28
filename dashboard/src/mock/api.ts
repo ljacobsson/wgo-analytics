@@ -316,7 +316,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     }
     case 'conversions': return D.conversions(from, to, db.goals?.[pid] ?? [], F.parse(qp('filters')), qp('series') !== '0');
     case 'retention': return mockRetention(url.searchParams, now, db.goals?.[pid] ?? []);
-    case 'flows': return FLOWS.flows(from, to, F.parse(qp('filters')), qp('start')?.trim() || null, FLOWS.parseSteps(qp('steps')));
+    case 'flows': return FLOWS.flows(from, to, F.parse(qp('filters')), qp('start')?.trim() || null, FLOWS.parseSteps(qp('steps')), qp('mode') === 'clicks' ? 'clicks' : 'pages');
     case 'triggers': {
       const list = ((db.triggers ??= {})[pid] ??= []);
       const [, , , id, action] = parts;

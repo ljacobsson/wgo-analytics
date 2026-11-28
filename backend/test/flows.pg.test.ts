@@ -54,9 +54,13 @@ d('user flows (PostgreSQL)', async () => {
     };
     const pv = (path: string): [string, string] => ['pageview', path];
     const err = (path: string): [string, string, object] => ['error', path, { d: { msg: 'TypeError: plans is undefined' } }];
+    const click = (path: string, sel: string, text: string): [string, string, object] => ['click', path, { d: { sel, text, tag: 'a' } }];
     const rows = [];
-    // A ×10: / → /pricing (reloaded) → /signup
-    for (let i = 0; i < 10; i++) rows.push(...session(chrome, [pv('/'), pv('/pricing'), pv('/pricing'), pv('/signup')]));
+    // A ×10: / → click Pricing → /pricing (reloaded) → click #signup (twice) → /signup
+    for (let i = 0; i < 10; i++) {
+      rows.push(...session(chrome, [pv('/'), click('/', 'a.nav-pricing', 'Pricing'), pv('/pricing'), pv('/pricing'),
+        click('/pricing', '#signup', 'Start'), click('/pricing', '#signup', 'Start'), pv('/signup')]));
+    }
     // B ×6: / → /pricing, error there, leave
     for (let i = 0; i < 6; i++) rows.push(...session(chrome, [pv('/'), pv('/pricing'), err('/pricing')]));
     // C ×4: bounce on /
@@ -68,6 +72,7 @@ d('user flows (PostgreSQL)', async () => {
     // a crawler: left out unless bots=1
     rows.push(...session(googlebot, [pv('/'), pv('/pricing')]));
     await writeRows('events', rows);
+    await query(`INSERT INTO click_aliases (project_id, selector, alias, updated_by, updated_at) VALUES ($1, '#signup', 'Signup button', 'x', now())`, [pid]);
   });
 
   afterAll(async () => {
@@ -131,5 +136,32 @@ d('user flows (PostgreSQL)', async () => {
     expect(short.links.some((l) => l.step >= 2)).toBe(false);
 
     expect((await flows(pid, { ...range, bots: '1' })).sessions).toBe(26);
+  });
+
+  it('in clicks mode makes every click a step, repeats collapsed, named by alias or text', async () => {
+    const f = await flows(pid, { ...range, mode: 'clicks' });
+    expect(f).toMatchObject({ mode: 'clicks', steps: 5, sessions: 25 });
+    expect(at(f, 0, '/')).toEqual([20, 4, 0, 0]);
+    expect(at(f, 1, 'a.nav-pricing')).toEqual([10, 0, 0, 0]);
+    expect(at(f, 1, '/pricing')).toEqual([6, 6, 6, 6]);
+    expect(at(f, 2, '/pricing')).toEqual([15, 2, 2, 2]);
+    expect(at(f, 3, '#signup')).toEqual([10, 0, 0, 0]); // clicked twice: one step
+    expect(at(f, 4, '/signup')).toEqual([10, 10, 0, 0]);
+    expect(f.nodes.find((n) => n.key === 'a.nav-pricing')).toMatchObject({ kind: 'click', label: 'Pricing', page: '/' });
+    expect(f.nodes.find((n) => n.key === '#signup')).toMatchObject({ kind: 'click', label: 'Signup button', page: '/pricing' });
+    expect(f.nodes.find((n) => n.key === '/signup')!.kind).toBe('page');
+    expect(links(f)).toEqual([
+      '0:/>a.nav-pricing=10', '0:/>/pricing=6', '0:/blog>/=3', '0:/pricing>/=2',
+      '1:a.nav-pricing>/pricing=10', '1:/>/pricing=5',
+      '2:/pricing>#signup=10', '2:/pricing>/blog=3',
+      '3:#signup>/signup=10', '3:/blog>/pricing=3',
+    ]);
+    // the exit table stays by page: a click counts on the page it happened on
+    expect(f.exitPages).toEqual((await flows(pid, range)).exitPages);
+
+    const fromClick = await flows(pid, { ...range, mode: 'clicks', start: '#signup' });
+    expect(fromClick.sessions).toBe(10);
+    expect(fromClick.nodes.find((n) => n.step === 0)).toMatchObject({ key: '#signup', kind: 'click', sessions: 10 });
+    expect(at(fromClick, 1, '/signup')).toEqual([10, 10, 0, 0]);
   });
 });

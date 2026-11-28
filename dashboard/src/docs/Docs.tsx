@@ -258,6 +258,7 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
             <P>The User flows page follows sessions page by page: each column is the next page they viewed, the bands show where they went, and the red part of each page is the sessions that left there. Pages where sessions hit a JavaScript error or a failed request are outlined in red; turn on <b>Highlight errors</b> to fade out the rest.</P>
             <List items={[
               'Reloads of the same page count once. Each column shows its top 6 pages, the rest as (other). Choose 3 to 7 steps.',
+              'Turn on Clicks as steps to see the clicks between pages too: every click gets a column of its own, named by its click alias or text, so a click funnel like "Pricing → Start trial → /signup" shows where people stop. Repeated clicks on the same element count once.',
               'Start from the entry page, or pick a page (or click one in the chart) to see where people go after it.',
               'Click a page for its most common errors and how many sessions left right after one. The table below ranks the pages sessions leave on, with the exit rate after an error next to the overall one.',
               <>Filters choose sessions: a session is included when any of its events matches, so <C>Event type equals error</C> shows the paths of sessions that hit an error. Bots and development traffic are left out unless included in the filter bar. The API is <C>GET /api/projects/&#123;id&#125;/flows</C> and the MCP tool is <C>user_flows</C>.</>,

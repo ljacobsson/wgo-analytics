@@ -50,6 +50,23 @@ describe('buildFlows', () => {
     expect(f.nodes.find((n) => n.key === '/a')).toMatchObject({ errors: 3, errorExits: 2, topErrors: [{ key: 'A', sessions: 3 }, { key: 'B', sessions: 1 }] });
   });
 
+  it('marks click targets, naming them by alias first', () => {
+    const c = buildFlows([
+      row({ kind: 'total', n: 5 }),
+      row({ kind: 'link', i: 1, a: '/', b: '#buy', n: 5 }),
+      row({ kind: 'link', i: 2, a: '#buy', b: 'a.more', n: 5 }),
+      row({ kind: 'link', i: 3, a: 'a.more', b: null, n: 5 }),
+      row({ kind: 'click', a: '#buy', b: 'Buy now' }),
+      row({ kind: 'cpage', a: '#buy', b: '/' }),
+      row({ kind: 'click', a: 'a.more', b: null }),
+    ], null, 3, 'clicks', new Map([['a.more', 'Read more']]));
+    expect(c.mode).toBe('clicks');
+    expect(c.nodes.map((n) => [n.key, n.kind, n.label, n.page])).toEqual([
+      ['/', 'page', undefined, undefined], ['#buy', 'click', 'Buy now', '/'], ['a.more', 'click', 'Read more', undefined],
+    ]);
+    expect(f.mode).toBe('pages');
+  });
+
   it('ranks exit pages by exits, with their rate', () => {
     expect(f.exitPages.map((p) => [p.path, p.exits, p.rate])).toEqual([['/x', 10, 10 / 12], ['/a', 5, 5 / 14]]);
     expect(f.exitPages[1]).toMatchObject({ errorViews: 3, errorExits: 2 });

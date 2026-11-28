@@ -4,7 +4,7 @@ import type {
   Device, DeviceCreated, Kiosk, KioskConfig,
   BreakdownRow, ClickRow, ErrorGroup, EventsResponse, GeoResponse, HttpErrorGroup, LogsResponse, Me, Member, MetricInfo,
   MetricSeriesResponse, PageRow, Project, ServiceRow, StatsResponse, Totals, TraceResponse, TraceSummary, VitalsResponse, FieldsResponse, FieldValuesResponse, FilterScope, SlackIntegration, SlackChannel, Destination, DestinationInput, DestinationLevel, Trigger, TriggerInput, TriggerTestResult, SlackSetup, SlackTemplate, SlackWorkspace,
-  SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, FlowsResponse, ConversionsResponse, ClickAlias, RetentionResponse,
+  SavedView, SavedViewInput, Goal, GoalInput, GoalStep, GoalFunnel, FlowMode, FlowsResponse, ConversionsResponse, ClickAlias, RetentionResponse,
   ReleasesResponse, Explanation, ExplainMetric, Filter, UploadKey, FrustrationRow, HeatmapResponse, HoursResponse,
   UptimeCheck, UptimeCheckInput, UptimeResults, UptimeRunResult, CostsResponse, TriggerPreview, ErrorSuppression, ErrorSuppressionInput, Budget, BudgetInput,
   RecordingsResponse, RecordingResponse, RecordingSettings, RecordingSettingsResponse, RecordingFilters, ProjectSite,
@@ -86,9 +86,9 @@ export function useGoalFunnel(pid: string, goalId: string, r: TimeRange, steps?:
   const o = q<GoalFunnel>(pid, 'conversions', r, `goals/${goalId}/funnel`, { steps: steps && JSON.stringify(steps) });
   return useQuery({ ...o, queryKey: [...o.queryKey, 'funnel', goalId] as const });
 }
-/** User flows: pages viewed one after another from the entry page (or `start`), with exits and errors per step. */
-export const useFlows = (pid: string, r: TimeRange, start: string | null, steps: number) =>
-  useQuery(q<FlowsResponse>(pid, 'flows', r, 'flows', { start: start ?? undefined, steps }));
+/** User flows: pages (and in clicks mode, clicks) one after another from the entry page (or `start`), with exits and errors per step. */
+export const useFlows = (pid: string, r: TimeRange, start: string | null, steps: number, mode: FlowMode = 'pages') =>
+  useQuery(q<FlowsResponse>(pid, 'flows', r, 'flows', { start: start ?? undefined, steps, mode: mode === 'clicks' ? mode : undefined }));
 export interface RetentionParams { from: string; to: string; period: string; start: string; return: string; split: string }
 /** Retention cohorts. Not scoped to the page filters: visitor_days hold their own 400 days, so the page picks its own range. */
 export const useRetention = (pid: string, p: RetentionParams) => useQuery({
