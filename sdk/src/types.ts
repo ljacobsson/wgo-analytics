@@ -84,11 +84,51 @@ export interface Config {
    * `false` never records on this site, whatever the project says.
    */
   record?: boolean
+  /**
+   * Show the project's surveys (built in the dashboard) on this site. Default true; `false` never shows them.
+   * `WGO.showSurvey(id)` opens an active survey from code.
+   */
+  surveys?: boolean
 }
 
 /** What to record, from GET /replay/config (the project's recording settings). */
 export interface ReplayTrigger { type: 'page' | 'click' | 'event' | 'error'; value?: string }
-export interface ReplayConfig { on: boolean; rate?: number; trg?: ReplayTrigger[]; mask?: boolean }
+/** `sv`: the project has active surveys (the SDK then loads wgo-surveys.js) */
+export interface ReplayConfig { on: boolean; rate?: number; trg?: ReplayTrigger[]; mask?: boolean; sv?: boolean }
+
+/** A survey from GET /surveys/config (same shapes as the dashboard's contract, see backend/src/contract.ts). */
+export interface SurveyQuestion {
+  id: string
+  type: 'single' | 'multi' | 'text' | 'yesno' | 'rating' | 'nps'
+  title: string
+  description?: string
+  required: boolean
+  options?: string[]
+  long?: boolean
+  placeholder?: string
+  scale?: 5 | 10
+  lowLabel?: string
+  highLabel?: string
+}
+export interface SurveyDisplay {
+  mode: 'popover' | 'inline'
+  selector?: string
+  position?: 'bottom-right' | 'bottom-left'
+  layout: 'steps' | 'form'
+  theme: 'auto' | 'light' | 'dark'
+  accent?: string
+  submitLabel?: string
+  thankYou?: string
+}
+export interface SurveyTargeting {
+  paths: string[]
+  delaySec?: number
+  scrollPct?: number
+  event?: string
+  frequency: 'once' | 'until_answered' | 'always'
+}
+export interface PublicSurvey { id: string; name: string; questions: SurveyQuestion[]; display: SurveyDisplay; targeting: SurveyTargeting }
+export type SurveyAnswer = string | string[] | number | boolean
 
 /** @internal what the recorder (sdk/src/replay, its own script) needs from the main SDK */
 export interface ReplayHost {

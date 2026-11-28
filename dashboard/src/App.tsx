@@ -24,6 +24,7 @@ import { TriggersPage } from './pages/Triggers';
 import { GoalsPage } from './pages/Goals';
 import { RetentionPage } from './pages/Retention';
 import { FlowsPage } from './pages/Flows';
+import { SurveysPage } from './pages/Surveys';
 import { GoalFunnelPage } from './pages/GoalFunnel';
 import { TracesPage } from './pages/Traces';
 import { LogsPage } from './pages/Logs';
@@ -82,6 +83,7 @@ function Authed({ email }: { email: string }) {
       case 'goals': return sub ? <GoalFunnelPage goalId={sub} /> : <GoalsPage />;
       case 'flows': return <FlowsPage />;
       case 'retention': return <RetentionPage />;
+      case 'surveys': return <SurveysPage sub={sub} />;
       case 'triggers': return <TriggersPage />;
       case 'traces': return <TracesPage traceId={sub ?? null} />;
       case 'logs': return <LogsPage />;

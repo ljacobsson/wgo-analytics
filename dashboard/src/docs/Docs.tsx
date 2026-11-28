@@ -201,6 +201,14 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
               <><C>WGO.status()</C> in the browser console shows what the SDK is doing.</>,
             ]} />
             <P>The SDK is about 11 KB gzipped. It batches events, gzips batches over 1 KB, sends errors and priority clicks within a second, and keeps events while the visitor is offline. See the <Ext href={repoFile('sdk/README.md')}>SDK README</Ext> for every option, npm usage, frameworks and tag managers.</P>
+            <H3>Surveys</H3>
+            <P>Build a survey under <B>Surveys</B> with single and multiple choice, text, yes/no, rating and NPS questions, and watch the preview as you go. Once it's active, the script you already installed shows it within about a minute: there's nothing to deploy.</P>
+            <List items={[
+              <>A <B>floating card</B> slides in at a bottom corner. An <B>inline</B> survey renders into the element its CSS selector names, e.g. <C>{'<div id="feedback"></div>'}</C>.</>,
+              <>Show it on pages matching path globs (<C>/docs/*</C>), after a delay, a scroll depth or a custom event, once per visitor, until answered, or every time.</>,
+              <><C>WGO.showSurvey('survey id')</C> opens one from your code. <C>data-surveys="false"</C> keeps surveys off a site.</>,
+              <>Showing, closing and answering send <C>survey_shown</C>, <C>survey_dismissed</C> and <C>survey_sent</C> custom events, so surveys work in goals and funnels. Answers are kept until you delete the survey and export as CSV.</>,
+            ]} />
             <H3>Frustration signals and heatmaps</H3>
             <P>The Clicks page has a Frustration tab and a Heatmap tab. <B>Rage clicks</B> are three or more clicks on one element within a second. A <B>dead click</B> is a click on a link, button, <C>role="button"</C> or submit control after which the page did nothing for a second: no DOM change and no URL change. Links that open a new tab, download or start an email or call are not counted. An <B>error click</B> is a click followed by a JavaScript error or failed request in the same session within two seconds. Each row links to recorded sessions where it happened, opened at the click.</P>
             <P>The heatmap shows where visitors click on one page, for desktop or for mobile (phones and tablets), using clicks made at the most common window width. When session recording is on, it is drawn over a snapshot of the page from a recorded visit; without recordings it is drawn on a blank page.</P>
@@ -271,7 +279,7 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
             <Code lang="sh" title="Claude Code" code={`claude mcp add --transport http wgo ${HOST}/mcp`} />
             <P>There is no key to copy. The client registers itself, opens a browser, and you sign in with your WGO account. It then sees exactly the projects you're a member of, read-only. Use the dashboard's host (the <C>McpUrl</C> stack output): the raw API Gateway URL has no OAuth resource of its own.</P>
             <Table rows={[
-              ['Product analytics', <span className="font-mono text-[12.5px]">list_projects, get_overview, top_clicks, top_pages, goal_conversions, goal_funnel, get_retention, list_frustration, list_errors, list_failed_requests, explain_change, list_releases, breakdown, web_vitals, visitor_locations, search_events, find_recordings, list_uptime_checks</span>],
+              ['Product analytics', <span className="font-mono text-[12.5px]">list_projects, get_overview, top_clicks, top_pages, goal_conversions, goal_funnel, get_retention, list_frustration, list_errors, list_failed_requests, explain_change, list_releases, breakdown, web_vitals, visitor_locations, search_events, find_recordings, list_uptime_checks, list_surveys, survey_results</span>],
               ['OpenTelemetry', <span className="font-mono text-[12.5px]">list_services, list_traces, get_trace, search_logs, list_metrics, get_metric_series</span>],
             ]} />
             <H3>How sign-in works</H3>

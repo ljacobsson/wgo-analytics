@@ -6,6 +6,7 @@ import { query } from './db';
 import { eventTime, clockSkew, type WireBatch } from './events';
 import { HttpError } from './http';
 import { projectIdForWriteKey } from './projects';
+import { activeSurveys } from './surveys';
 import { projectRetention, RECORDING_RETENTION_DAYS } from './retention';
 import { inList, rawQuery } from './store/duck';
 
@@ -129,8 +130,11 @@ export async function saveSettings(pid: string, email: string, body: Partial<Rec
 
 // ---------------------------------------------------------------- the SDK's endpoints
 
-/** Wire shape of GET /replay/config (sdk/src/types.ts ReplayConfig). */
-export interface PublicConfig { on: boolean; rate?: number; trg?: RecordingTrigger[]; mask?: boolean }
+/**
+ * Wire shape of GET /replay/config (sdk/src/types.ts ReplayConfig). It's the SDK's one config request per page view,
+ * so it also says whether the project has active surveys (`sv`): the SDK then loads wgo-surveys.js (lib/surveys.ts).
+ */
+export interface PublicConfig { on: boolean; rate?: number; trg?: RecordingTrigger[]; mask?: boolean; sv?: boolean }
 
 export async function publicConfig(writeKey: string | undefined): Promise<PublicConfig> {
   const pid = await projectIdForWriteKey(writeKey);
@@ -138,9 +142,10 @@ export async function publicConfig(writeKey: string | undefined): Promise<Public
   // a cost budget stopped collection: don't start recorders that would only send chunks to be dropped
   const { collectionPaused } = await import('./budgets');
   if (await collectionPaused(pid)) return { on: false };
-  const s = await settingsOf(pid);
-  if (!s.enabled || (s.samplePercent <= 0 && !s.triggers.length)) return { on: false };
-  return { on: true, rate: s.samplePercent / 100, trg: s.triggers, mask: s.maskAllText };
+  const [s, surveys] = await Promise.all([settingsOf(pid), activeSurveys(pid)]);
+  const sv = surveys.length ? { sv: true } : {};
+  if (!s.enabled || (s.samplePercent <= 0 && !s.triggers.length)) return { on: false, ...sv };
+  return { on: true, rate: s.samplePercent / 100, trg: s.triggers, mask: s.maskAllText, ...sv };
 }
 
 const granted = new Map<string, number>();

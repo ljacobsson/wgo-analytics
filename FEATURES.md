@@ -37,6 +37,10 @@ from your real users, without any extra code. Events show up within seconds.
 - 🎬 Watch what a visitor did: their pointer, clicks, scrolling and page changes, replayed over snapshots of the
   page. It records no video, so a session costs kilobytes. Record a share of sessions, or only the ones that hit an
   error or reach a page you choose, with hourly and daily limits. Typed text is never recorded.
+- 💬 Ask visitors questions on your site: multiple choice, text, yes/no, ratings and NPS, built in the dashboard
+  with a live preview. Show a survey as a floating card or inside your own page, on the pages, after the delay, scroll
+  depth or event you choose. The script you already installed shows it, so there's nothing to deploy. See the answers
+  per question, the response rate and every response with its visitor and session, and export them as CSV.
 - 😤 See where visitors get stuck: rage clicks, dead clicks (the page did nothing) and clicks followed by an error,
   per element, each with the recordings behind it.
 - 🔥 A click heatmap for any page, on desktop or mobile, drawn over a snapshot of the page when recordings are on.

@@ -19,7 +19,7 @@ import type { CostCategory } from '../contract';
  * - SQS: by messages sent to each queue (IngestQueue and EventsQueue: events; OtlpQueue: OpenTelemetry).
  * - The rest (CloudFront, the intake API, S3 writes, DSQL writes) is the front door: divided by requests, which
  *   are the messages sent to IngestQueue and OtlpQueue (the intake writes one per request).
- * Recordings and source maps (ReplayFunction, SourcemapFunction) are in neither.
+ * Recordings, surveys and source maps (ReplayFunction, SurveyFunction, SourcemapFunction) are in neither.
  */
 
 export const CATEGORIES: CostCategory[] = ['storage', 'ingestion', 'querying', 'other'];
@@ -48,6 +48,7 @@ export const FUNCTIONS: Record<string, { category: CostCategory; memoryMb: numbe
   OtlpFunction: { category: 'ingestion', memoryMb: 1024, feeds: 'otel' },
   EventsWriterFunction: { category: 'ingestion', memoryMb: 1024, feeds: 'events' },
   ReplayFunction: { category: 'ingestion', memoryMb: 512, feeds: 'other' },
+  SurveyFunction: { category: 'ingestion', memoryMb: 512, feeds: 'other' },
   SourcemapFunction: { category: 'ingestion', memoryMb: 512, feeds: 'other' },
   ApiFunction: { category: 'querying', memoryMb: 2048 },
   McpFunction: { category: 'querying', memoryMb: 2048 },

@@ -12,6 +12,7 @@ import type {
   FixRun, FixSettings, FixSettingsInput, GithubAppStatus, GithubManifestForm, GithubRepo, FixAgentAdmin, FixAgentConfigInput, FixTarget, FixTargetInfo, InstallFeatures, InstallSettings,
 } from './contract';
 import type { SqlExport, SqlExportRequest, SqlRequest, SqlResult, SqlSchema } from './contract';
+import type { Survey, SurveyInput, SurveyResponse, SurveyResponsesPage, SurveyResults } from './contract';
 import { previousWindow, type TimeRange } from '../lib/time';
 import { botsParam, filtersParam, type FieldScope } from '../lib/filters';
 
@@ -819,3 +820,57 @@ export const useSqlTile = (pid: string, r: Pick<TimeRange, 'from' | 'to'>, query
       : runSql(pid, { sql: query!, from: r.from, to: r.to, limit: 5000 }, signal),
     staleTime: STALE, placeholderData: keepPreviousData, enabled: !!query, retry: false,
   });
+
+// ---------- surveys ----------
+const surveysKey = (pid: string) => ['surveys', pid] as const;
+export const useSurveys = (pid: string) =>
+  useQuery({ queryKey: surveysKey(pid), queryFn: () => api<Survey[]>(`${base(pid)}/surveys`), staleTime: 30_000 });
+export const useSurvey = (pid: string, id: string | null) =>
+  useQuery({ queryKey: [...surveysKey(pid), id] as const, queryFn: () => api<Survey>(`${base(pid)}/surveys/${id}`), staleTime: 30_000, enabled: !!id });
+export const useSurveyResults = (pid: string, id: string, r: TimeRange) =>
+  useQuery({
+    queryKey: ['survey-results', pid, id, r.from, r.to] as const,
+    queryFn: ({ signal }) => api<SurveyResults>(`${base(pid)}/surveys/${id}/results`, { params: rp(r), signal }),
+    staleTime: STALE, placeholderData: keepPreviousData,
+  });
+export const useSurveyResponses = (pid: string, id: string, r: TimeRange) =>
+  useInfiniteQuery({
+    queryKey: ['survey-responses', pid, id, r.from, r.to] as const,
+    queryFn: ({ pageParam, signal }) => api<SurveyResponsesPage>(`${base(pid)}/surveys/${id}/responses`, { params: { ...rp(r), before: pageParam || undefined, limit: 50 }, signal }),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.next ?? undefined,
+    staleTime: STALE,
+  });
+/** Every response in the range (for the CSV export), page by page. */
+export async function fetchAllSurveyResponses(pid: string, id: string, r: Pick<TimeRange, 'from' | 'to'>, max = 50_000): Promise<SurveyResponse[]> {
+  const out: SurveyResponse[] = [];
+  let before: string | null = '';
+  while (before !== null && out.length < max) {
+    const page: SurveyResponsesPage = await api<SurveyResponsesPage>(`${base(pid)}/surveys/${id}/responses`, { params: { ...rp(r), before: before || undefined, limit: 1000 } });
+    out.push(...page.responses);
+    before = page.next;
+  }
+  return out;
+}
+const invalidateSurveys = (qc: QueryClient, pid: string) =>
+  Promise.all([qc.invalidateQueries({ queryKey: surveysKey(pid) }), qc.invalidateQueries({ queryKey: ['survey-results', pid] })]);
+export function useSaveSurvey(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id?: string; input: Partial<SurveyInput> }) =>
+      id ? api<Survey>(`${base(pid)}/surveys/${id}`, { method: 'PATCH', body: input }) : api<Survey>(`${base(pid)}/surveys`, { method: 'POST', body: input }),
+    onSuccess: (s) => qc.setQueryData([...surveysKey(pid), s.id], s),
+    onSettled: () => invalidateSurveys(qc, pid),
+  });
+}
+export function useDeleteSurvey(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>(`${base(pid)}/surveys/${id}`, { method: 'DELETE' }),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: surveysKey(pid) });
+      qc.setQueryData<Survey[]>(surveysKey(pid), (cur) => cur?.filter((s) => s.id !== id));
+    },
+    onSettled: () => invalidateSurveys(qc, pid),
+  });
+}

@@ -26,6 +26,7 @@ import * as SUP from '../lib/suppressions';
 import * as M from '../lib/monitor';
 import * as V from '../lib/views';
 import * as SQL from '../lib/sql';
+import * as SV from '../lib/surveys';
 
 type Q = Record<string, string | undefined>;
 
@@ -230,6 +231,20 @@ async function route(method: string, parts: string[], q: Q, email: string, event
     if (id && action === 'funnel' && method === 'GET') return GF.goalFunnel(pid, id, q);
     if (id && !action && method === 'PATCH') return G.updateGoal(pid, id, jsonBody(event));
     if (id && !action && method === 'DELETE') { await G.deleteGoal(pid, id); return { ok: true }; }
+    throw new HttpError(405, 'Method not allowed');
+  }
+
+  // surveys the SDK shows on the project's site (lib/surveys.ts): any member, like goals
+  if (sub === 'surveys') {
+    await P.getProject(email, pid); // authorization: caller must be a member
+    const [id, action] = rest;
+    if (!id && method === 'GET') return SV.listSurveys(pid);
+    if (!id && method === 'POST') return SV.createSurvey(pid, email, jsonBody(event));
+    if (id && !action && method === 'GET') return SV.getSurvey(pid, id);
+    if (id && !action && method === 'PATCH') return SV.updateSurvey(pid, id, jsonBody(event));
+    if (id && !action && method === 'DELETE') { await SV.deleteSurvey(pid, id); return { ok: true }; }
+    if (id && action === 'results' && method === 'GET') return SV.surveyResults(pid, id, q);
+    if (id && action === 'responses' && method === 'GET') return SV.surveyResponses(pid, id, q);
     throw new HttpError(405, 'Method not allowed');
   }
 

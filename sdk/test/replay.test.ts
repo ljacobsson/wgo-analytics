@@ -140,10 +140,18 @@ describe('loading the recorder', () => {
     expect(scripts()).toHaveLength(1)
   })
 
-  it('record: false never asks', async () => {
+  it('record: false never loads the recorder (the config is still asked for, for surveys)', async () => {
     const replay = vi.fn(() => ({ ok: true, status: 200, json: async () => ({ on: true, rate: 1 }) }))
     mockFetch(undefined, replay)
     A.init(cfg({ record: false }))
+    await settle()
+    expect(scripts()).toEqual([])
+  })
+
+  it('record: false with surveys: false never asks', async () => {
+    const replay = vi.fn(() => ({ ok: true, status: 200, json: async () => ({ on: true, rate: 1 }) }))
+    mockFetch(undefined, replay)
+    A.init(cfg({ record: false, surveys: false }))
     await settle()
     expect(replay).not.toHaveBeenCalled()
     expect(scripts()).toEqual([])

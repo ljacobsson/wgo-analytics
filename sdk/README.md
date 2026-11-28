@@ -32,6 +32,7 @@ The script auto-initialises from its own tag and exposes `window.WGO`. Supported
 | `data-priority-clicks` | A CSS selector list; matching clicks are sent within a second (for realtime watches) |
 | `data-persist="false"` / `data-compress="false"` | Turn off `persist` / `compress` |
 | `data-record="false"` | Never record sessions on this site, whatever the project's settings (see [Session recording](#session-recording)) |
+| `data-surveys="false"` | Never show the project's surveys on this site (see [Surveys](#surveys)) |
 
 The dashboard's install page builds this tag for you: tick the options you want and copy it.
 
@@ -206,6 +207,33 @@ button but never clicked it" (the `find_recordings` MCP tool). Touch devices hav
 * Automated browsers (`navigator.webdriver`) are never recorded.
 * Opt out on a site with `data-record="false"` (`record: false`). `respectDoNotTrack` turns recording off along with everything else.
 * In cookieless mode, the "this session is recorded" flag is kept in memory. Otherwise it's in `sessionStorage` (`wgo:rec:<session id>`).
+
+## Surveys
+
+Surveys are built in the dashboard (Surveys): single and multiple choice, short and long text, yes/no, ratings
+(5 stars or 1 to 10) and Net Promoter Score questions. When a project has active ones, the config request the SDK
+already makes on each page load (`GET <endpoint>/replay/config`) says so, and the SDK loads `wgo-surveys.js` (about
+6 KB gzipped) from next to `wgo.js`. That script fetches the active surveys from `GET <endpoint>/surveys/config?k=<writeKey>`
+(cached for a minute) and shows them. There's nothing to add to your site:
+
+* A **floating card** slides in at a bottom corner. An **inline** survey is rendered into the first element matching its
+  CSS selector, so add that element (e.g. `<div id="feedback"></div>`) where it should appear. When the element shows up
+  later (single-page apps), the survey waits for it.
+* **Targeting**: path globs (`/pricing`, `/docs/*`; none means every page), and any of a delay in seconds, a scroll depth
+  and a custom event (a `WGO.track` name). All the conditions that are set must be met on the same page. Single-page app
+  navigations start over.
+* **Frequency**, remembered per browser in `localStorage` (`wgo:sv`, in memory in cookieless mode): once per visitor,
+  until answered (a closed survey comes back next session), or on every matching page view. At most one floating survey
+  is open at a time.
+* `WGO.showSurvey('<survey id>')` (`showSurvey` in the npm package) opens an active survey from your code, wherever its
+  targeting would show it. The frequency still applies.
+* Answers go to `POST <endpoint>/surveys/respond` with the visitor's anonymous id, user id, session and page. They're
+  kept until the survey is deleted, not subject to the raw data retention. The SDK also sends custom events
+  `survey_shown`, `survey_dismissed` and `survey_sent` with props `survey_id` and `survey_name`, so surveys work in
+  goals, funnels and triggers.
+* Surveys render in a shadow root: your page's CSS doesn't change them, and theirs doesn't leak into your page.
+  Sessions left out by `sampleRate` get no surveys.
+* Opt out on a site with `data-surveys="false"` (`surveys: false`).
 
 ## Source maps
 

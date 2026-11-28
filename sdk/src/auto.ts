@@ -41,6 +41,7 @@ function fromScript(s: HTMLScriptElement | null): Config | null {
     cookieless: flag(d.cookieless),
     autoIdentify: flag(d.autoIdentify),
     record: bool(d.record),
+    surveys: bool(d.surveys),
     autocapture: autocapture(d.autocapture),
     sampleRate: num(d.sampleRate),
     sessionTimeout: num(d.sessionTimeout),

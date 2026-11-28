@@ -1,7 +1,7 @@
 import { Client } from './client'
 import type { Config } from './types'
 
-export type { Config, AutocaptureConfig, Batch, Ctx, WireEvent, EventType, ClickData, ErrorData, HttpErrorData, VitalsData } from './types'
+export type { Config, AutocaptureConfig, Batch, Ctx, WireEvent, EventType, ClickData, ErrorData, HttpErrorData, VitalsData, PublicSurvey, SurveyQuestion, SurveyAnswer } from './types'
 
 // Kept on the global object so several copies of the SDK on one page (script tag inserted twice,
 // re-rendered by a framework, bundled + tag) share one client instead of each starting their own.
@@ -37,6 +37,8 @@ export function captureException(error: unknown, extra?: object): void { current
 /** Call on logout: forgets the user and continues as a new anonymous visitor. */
 export function reset(): void { current()?.reset() }
 export function setContext(obj: Record<string, unknown>): void { current()?.setContext(obj) }
+/** Opens an active survey by its id (from the dashboard), wherever its targeting would show it. */
+export function showSurvey(id: string): void { current()?.surveys(id) }
 export function flush(): Promise<void> { const c = current(); return c ? c.flush() : Promise.resolve() }
 /** For debugging from the console: `WGO.status()` */
 export function status(): { initialized: boolean; disabled: boolean; endpoint: string | null; queued: number } {

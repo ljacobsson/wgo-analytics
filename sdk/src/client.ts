@@ -41,6 +41,7 @@ function resolve(c: Config): ResolvedConfig {
     priorityClicks: c.priorityClicks ?? [],
     autoIdentify: c.autoIdentify ?? false,
     record: c.record ?? true,
+    surveys: c.surveys ?? true,
   }
 }
 
@@ -62,6 +63,11 @@ export class Client {
   subs: ((e: WireEvent) => void)[] = []
   /** @internal the project's recording settings, once this page may record */
   rc?: ReplayConfig
+  /** @internal custom events of this page until wgo-surveys.js takes over (its event triggers look back at them) */
+  ev?: WireEvent[]
+  /** @internal the survey WGO.showSurvey() asked for while wgo-surveys.js was loading */
+  want?: string
+  private svLoading = false
 
   constructor(config: Config) {
     const cfg = (this.cfg = resolve(config))
@@ -114,7 +120,8 @@ export class Client {
     start(ac.vitals, () => startVitals(hooks)) // before our hide listener below, see vitals.ts
     start(ac.pageviews, () => startPageviews(hooks))
 
-    if (cfg.record) this.replay()
+    if (cfg.surveys) this.ev = []
+    if (cfg.record || cfg.surveys) this.config()
 
     const hide = () => this.transport.flushBeacon()
     this.stops.push(
@@ -125,23 +132,41 @@ export class Client {
   }
 
   /**
-   * Session recording lives in its own script (sdk/src/replay), loaded only when the project records and this
-   * session may be recorded: sampled in, or triggers are set (the recorder then waits for one to match).
+   * Session recording and surveys live in their own scripts (sdk/src/replay, sdk/src/surveys), loaded only when the
+   * project's config (one request per page) asks for them. Recording: when the project records and this session may
+   * be recorded: sampled in, or triggers are set (the recorder then waits for one to match). Surveys: when the
+   * project has active ones.
    */
-  private replay(): void {
+  private config(): void {
     const { endpoint: ep, writeKey: k } = this.cfg
     fetch(`${ep}/replay/config?k=${encodeURIComponent(k)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((c: ReplayConfig | null) => {
+        if (!c || this.stopped) return
+        if (c.sv && this.cfg.surveys) this.surveys()
+        else this.ev = undefined
         const s = this.session.touch()
-        if (!c?.on || this.stopped || !s.sampled || !(c.trg?.length || unit(s.id) < (c.rate ?? 0))) return
+        if (!this.cfg.record || !c.on || !s.sampled || !(c.trg?.length || unit(s.id) < (c.rate ?? 0))) return
         this.rc = c // the recorder picks up the rest from this client (`__wgo.client`, see replay/index.ts)
-        const el = document.createElement('script')
-        el.src = `${ep}/sdk/v1/wgo-replay.js`
-        el.async = true
-        document.head.appendChild(el)
+        this.load('wgo-replay.js')
       })
-      .catch(() => { /* no recording */ })
+      .catch(() => { /* no recording, no surveys */ })
+  }
+
+  private load(file: string): void {
+    const el = document.createElement('script')
+    el.src = `${this.cfg.endpoint}/sdk/v1/${file}`
+    el.async = true
+    document.head.appendChild(el)
+  }
+
+  /** @internal loads wgo-surveys.js (once); with an id, opens that survey (WGO.showSurvey) */
+  surveys(id?: string): void {
+    if (this.stopped || !this.cfg.surveys) return
+    const open = (globalThis as { __wgo?: { sv?: (id: string) => void } }).__wgo?.sv
+    if (open) { if (id) open(id); return }
+    if (id) this.want = id
+    if (!this.svLoading) { this.svLoading = true; this.load('wgo-surveys.js') }
   }
 
   /**
@@ -179,6 +204,7 @@ export class Client {
       }
       this.transport.push(e, o.priority || t === 'error' || t === 'http_error')
       this.subs.forEach((f) => { try { f(e) } catch { /* the recorder must not break tracking */ } })
+      if (t === 'custom' && this.ev && this.ev.push(e) > 20) this.ev.shift()
       return e
     } catch (err) {
       if (this.cfg.debug) console.debug('[wgo] emit failed', err)
@@ -231,7 +257,9 @@ export class Client {
   stop(): void {
     this.stopped = true
     this.subs = []
-    try { (globalThis as { __wgo?: { rs?: () => void } }).__wgo?.rs?.() } catch { /* ignore */ }
+    const g = (globalThis as { __wgo?: { rs?: () => void; ss?: () => void } }).__wgo
+    try { g?.rs?.() } catch { /* ignore */ }
+    try { g?.ss?.() } catch { /* ignore */ }
     this.stops.forEach((s) => { try { s() } catch { /* ignore */ } })
     this.stops = []
     this.transport.destroy()

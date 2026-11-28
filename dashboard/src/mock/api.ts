@@ -19,6 +19,7 @@ import * as QY from './query';
 import * as SQLM from './sql';
 import type { Dashboard, DashboardInput, DashboardSummary, DashboardTile } from '../api/contract';
 import { mockSite, mockSiteImage } from './site';
+import * as SV from './surveys';
 
 interface Db { budgets?: Budget[]; suppressions?: Record<string, ErrorSuppression[]>; projects: Project[]; members: Record<string, Member[]>; devices?: Device[]; triggers?: Record<string, Trigger[]>; integrations?: Record<string, SlackIntegration[]>; kiosks?: Record<string, Kiosk[]>; views?: Record<string, SavedView[]>; goals?: Record<string, Goal[]>; clickAliases?: Record<string, ClickAlias[]>; uptime?: Record<string, UP.MockCheck[]>; recordingSettings?: Record<string, RecordingSettings>; destinations?: MockDestination[] }
 /** A saved destination: a project's (projectId) or an account's (owner). Slack channels note their workspace. */
@@ -27,6 +28,7 @@ type MockDestination = Destination & { projectId: string | null; workspaceId?: s
 interface MockWorkspace { id: string; projectId: string | null; owner: string | null; teamName: string; createdBy: string; createdAt: string }
 interface Db { slackWorkspaces?: MockWorkspace[] }
 interface Db { dashboards?: Record<string, Dashboard[]> }
+interface Db { surveys?: Record<string, SV.StoredSurvey[]> }
 const MOCK_CHANNELS = [
   { id: 'C01ALERTS', name: '#alerts', private: false }, { id: 'C02CHECK', name: '#checkout', private: false }, { id: 'C03GROW', name: '#growth', private: false },
   { id: 'G04ONCALL', name: '#oncall', private: true }, { id: 'C05RANDOM', name: '#random', private: false },
@@ -188,7 +190,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
     if (method === 'DELETE') {
       if (project.role !== 'owner') throw new MockHttpError(403, 'Only project owners can do that');
       db.projects = db.projects.filter((p) => p.id !== pid);
-      for (const m of [db.members, db.triggers, db.integrations, db.kiosks, db.views, db.goals, db.clickAliases, db.recordingSettings]) if (m) delete m[pid];
+      for (const m of [db.members, db.triggers, db.integrations, db.kiosks, db.views, db.goals, db.clickAliases, db.recordingSettings, db.surveys]) if (m) delete m[pid];
       save(db);
       return { ok: true };
     }
@@ -279,6 +281,15 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       if (g && method === 'PATCH') { if (input.name) g.name = input.name.trim(); if (input.filters) g.filters = input.filters; if (input.steps) g.steps = input.steps; save(db); return g; }
       if (g && method === 'DELETE') { db.goals![pid] = list.filter((x) => x.id !== id); save(db); return { ok: true }; }
       return list;
+    }
+    case 'surveys': {
+      const list = ((db.surveys ??= {})[pid] ??= SV.seedSurveys(now, email));
+      try {
+        return SV.surveysApi(list, method, parts[3], parts[4], body, { from, to, before: qp('before'), limit }, email, () => save(db));
+      } catch (e) {
+        if (e instanceof SV.SurveyError) throw new MockHttpError(e.status, e.message);
+        throw e;
+      }
     }
     case 'site': return parts[3] === 'image' ? mockSiteImage() : mockSite(pid);
     case 'collection': {
@@ -610,7 +621,7 @@ export function handleKiosk(url: URL, token: string): unknown {
       const project = db.projects.find((p) => p.id === pid)!;
       return { kiosk: { id: k.id, name: k.name }, project: { id: pid, name: project.name }, config: k.config, reloadAt: k.reloadAt, version: `${k.updatedAt}.${k.reloadAt}` } satisfies KioskState;
     }
-    if (/^(kiosks|members|triggers|goals|integrations|slack|rotate-key|upload-key|rotate-upload-key|click-aliases)(\/|$)/.test(rest)) throw new MockHttpError(404, 'Not found');
+    if (/^(kiosks|members|triggers|goals|integrations|slack|rotate-key|upload-key|rotate-upload-key|click-aliases|surveys)(\/|$)/.test(rest)) throw new MockHttpError(404, 'Not found');
     return handleApi('GET', new URL(`/api/projects/${pid}/${rest}${url.search}`, url.origin), undefined, 'demo@wgo.dev');
   }
   throw new MockHttpError(401, 'This kiosk link was removed or replaced. Get the current one from the dashboard.');

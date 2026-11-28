@@ -18,6 +18,7 @@ export const PAGES: PageDef[] = [
   { id: 'flows', label: 'User flows', group: 'Behavior', key: 'f', icon: 'flows' },
   { id: 'goals', label: 'Goals', group: 'Conversion', key: 'r', icon: 'goals' },
   { id: 'retention', label: 'Retention', group: 'Conversion', key: 'b', icon: 'retention' },
+  { id: 'surveys', label: 'Surveys', group: 'Conversion', key: 'y', icon: 'surveys' },
   { id: 'errors', label: 'Errors', group: 'Reliability', key: 'e', icon: 'errors' },
   { id: 'network', label: 'Network', group: 'Reliability', key: 'n', icon: 'network' },
   { id: 'releases', label: 'Releases', group: 'Reliability', key: 'd', icon: 'releases' },

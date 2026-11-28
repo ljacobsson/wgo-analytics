@@ -574,4 +574,34 @@ export const SCHEMA_STATEMENTS: string[] = [
      updated_by text NOT NULL,
      updated_at timestamptz NOT NULL DEFAULT now()
    )`,
+  // surveys the browser SDK shows on the project's site (lib/surveys.ts): SurveyQuestion[], SurveyDisplay and
+  // SurveyTargeting JSON; status 'draft' | 'active' | 'paused'
+  `CREATE TABLE IF NOT EXISTS surveys (
+     project_id uuid NOT NULL,
+     id uuid NOT NULL,
+     name text NOT NULL,
+     status text NOT NULL,
+     questions jsonb NOT NULL,
+     display jsonb NOT NULL,
+     targeting jsonb NOT NULL,
+     created_by text NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now(),
+     updated_at timestamptz NOT NULL DEFAULT now(),
+     PRIMARY KEY (project_id, id)
+   )`,
+  // submitted survey responses (answers: question id -> answer), kept until the survey is deleted; `id` is made up by
+  // the SDK, so a retried submit is stored once
+  `CREATE TABLE IF NOT EXISTS survey_responses (
+     project_id uuid NOT NULL,
+     survey_id uuid NOT NULL,
+     id uuid NOT NULL,
+     created_at timestamptz NOT NULL,
+     anon_id text,
+     user_id text,
+     session_id text,
+     path text,
+     answers jsonb NOT NULL,
+     PRIMARY KEY (project_id, survey_id, id)
+   )`,
+  `CREATE INDEX ASYNC IF NOT EXISTS survey_responses_time_idx ON survey_responses (project_id, survey_id, created_at)`,
 ];

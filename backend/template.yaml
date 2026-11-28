@@ -752,6 +752,36 @@ Resources:
         External: [pg-native, '@duckdb/node-api']
         EntryPoints: [src/handlers/replay.ts]
 
+  # Surveys, for the browser SDK (write-key auth, like /ingest): GET /surveys/config lists the active surveys,
+  # POST /surveys/respond stores a submitted response (src/lib/surveys.ts).
+  SurveyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: surveys.handler
+      MemorySize: 512
+      Timeout: 10
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dsql:DbConnectAdmin
+              Resource: !GetAtt DsqlCluster.ResourceArn
+      Events:
+        SurveyConfig:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /surveys/config, Method: GET }
+        SurveyRespond:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /surveys/respond, Method: POST }
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        External: [pg-native, '@duckdb/node-api']
+        EntryPoints: [src/handlers/surveys.ts]
+
   # Source map uploads from CI: POST /sourcemaps/upload-url answers with a presigned S3 PUT. Authenticated in the
   # function by the project's upload key (header x-wgo-upload-key), so no Cognito authorizer.
   SourcemapFunction:
@@ -1209,7 +1239,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt MigrateFunction.Arn
       SchemaVersion: !Ref SchemaVersion
-      SchemaHash: '2026-11-26-4' # bump when src/lib/schema.ts changes
+      SchemaHash: '2026-11-28-1' # bump when src/lib/schema.ts changes
 
   # ---------------------------------------------------------------- dashboard + SDK hosting
   WebBucket:
@@ -1256,7 +1286,8 @@ Resources:
             - Access-Control-Request-Method
             - Access-Control-Request-Headers
 
-  # Every page view asks GET /replay/config whether to record: answered from the edge for a minute per write key.
+  # Every page view asks GET /replay/config whether to record (and whether there are surveys): answered from the edge
+  # for a minute per write key. GET /surveys/config uses it too.
   # Origin is part of the key so each site gets a response with its own CORS header.
   ReplayConfigCachePolicy:
     Type: AWS::CloudFront::CachePolicy
@@ -1390,6 +1421,23 @@ Resources:
             OriginRequestPolicyId: !Ref IngestOriginRequestPolicy
             Compress: true
           - PathPattern: /replay/start
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: !FindInMap [CloudFront, Managed, CachingDisabled]
+            OriginRequestPolicyId: !Ref IngestOriginRequestPolicy
+            Compress: false
+          # surveys (wgo-surveys.js): the config is cached like the replay config (per write key and Origin)
+          - PathPattern: /surveys/config
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: !Ref ReplayConfigCachePolicy
+            OriginRequestPolicyId: !Ref IngestOriginRequestPolicy
+            Compress: true
+          - PathPattern: /surveys/respond
             TargetOriginId: api
             ViewerProtocolPolicy: https-only
             AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]

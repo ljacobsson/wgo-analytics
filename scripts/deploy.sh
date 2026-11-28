@@ -219,6 +219,9 @@ aws s3 cp "$ROOT/sdk/dist/wgo.js" "s3://$BUCKET/sdk/v1/wgo.js" \
 # session recorder: wgo.js loads it from next to itself, only on pages that record
 aws s3 cp "$ROOT/sdk/dist/wgo-replay.js" "s3://$BUCKET/sdk/v1/wgo-replay.js" \
   --cache-control 'public, max-age=300' --content-type 'text/javascript'
+# surveys: wgo.js loads it from next to itself, only when the project has active surveys
+aws s3 cp "$ROOT/sdk/dist/wgo-surveys.js" "s3://$BUCKET/sdk/v1/wgo-surveys.js" \
+  --cache-control 'public, max-age=300' --content-type 'text/javascript'
 
 aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" \
   --paths /index.html /config.json /pair.html '/sdk/*' '/downloads/*' >/dev/null

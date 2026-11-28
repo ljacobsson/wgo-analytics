@@ -8,6 +8,7 @@ import * as FR from '../frustration';
 import * as C from '../cohorts';
 import * as G from '../goals';
 import * as GF from '../funnel';
+import * as SV from '../surveys';
 import * as FL from '../flows';
 import { SLACK_TEMPLATE_VARIABLES, TRIGGER_WINDOWS, type Dashboard, type Project, type Trigger } from '../../contract';
 import { OPS } from '../filters';
@@ -60,6 +61,11 @@ Conversion goals: list_goals shows each goal's definition. To track a new conver
 click on a button), call create_goal with event filters; check them first with search_events (same fields), e.g.
 that a /thank-you pageview or a "checkout_completed" custom event actually occurs. Goals count from raw events, so
 a new goal immediately covers the project's retention. update_goal changes one, delete_goal removes it.
+Surveys: short questionnaires shown to visitors on the site (a popover card or inline in the page) to collect
+feedback, ratings or NPS. list_surveys shows them, create_survey defines one (it starts as a draft), update_survey
+changes it, delete_survey removes it. Status 'active' shows a survey on the site through the already-installed WGO
+script, with no code change; 'paused' and 'draft' hide it. survey_results has the answers per question, the response
+rate and the latest responses. Answers are kept until the survey is deleted.
 Triggers (alerts) notify a webhook or a connected Slack channel: on every new matching event, log or span
 (kind "match"), when a number over a window crosses a value ("threshold"), or when it's unusual for the time of
 day ("anomaly"). list_triggers shows them and the Slack channels you can send to; preview_trigger shows what a
@@ -172,6 +178,41 @@ const triggerKind = z.enum(['match', 'threshold', 'anomaly']).optional().describ
 
 /** Only one-off webhook triggers sign with their own secret (saved webhooks use the destination's), so only they show it. */
 const publicTrigger = ({ signingSecret, ...t }: Trigger) => (t.destination.type === 'webhook' ? { ...t, signingSecret } : t);
+const surveyQuestion = z.object({
+  type: z.enum(['single', 'multi', 'text', 'yesno', 'rating', 'nps']).describe('single: pick one option; multi: pick several; text: free answer; yesno; rating: 1 to `scale`; nps: 0-10'),
+  title: z.string().min(1).max(300).describe('The question, 1-300 characters'),
+  description: z.string().max(500).optional(),
+  required: z.boolean().optional().describe('Default false'),
+  options: z.array(z.string().min(1).max(200)).min(2).max(SV.MAX_OPTIONS).optional().describe('single/multi: 2-20 distinct options'),
+  long: z.boolean().optional().describe('text: a multi-line answer'),
+  placeholder: z.string().max(200).optional().describe('text'),
+  scale: z.union([z.literal(5), z.literal(10)]).optional().describe('rating: 5 (default) or 10'),
+  lowLabel: z.string().max(60).optional().describe('rating/nps: label under the lowest value'),
+  highLabel: z.string().max(60).optional().describe('rating/nps: label under the highest value'),
+  id: z.string().max(40).optional().describe('Stable id answers are kept under (letters, digits, _ -); default q1, q2, ...'),
+});
+const surveyShape = {
+  name: z.string().min(1).max(120).describe('Survey name, 1-120 characters, internal (visitors do not see it)'),
+  questions: z.array(surveyQuestion).min(1).max(SV.MAX_QUESTIONS).describe('The questions, in order'),
+  display: z.object({
+    mode: z.enum(['popover', 'inline']).default('popover').describe('popover: a floating card; inline: rendered inside the element matching `selector`'),
+    selector: z.string().max(300).optional().describe('inline: CSS selector of an element on the page, e.g. "#feedback"'),
+    position: z.enum(['bottom-right', 'bottom-left']).optional().describe('popover (default bottom-right)'),
+    layout: z.enum(['steps', 'form']).optional().describe('steps: one question at a time (default for popover); form: all on one page (default for inline)'),
+    theme: z.enum(['auto', 'light', 'dark']).optional().describe('auto (default) follows the visitor\'s colour scheme'),
+    accent: z.string().optional().describe('Button and selection colour, #rrggbb'),
+    submitLabel: z.string().max(40).optional().describe('Default "Submit"'),
+    thankYou: z.string().max(300).optional().describe('Shown after submitting, default "Thanks for your feedback!"'),
+  }).optional().describe('How it looks (default: a popover)'),
+  targeting: z.object({
+    paths: z.array(z.string().max(200)).max(20).optional().describe('Page path globs starting with /, e.g. "/pricing", "/docs/*"; none = every page'),
+    delaySec: z.number().int().min(0).max(3600).optional().describe('Show after this many seconds on the page'),
+    scrollPct: z.number().int().min(1).max(100).optional().describe('...and once the visitor scrolled this far down'),
+    event: z.string().max(200).optional().describe('...only after the page tracked this custom event (WGO.track name)'),
+    frequency: z.enum(['once', 'until_answered', 'always']).optional().describe('once (default): never again after answered or closed; until_answered: comes back next session if closed; always: on every matching page view'),
+  }).optional().describe('Where and when it shows (default: every page, once)'),
+  status: z.enum(['draft', 'active', 'paused']).optional().describe('Default draft; only active surveys are shown'),
+};
 const goalFilters = z.array(eventFilter).min(1).max(20);
 const goalSteps = z.array(z.object({ name: z.string().min(1).max(80), filters: goalFilters })).max(G.MAX_STEPS);
 
@@ -558,6 +599,97 @@ export function buildMcpServer(email: string, origin?: string, ingestOrigin?: st
       return { deleted: a.goalId };
     },
     DELETE,
+  );
+
+  projectTool(
+    'list_surveys',
+    'Surveys',
+    'The project\'s surveys, newest first: id, name, status (draft, active, paused), the questions\' count and types, how it is displayed (popover, or inline with its CSS selector), its targeting (pages, delay, scroll depth, event, frequency), the number of responses (all time) and when the last one came in. survey_results has the answers.',
+    {},
+    async (pid) => (await SV.listSurveys(pid)).map((s) => ({
+      id: s.id,
+      name: s.name,
+      status: s.status,
+      questions: s.questions.length,
+      questionTypes: s.questions.map((q) => q.type),
+      display: s.display,
+      targeting: s.targeting,
+      responses: s.responses,
+      lastResponseAt: s.lastResponseAt,
+    })),
+  );
+
+  projectTool(
+    'create_survey',
+    'Create a survey',
+    `Creates a survey shown to the site's visitors, shared with all project members. It starts as a draft, and drafts are not shown: set \`status\` "active" (here or later with update_survey) to show it on the site. The site needs no code change: the WGO script it already has loads active surveys. An "inline" survey needs \`display.selector\`, a CSS selector of an element on the page it renders into; a "popover" is a floating card. Question types: single and multi need \`options\`, text takes a free answer, yesno, rating (1 to scale) and nps (0-10). Changes reach visitors within about a minute. Check list_surveys first: calling this twice creates two surveys (at most ${SV.MAX_SURVEYS} per project, ${SV.MAX_QUESTIONS} questions each). Returns the survey.`,
+    surveyShape,
+    (pid, a) => SV.createSurvey(pid, email, a as never),
+    CREATE,
+  );
+
+  projectTool(
+    'update_survey',
+    'Change a survey',
+    'Changes a survey (id from list_surveys); what you leave out stays. Use `status` "active" to start showing it on the site, "paused" to stop (answers already given are kept). `questions`, `display` and `targeting` replace the whole value, so pass all of them when changing one; keep question ids to keep their earlier answers matching. Changes reach visitors within about a minute.',
+    {
+      surveyId: z.string().describe('Survey id from list_surveys'),
+      ...Object.fromEntries(Object.entries(surveyShape).map(([k, v]) => [k, v.optional()])) as { [K in keyof typeof surveyShape]: z.ZodOptional<(typeof surveyShape)[K]> },
+    },
+    (pid, { surveyId, ...body }) => SV.updateSurvey(pid, surveyId, body as never),
+    LABEL_WRITE,
+  );
+
+  projectTool(
+    'delete_survey',
+    'Delete a survey',
+    'Deletes a survey (id from list_surveys) for all project members, together with all its responses; this cannot be undone. It stops showing on the site. To only stop showing it, use update_survey with status "paused".',
+    { surveyId: z.string().describe('Survey id from list_surveys') },
+    async (pid, a) => {
+      await SV.deleteSurvey(pid, a.surveyId);
+      return { deleted: a.surveyId };
+    },
+    DELETE,
+  );
+
+  projectTool(
+    'survey_results',
+    'Survey results',
+    'What visitors answered to one survey (id from list_surveys) in a window (default the last 30 days, max 92d): the number of responses, how often it was shown and dismissed and the response rate (responses / shown), and per question its title and type with the answers: counts per option or value, the average (rating, nps), the NPS score (nps: % promoters minus % detractors) or up to 20 text answers, newest first. `responses` adds the latest individual responses, with the answers under the question titles. Shown and dismissed come from raw events, so windows older than the project\'s retention show too few.',
+    {
+      ...windowShape,
+      surveyId: z.string().describe('Survey id from list_surveys'),
+      responses: z.number().int().min(0).max(100).optional().describe('How many of the latest individual responses to include (default 10, 0 for none)'),
+    },
+    async (pid, a) => {
+      const w = windowParams(a);
+      const [survey, res] = await Promise.all([SV.getSurvey(pid, a.surveyId), SV.surveyResults(pid, a.surveyId, w)]);
+      const byId = new Map(survey.questions.map((q) => [q.id, q]));
+      const n = a.responses ?? 10;
+      const latest = n ? (await SV.surveyResponses(pid, a.surveyId, { ...w, limit: String(n) })).responses : [];
+      return {
+        survey: { id: survey.id, name: survey.name, status: survey.status },
+        responses: res.responses,
+        shown: res.shown,
+        dismissed: res.dismissed,
+        responseRate: res.shown > 0 ? res.responses / res.shown : null,
+        truncated: res.truncated,
+        questions: res.questions.map(({ id, texts, ...q }) => ({
+          id,
+          title: byId.get(id)?.title ?? id,
+          type: byId.get(id)?.type,
+          ...q,
+          ...(texts ? { texts: texts.slice(0, 20) } : {}),
+        })),
+        latestResponses: latest.map((r) => ({
+          at: r.createdAt,
+          userId: r.userId,
+          sessionId: r.sessionId,
+          path: r.path,
+          answers: Object.fromEntries(Object.entries(r.answers).map(([id, v]) => [byId.get(id)?.title ?? id, v])),
+        })),
+      };
+    },
   );
 
   projectTool(

@@ -1780,3 +1780,97 @@ export interface FixAgentAdmin {
   app: GithubAppStatus['app'];
   projectsOn: number; // projects with the GitHub Agent turned on
 }
+
+// ---------- surveys ----------
+// Surveys built in the dashboard and shown by the browser SDK on the project's site, as a floating card or inline in
+// an element matched by a CSS selector. The SDK fetches active surveys from GET /surveys/config?k=<write key> and posts
+// answers to POST /surveys/respond (both write-key auth, like /ingest; see backend/src/lib/surveys.ts).
+// GET    /api/projects/{pid}/surveys                    -> Survey[]   (newest first)
+// POST   /api/projects/{pid}/surveys   SurveyInput      -> Survey
+// GET    /api/projects/{pid}/surveys/{id}               -> Survey
+// PATCH  /api/projects/{pid}/surveys/{id}  Partial<SurveyInput> -> Survey
+// DELETE /api/projects/{pid}/surveys/{id}               -> { ok: true }   (its responses too)
+// GET    /api/projects/{pid}/surveys/{id}/results?from&to          -> SurveyResults
+// GET    /api/projects/{pid}/surveys/{id}/responses?from&to[&before=<ISO time>][&limit]  -> SurveyResponsesPage
+export type SurveyQuestionType = 'single' | 'multi' | 'text' | 'yesno' | 'rating' | 'nps';
+export interface SurveyQuestion {
+  id: string; // stable within the survey (answers are keyed by it): 1-40 of [A-Za-z0-9_-]
+  type: SurveyQuestionType;
+  title: string; // 1-300 characters
+  description?: string; // up to 500 characters
+  required: boolean;
+  options?: string[]; // single / multi: 2-20 distinct options of 1-200 characters
+  long?: boolean; // text: a multi-line answer
+  placeholder?: string; // text
+  scale?: 5 | 10; // rating: 1..scale (default 5)
+  lowLabel?: string; // rating / nps: label under the lowest value
+  highLabel?: string; // rating / nps: label under the highest value
+}
+export type SurveyStatus = 'draft' | 'active' | 'paused'; // only active surveys reach the SDK
+export interface SurveyDisplay {
+  mode: 'popover' | 'inline'; // a floating card, or inside the element matching `selector`
+  selector?: string; // inline: CSS selector of the element the survey is rendered into (required for inline)
+  position?: 'bottom-right' | 'bottom-left'; // popover (default bottom-right)
+  layout: 'steps' | 'form'; // one question at a time, or all questions on one form
+  theme: 'auto' | 'light' | 'dark'; // auto follows the visitor's colour scheme
+  accent?: string; // #rrggbb, buttons and selected answers
+  submitLabel?: string; // default "Submit"
+  thankYou?: string; // shown after submitting; default "Thanks for your feedback!"
+}
+export interface SurveyTargeting {
+  paths: string[]; // path globs (`/pricing`, `/docs/*`); [] = every page
+  delaySec?: number; // show after this many seconds on a matching page
+  scrollPct?: number; // ...and once the visitor scrolled this far down the page (1-100)
+  event?: string; // ...only after the page tracked this custom event (WGO.track name)
+  // once: never again after it was answered or closed; until_answered: closed surveys come back next session;
+  // always: on every matching page view (e.g. an inline feedback form)
+  frequency: 'once' | 'until_answered' | 'always';
+}
+export interface SurveyInput {
+  name: string; // 1-120 characters, internal
+  status: SurveyStatus;
+  questions: SurveyQuestion[]; // 1-20
+  display: SurveyDisplay;
+  targeting: SurveyTargeting;
+}
+export interface Survey extends SurveyInput {
+  id: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  responses: number; // all time
+  lastResponseAt: string | null;
+}
+// an answer: single → the option, multi → options, text → the text, yesno → boolean, rating / nps → the number
+export type SurveyAnswer = string | string[] | number | boolean;
+export interface SurveyResponse {
+  id: string;
+  createdAt: string;
+  anonId: string | null;
+  userId: string | null; // the identified user, when the visitor was identified
+  sessionId: string | null; // links to the session's events (and its recording, when there is one)
+  path: string | null;
+  answers: Record<string, SurveyAnswer>; // by question id; unanswered optional questions are absent
+}
+export interface SurveyQuestionResult {
+  id: string;
+  answered: number; // responses that answered it
+  counts?: { value: string; n: number }[]; // single / multi / yesno ("Yes" / "No") / rating / nps (every value, in scale order)
+  average?: number; // rating / nps
+  nps?: number; // nps: % promoters (9-10) - % detractors (0-6), -100..100
+  texts?: { text: string; at: string; responseId: string }[]; // text: newest first, at most 50
+}
+export interface SurveyResults {
+  responses: number; // in the range
+  // from the SDK's survey_shown / survey_dismissed custom events: raw events, so ranges older than the project's
+  // retention come out short (responses themselves are kept until the survey is deleted)
+  shown: number;
+  dismissed: number;
+  questions: SurveyQuestionResult[]; // in the survey's question order
+  series: number[]; // responses per bucket, 24 buckets across the range
+  truncated: boolean; // more than 20,000 responses in the range: the numbers cover the newest 20,000
+}
+export interface SurveyResponsesPage {
+  responses: SurveyResponse[]; // newest first
+  next: string | null; // pass as `before` for the next page
+}

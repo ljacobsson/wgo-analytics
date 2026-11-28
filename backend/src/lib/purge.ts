@@ -24,6 +24,7 @@ const BULK_TABLES: Array<[table: string, key: string]> = [
   ['rollup_sketches', 'hour'],
   ['releases', 'kind, service, version'],
   ['fix_runs', 'id'],
+  ['survey_responses', 'survey_id, id'],
 ];
 
 export async function purgeDeletedProjects(deadline: number, now = Date.now()): Promise<{ done: boolean; purged: string[]; files: number }> {

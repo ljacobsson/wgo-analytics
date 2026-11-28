@@ -34,6 +34,7 @@ const api = (await import('../src/handlers/api')).handler;
 const widget = (await import('../src/handlers/widget')).handler;
 const kiosk = (await import('../src/handlers/kiosk')).handler;
 const replay = (await import('../src/handlers/replay')).handler;
+const surveys = (await import('../src/handlers/surveys')).handler;
 const sourcemaps = (await import('../src/handlers/sourcemaps')).handler;
 const { location } = await import('../src/lib/store/files');
 const { mcpFetch } = await import('../src/lib/mcp/http');
@@ -95,6 +96,8 @@ createServer(async (req, res) => {
     if (url.pathname === '/ingest' && req.method === 'POST') return send(res, (await ingest(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
     // session recording: the SDK's config and slot requests (write-key auth, as deployed)
     if (url.pathname.startsWith('/replay/')) return send(res, (await replay(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
+    // surveys: the SDK's config and response requests (write-key auth, as deployed)
+    if (url.pathname.startsWith('/surveys/')) return send(res, (await surveys(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
     // source maps: presigned-URL request (upload-key auth, as deployed) and, in place of S3, the PUT it points at
     if (url.pathname === '/sourcemaps/upload-url') return send(res, (await sourcemaps(toEvent(req, url, raw))) as APIGatewayProxyStructuredResultV2);
     if (url.pathname.startsWith('/sourcemaps/put/sourcemaps/') && req.method === 'PUT') {
