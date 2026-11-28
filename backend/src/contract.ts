@@ -46,17 +46,17 @@ export interface Project {
   // raw events, logs, spans and metric points (Parquet files in S3) older than `days` are deleted daily, a whole
   // day at a time; hourly Overview rollups are kept 400 days. maxDays is the stack's MaxRetentionDays.
   retention: { days: number; defaultDays: number; maxDays: number };
-  // browser events and recordings from development pages are dropped at ingest (never stored, counted or alerted on)
+  // which hosts count as development traffic besides the built-in ones
   devTraffic: DevTrafficSettings;
 }
 
-// PATCH /api/projects/{pid} {devTraffic} (owners only). Takes effect within a minute.
-//   ignore: localhost, loopback/private/link-local addresses, single-label names and local-only domains (.localhost,
-//           .local, .test, .internal, …), and pages opened from disk (file:)
-//   hosts:  wildcard patterns on the page's hostname, e.g. "*.vercel.app" or "staging.acme.com" (case-insensitive,
-//           `*` = anything; at most 50), applied whether or not `ignore` is on. Mobile SDK events are never dropped.
+// PATCH /api/projects/{pid} {devTraffic} (owners only). Applies to events arriving within a minute; stored events keep
+// their flag. Development traffic is stored with AnalyticsEvent.bot = 'development' and left out like bots unless
+// `dev=1`. Built in: localhost, loopback/private/link-local addresses, single-label names, local-only domains
+// (.localhost, .local, .internal, .lan, …) and pages opened from disk (file:). Mobile SDK events never are.
+//   hosts: extra wildcard patterns on the page's hostname, e.g. "*.vercel.app" or "*.test" (case-insensitive,
+//          `*` = anything; at most 50)
 export interface DevTrafficSettings {
-  ignore: boolean;
   hosts: string[];
 }
 
@@ -156,7 +156,8 @@ export interface AnalyticsEvent {
   city: string | null;
   lat: number | null; // rounded to 1 decimal (~11 km)
   lon: number | null;
-  // why this looks like a bot ('user-agent' | 'automation' | 'timezone-mismatch'), null for humans
+  // why this is left out: a bot ('user-agent' | 'automation' | 'timezone-mismatch') or 'development' traffic
+  // (DevTrafficSettings); null for humans
   bot: string | null;
 }
 
@@ -173,7 +174,8 @@ export interface Totals {
 // ---------- rich filters ----------
 // Every analytics endpoint below (events scope: stats, clicks, pages, errors, http-errors, breakdown, vitals,
 // geo, events; logs scope: logs; spans scope: traces, services) accepts `filters=<JSON Filter[]>`.
-// Events-scope endpoints leave out bot traffic (AnalyticsEvent.bot) unless `bots=1`.
+// Events-scope endpoints leave out bot traffic (AnalyticsEvent.bot) unless `bots=1`, and development traffic
+// (bot = 'development', see DevTrafficSettings) unless `dev=1`.
 // All filters must match (AND). Fields: a built-in field (see FieldsResponse.builtin), `props.<path>` for event
 // properties (nested with dots, e.g. `props.props.plan` for a custom event's `plan`), or for logs/spans
 // `attributes.<key>` / `resource.<key>` (OTel keys keep their dots, e.g. `attributes.http.route`).
@@ -598,6 +600,7 @@ export interface StatsResponse {
   previous: Totals | null; // same-length window immediately before `from`; null with compare=0 (fetch it from /totals)
   series: Array<{ t: string; pageview: number; click: number; error: number; http_error: number; custom: number }>;
   botSessions?: number; // sessions left out as bots in this range (when bots aren't included)
+  devSessions?: number; // sessions left out as development traffic in this range (when it isn't included)
 }
 
 // GET /api/projects/{pid}/hours?from&to&tz=Europe/Stockholm[&filters]
@@ -1473,7 +1476,7 @@ export interface MeasureQuery {
   metric?: string; // metrics: the OpenTelemetry metric name (required)
   filters?: Filter[]; // ANDed, in the source's fields
 }
-// GET /api/projects/{pid}/query?q=<JSON QuerySpec>&from&to[&filters=<JSON Filter[]>][&bots=1]
+// GET /api/projects/{pid}/query?q=<JSON QuerySpec>&from&to[&filters=<JSON Filter[]>][&bots=1][&dev=1]
 //   `filters` (dashboard-wide) apply to events measures only. Range at most 92 days.
 export interface QuerySpec {
   measures: MeasureQuery[]; // 1-4

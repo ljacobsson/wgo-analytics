@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Member, Project, Role, UploadKey } from '../contract';
 import { allowlistMessage, emailAllowed } from './allowlist';
-import { devTrafficOf, forgetDevTraffic, parseDevTraffic } from './devTraffic';
+import { devTrafficOf, forgetDevHosts, parseDevTraffic } from './devTraffic';
 import { HttpError } from './http';
 import { query } from './db';
 import { DEFAULT_RETENTION_DAYS, effectiveRetention, forgetRetention, maxRetentionDays } from './retention';
@@ -145,13 +145,13 @@ export async function setRetention(email: string, projectId: string, days: unkno
   return getProject(email, projectId);
 }
 
-/** Which development traffic to drop at ingest (owners only). */
+/** Extra hosts whose events count as development traffic (owners only). */
 export async function setDevTraffic(email: string, projectId: string, body: unknown): Promise<Project> {
   await requireOwner(email, projectId);
   const settings = parseDevTraffic(body);
-  const stored = settings.ignore || settings.hosts.length ? JSON.stringify(settings) : null;
+  const stored = settings.hosts.length ? JSON.stringify(settings) : null;
   await query('UPDATE projects SET dev_traffic = $2::jsonb WHERE id = $1', [projectId, stored]);
-  forgetDevTraffic(projectId);
+  forgetDevHosts(projectId);
   return getProject(email, projectId);
 }
 

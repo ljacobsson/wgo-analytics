@@ -50,8 +50,8 @@ from your real users, without any extra code. Events show up within seconds.
   400 days back.
 - 🧩 Readable stack traces from minified code: upload your source maps from CI with one command. Suppress noise,
   like a browser extension's errors, with wildcard rules.
-- 🧪 Keep your own testing out of the numbers: one switch ignores everything from localhost and private addresses,
-  and you can add hosts like `*.vercel.app` for preview deployments.
+- 🧪 Your own testing stays out of the numbers: traffic from localhost, private addresses and hosts you add (like
+  `*.vercel.app` previews) is kept apart like bot traffic, and one click in the filter bar brings it back.
 - 🪶 The browser SDK is about 11 KB gzipped. It batches and compresses events, and holds on to them while the
   visitor is offline.
 

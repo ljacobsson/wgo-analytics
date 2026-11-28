@@ -12,6 +12,9 @@ import { COUNTRY_ZONES } from './countryZones';
  *   are the exception (rare, and still visible with "Show bots").
  */
 
+/** The `bot` reason of development traffic (lib/devTraffic.ts): your own pages, left out like bots. */
+export const DEV_REASON = 'development';
+
 const formatters = new Map<string, Intl.DateTimeFormat | null>();
 const offsets = new Map<string, number | null>();
 

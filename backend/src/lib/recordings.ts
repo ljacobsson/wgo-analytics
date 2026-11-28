@@ -6,7 +6,6 @@ import { query } from './db';
 import { eventTime, clockSkew, type WireBatch } from './events';
 import { HttpError } from './http';
 import { projectIdForWriteKey } from './projects';
-import { isDevOrigin } from './devTraffic';
 import { activeSurveys } from './surveys';
 import { projectRetention, RECORDING_RETENTION_DAYS } from './retention';
 import { inList, rawQuery } from './store/duck';
@@ -160,14 +159,12 @@ const remember = (pid: string, sid: string) => {
  * Grants one session a recording slot when the project records and its limits allow another. A session that
  * already has one keeps it (every page of a recorded session asks again only after the tab's storage is gone).
  */
-export async function startRecording(body: { k?: unknown; s?: unknown; a?: unknown; r?: unknown }, now = Date.now(), origin?: string): Promise<{ ok: boolean }> {
+export async function startRecording(body: { k?: unknown; s?: unknown; a?: unknown; r?: unknown }, now = Date.now()): Promise<{ ok: boolean }> {
   const pid = await projectIdForWriteKey(typeof body?.k === 'string' ? body.k : undefined);
   const sid = typeof body?.s === 'string' ? body.s.slice(0, 64) : '';
   if (!pid || !sid) return { ok: false };
   const s = await settingsOf(pid);
   if (!s.enabled) return { ok: false };
-  // a development page (lib/devTraffic.ts): its chunks would be dropped at ingest, so don't spend a slot on it
-  if (await isDevOrigin(pid, origin)) return { ok: false };
   const [existing] = await query<{ n: number }>('SELECT 1 AS n FROM recordings WHERE project_id = $1 AND session_id = $2', [pid, sid]);
   if (existing) return { ok: true };
   if (s.maxPerHour !== null || s.maxPerDay !== null) {

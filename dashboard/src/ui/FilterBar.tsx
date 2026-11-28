@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { BellPlus, Bookmark, BookmarkCheck, Filter as FilterIcon, Flame, History, Plus, Trash2, X, Bot } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { BellPlus, Bookmark, BookmarkCheck, ChevronDown, Filter as FilterIcon, Flame, History, Plus, Trash2, X, Bot } from 'lucide-react';
 import type { Filter, FilterOp, FilterScope, SavedView } from '../api/contract';
 import { useDeleteView, useFields, useFieldValues, useSaveView, useViews } from '../api/hooks';
 import { cn, fmtNum } from '../lib/format';
@@ -155,24 +155,43 @@ function useRecordFilterUse(pid: string, scope: FilterScope, filters: Filter[]) 
 }
 
 /**
- * Chips for the active filters of a scope; filters live in the URL. Also: one-click recent and most used filter
- * sets, saved views, and turning what the page shows into a trigger.
+ * Bot traffic (scrapers, crawlers, automation) and development traffic (localhost, private addresses, the project's
+ * development hosts) are left out of the numbers unless included here. Both live in the URL (bots=1, dev=1).
  */
-/** Bot traffic (scrapers, crawlers, automation) is left out of the numbers unless shown here. */
-function BotsToggle() {
+function TrafficMenu() {
   const route = useRoute();
   const set = useSetParams();
-  const shown = route.params.get('bots') === '1';
+  const { project } = useProject();
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const bots = route.params.get('bots') === '1', dev = route.params.get('dev') === '1';
+  const label = bots && dev ? 'Bots and dev included' : bots ? 'Bots included' : dev ? 'Dev included' : 'Bots and dev hidden';
+  const row = (on: boolean, param: 'bots' | 'dev', title: string, sub: ReactNode) => (
+    <label className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 hover:bg-[var(--hl)]">
+      <input type="checkbox" className="mt-[3px] accent-[var(--accent)]" checked={on} onChange={() => set({ [param]: on ? null : '1' })} />
+      <span className="min-w-0"><span className="block text-[12.5px] text-fg">{title}</span><span className="block text-[11.5px] leading-snug text-muted">{sub}</span></span>
+    </label>);
   return (
-    <button onClick={() => set({ bots: shown ? null : '1' })}
-      className={cn('inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[12px] cursor-pointer',
-        shown ? 'border-warn/50 bg-warn/10 text-warn' : 'border-line text-muted hover:border-[var(--line-strong)] hover:text-fg')}
-      title={shown ? 'Bot traffic is included in every number. Click to leave it out again.' : 'Scrapers, crawlers and automated browsers are left out of the numbers. Click to include them.'}>
-      <Bot size={12} />{shown ? 'Bots included' : 'Bots hidden'}
-    </button>
+    <>
+      <button ref={anchor} onClick={() => setOpen(!open)}
+        className={cn('inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[12px] cursor-pointer',
+          bots || dev ? 'border-warn/50 bg-warn/10 text-warn' : 'border-line text-muted hover:border-[var(--line-strong)] hover:text-fg')}
+        title="Choose whether bot and development traffic count in the numbers">
+        <Bot size={12} />{label}<ChevronDown size={12} className="-mr-0.5 opacity-70" />
+      </button>
+      <Popover anchor={anchor} open={open} onClose={() => setOpen(false)} width={320}>
+        <p className="px-2 pb-1 pt-0.5 text-[12px] text-muted">Include in the numbers</p>
+        {row(bots, 'bots', 'Bots', 'Scrapers, crawlers and automated browsers.')}
+        {row(dev, 'dev', 'Development traffic', <>Localhost, private addresses and <a className="text-accent hover:underline" href={`#/p/${project.id}/settings`} onClick={() => setOpen(false)}>your development hosts</a>.</>)}
+      </Popover>
+    </>
   );
 }
 
+/**
+ * Chips for the active filters of a scope; filters live in the URL. Also: one-click recent and most used filter
+ * sets, saved views, and turning what the page shows into a trigger.
+ */
 export function FilterBar({ scope, className }: { scope: FilterScope; className?: string }) {
   const [filters, setFilters] = useFilters(scope);
   const { project } = useProject();
@@ -185,7 +204,7 @@ export function FilterBar({ scope, className }: { scope: FilterScope; className?
     <FilterChips scope={scope} value={filters} onChange={setFilters} className={className}>
       {!filters.length && <QuickFilters scope={scope} onPick={setFilters} />}
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-        {scope === 'events' && <BotsToggle />}
+        {scope === 'events' && <TrafficMenu />}
         {triggerFilters.length > 0 && (
           <button onClick={() => navigate(newTriggerHref(project.id, route.params, scope, triggerFilters))}
             className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 text-[12px] text-muted hover:border-[var(--line-strong)] hover:text-fg cursor-pointer"

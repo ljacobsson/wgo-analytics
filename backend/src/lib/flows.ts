@@ -1,6 +1,6 @@
 import { FLOW_OTHER, type FlowExitPage, type FlowLink, type FlowNode, type FlowsResponse } from '../contract';
 import { parseRange } from './analytics';
-import { filterSql, includeBots, parseFilters } from './filters';
+import { filterSql, flaggedSql, parseFilters } from './filters';
 import { ERROR_KEY } from './funnel';
 import { rawQuery } from './store/duck';
 
@@ -78,7 +78,7 @@ export async function flows(pid: string, p: Record<string, string | undefined>):
   const steps = parseSteps(p.steps);
   const start = p.start?.trim() || null;
   const params: unknown[] = [pid, r.from, r.to];
-  const bots = includeBots(p) ? '' : ' AND bot IS NULL';
+  const bots = flaggedSql(p);
   // the filters choose sessions: any of their events matches (pageviews alone would lose e.g. "type = error")
   const filters = parseFilters(p.filters);
   const sessionsWhere = filters.length ? ` AND session_id IN (SELECT session_id FROM events WHERE ${RANGE}${filterSql(filters, 'events', params)}${bots})` : bots;

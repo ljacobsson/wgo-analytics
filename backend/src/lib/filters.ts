@@ -1,4 +1,5 @@
 import type { Filter, FilterOp, FilterScope } from '../contract';
+import { DEV_REASON } from './bots';
 import { HttpError } from './http';
 
 /**
@@ -160,9 +161,23 @@ export function filterSql(filters: Filter[], scope: QueryScope, params: unknown[
 
 /** Parse the `filters` request param and compile it in one go. */
 export function filtersFrom(p: Record<string, string | undefined>, scope: FilterScope, params: unknown[]): string {
-  // bot traffic is left out of product analytics unless explicitly included
-  const bots = scope === 'events' && !includeBots(p) ? ' AND bot IS NULL' : '';
-  return filterSql(parseFilters(p.filters), scope, params) + bots;
+  // bot and development traffic are left out of product analytics unless explicitly included
+  return filterSql(parseFilters(p.filters), scope, params) + (scope === 'events' ? flaggedSql(p) : '');
 }
 
-export const includeBots = (p: Record<string, string | undefined>) => p.bots === '1' || p.bots === 'true';
+const flag = (v: string | undefined) => v === '1' || v === 'true';
+/** `bots=1`: include bot traffic (scrapers, crawlers, automation). */
+export const includeBots = (p: Record<string, string | undefined>) => flag(p.bots);
+/** `dev=1`: include development traffic (lib/devTraffic.ts; stored as bot = 'development'). */
+export const includeDev = (p: Record<string, string | undefined>) => flag(p.dev);
+/** Whether any flagged traffic is asked for (then hourly rollups, which hold human traffic only, can't answer). */
+export const includesFlagged = (p: Record<string, string | undefined>) => includeBots(p) || includeDev(p);
+
+/** The condition (' AND …', or '') leaving out the flagged traffic the request doesn't include. */
+export function flaggedSql(p: Record<string, string | undefined>): string {
+  const bots = includeBots(p), dev = includeDev(p);
+  if (bots && dev) return '';
+  if (bots) return ` AND (bot IS NULL OR bot <> '${DEV_REASON}')`;
+  if (dev) return ` AND (bot IS NULL OR bot = '${DEV_REASON}')`;
+  return ' AND bot IS NULL';
+}

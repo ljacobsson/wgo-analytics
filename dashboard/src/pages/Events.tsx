@@ -13,7 +13,7 @@ import { AddToDashboard, withFilters } from '../dashboards/AddToDashboard';
 import { AttributeTable, eventAttributeRows } from './EventAttributes';
 import { useSentinel } from '../ui/useSentinel';
 import { ColumnsMenu, EventCell, eventRowMinWidth, useEventColumns, userFilter, type EventColumn } from '../ui/EventColumns';
-import { currentFilters, filtersParam, mergeFilters, useFilters } from '../lib/filters';
+import { currentFilters, filtersParam, mergeFilters, trafficShown, useFilters } from '../lib/filters';
 import { matches, matchesEventSearch } from '../lib/filterMatch';
 import { FEED_CAP, LiveCtx, useFirehose } from '../live/store';
 import { RowsSkeleton } from './common';
@@ -117,14 +117,14 @@ export function EventsPage() {
   const fetched = useMemo(() => ev.data?.pages.flatMap((p) => p.events) ?? [], [ev.data]);
 
   // live events: only for a range that ends now, and only with the filters they were matched against
-  const fRaw = filtersParam('events'), bots = route.params.get('bots') === '1';
+  const fRaw = filtersParam('events'), bots = route.params.get('bots') === '1', dev = route.params.get('dev') === '1';
   const liveOn = range.preset !== 'custom';
-  const liveKey = JSON.stringify([project.id, range.preset, type, q, sessionId, fRaw, bots]);
+  const liveKey = JSON.stringify([project.id, range.preset, type, q, sessionId, fRaw, bots, dev]);
   const match = useMemo(() => {
     const f = fRaw ? (JSON.parse(fRaw) as Filter[]) : [];
-    return (e: AnalyticsEvent) => (bots || !e.bot) && (!type || e.type === type) && (!sessionId || e.sessionId === sessionId)
+    return (e: AnalyticsEvent) => trafficShown(e, bots, dev) && (!type || e.type === type) && (!sessionId || e.sessionId === sessionId)
       && (!q || matchesEventSearch(e, q)) && matches('events', e, f);
-  }, [fRaw, bots, type, sessionId, q]);
+  }, [fRaw, bots, dev, type, sessionId, q]);
   const [revealed, setRevealed] = useState<{ key: string; events: AnalyticsEvent[] }>({ key: liveKey, events: [] });
   const [arriving, setArriving] = useState<Map<string, number>>(() => new Map());
   const arriveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);

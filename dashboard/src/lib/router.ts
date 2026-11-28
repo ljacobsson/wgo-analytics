@@ -42,7 +42,7 @@ export function pageHref(pid: string, page: string, params: URLSearchParams | Re
   const p = new URLSearchParams();
   const src = params instanceof URLSearchParams ? Object.fromEntries(params) : params;
   // time range and filters follow you between pages
-  for (const k of ['range', 'from', 'to', 'f', 'lf', 'tf', 'bots']) if (src[k]) p.set(k, src[k]);
+  for (const k of ['range', 'from', 'to', 'f', 'lf', 'tf', 'bots', 'dev']) if (src[k]) p.set(k, src[k]);
   for (const [k, v] of Object.entries(extra)) p.set(k, v);
   const q = p.toString();
   return `/p/${pid}/${page}${q ? '?' + q : ''}`;

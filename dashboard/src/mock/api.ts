@@ -47,7 +47,7 @@ function load(email: string): Db {
   return db;
 }
 const RETENTION = { days: 90, defaultDays: 90, maxDays: 400 };
-const DEV_TRAFFIC = { ignore: false, hosts: [] as string[] };
+const DEV_TRAFFIC = { hosts: [] as string[] };
 const save = (db: Db) => localStorage.setItem(KEY, JSON.stringify(db));
 
 export class MockHttpError extends Error { constructor(public status: number, m: string) { super(m); } }
@@ -196,7 +196,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       return { ok: true };
     }
     if (method === 'PATCH') {
-      const b = body as { name?: string; retentionDays?: number; devTraffic?: { ignore?: boolean; hosts?: string[] } };
+      const b = body as { name?: string; retentionDays?: number; devTraffic?: { hosts?: string[] } };
       if (b.name !== undefined) project.name = String(b.name);
       if (b.retentionDays !== undefined) {
         if (!Number.isInteger(b.retentionDays) || b.retentionDays < 1 || b.retentionDays > project.retention.maxDays) throw new MockHttpError(400, `Retention must be a whole number of days between 1 and ${project.retention.maxDays}`);
@@ -206,7 +206,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
         const hosts = [...new Set((b.devTraffic.hosts ?? []).map((h) => h.trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/[/?#].*$/, '').replace(/:\d+$/, '')).filter(Boolean))];
         const bad = hosts.find((h) => !/^[a-z0-9*.\-_[\]:]+$/.test(h) || /^\*+$/.test(h));
         if (bad) throw new MockHttpError(400, `"${bad}" is not a host name or pattern`);
-        project.devTraffic = { ignore: b.devTraffic.ignore === true, hosts };
+        project.devTraffic = { hosts };
       }
       save(db);
     }
@@ -439,7 +439,13 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       if (method === 'DELETE') { db.members[pid] = list.filter((m) => m.email !== decodeURIComponent(parts[3])); save(db); return { ok: true }; }
       return list;
     }
-    case 'stats': { const r = D.stats(from, to); return qp('compare') === '0' ? { ...r, previous: null } : r; }
+    case 'stats': {
+      // traffic left out unless included (bots=1, dev=1), roughly in proportion to the range
+      const hours = Math.max(1, (to - from) / 3600e3);
+      const hidden = { botSessions: qp('bots') === '1' ? undefined : Math.round(hours * 0.6) + 2, devSessions: qp('dev') === '1' ? undefined : Math.round(hours * 0.15) + 1 };
+      const r = { ...D.stats(from, to), ...hidden };
+      return qp('compare') === '0' ? { ...r, previous: null } : r;
+    }
     case 'totals': return D.totalsFor(from, to);
     case 'hours': return D.hours(from, to, qp('tz') || 'UTC');
     case 'clicks': {

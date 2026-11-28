@@ -15,7 +15,7 @@ import type { SqlExport, SqlExportRequest, SqlRequest, SqlResult, SqlSchema } fr
 import type { Survey, SurveyInput, SurveyResponse, SurveyResponsesPage, SurveyResults } from './contract';
 import type { DevTrafficSettings } from './contract';
 import { previousWindow, type TimeRange } from '../lib/time';
-import { botsParam, filtersParam, type FieldScope } from '../lib/filters';
+import { filtersParam, trafficParams, type FieldScope } from '../lib/filters';
 
 const STALE = 20_000;
 const base = (pid: string) => `/api/projects/${pid}`;
@@ -39,7 +39,7 @@ const SCOPE: Record<string, FilterScope | undefined> = {
 
 function q<T>(pid: string, name: string, r: TimeRange, path: string, extra: Record<string, string | number | boolean | undefined> = {}, enabled = true) {
   const scope = SCOPE[name];
-  const params = scope ? { ...extra, filters: filtersParam(scope), ...(scope === 'events' ? { bots: botsParam() } : {}) } : extra;
+  const params = scope ? { ...extra, filters: filtersParam(scope), ...(scope === 'events' ? trafficParams() : {}) } : extra;
   return {
     queryKey: [name, pid, r.from, r.to, params] as const,
     queryFn: ({ signal }: { signal: AbortSignal }) => api<T>(`${base(pid)}/${path}`, { params: { ...rp(r), ...params }, signal }),
@@ -53,7 +53,7 @@ export const useHours = (pid: string, r: TimeRange) =>
   useQuery(q<HoursResponse>(pid, 'hours', r, 'hours', { tz: Intl.DateTimeFormat().resolvedOptions().timeZone }));
 export function usePreviousTotals(pid: string, r: TimeRange) {
   const w = previousWindow(r);
-  return useQuery({ ...q<Totals>(pid, 'totals', { ...r, ...w }, 'totals'), queryKey: ['totals', pid, w.from, w.to, filtersParam('events'), botsParam()] as const, staleTime: 10 * 60_000 });
+  return useQuery({ ...q<Totals>(pid, 'totals', { ...r, ...w }, 'totals'), queryKey: ['totals', pid, w.from, w.to, filtersParam('events'), trafficParams()] as const, staleTime: 10 * 60_000 });
 }
 export const useClicks = (pid: string, r: TimeRange) => useQuery(q<ClickRow[]>(pid, 'clicks', r, 'clicks', { limit: 100 }));
 export const usePages = (pid: string, r: TimeRange, limit = 10) => useQuery(q<PageRow[]>(pid, 'pages', r, 'pages', { limit }));
@@ -107,7 +107,7 @@ export const useTrace = (pid: string, traceId: string | null, at?: string | null
   useQuery({ queryKey: ['trace', pid, traceId], queryFn: () => api<TraceResponse>(`${base(pid)}/traces/${traceId}`, { params: at ? { at } : {} }), enabled: !!traceId, staleTime: 5 * 60_000 });
 
 export function useEvents(pid: string, r: TimeRange, base_: { type?: string; q?: string; sessionId?: string; fingerprint?: string }, enabled = true, limit = 100) {
-  const f = { ...base_, filters: filtersParam('events'), bots: botsParam() };
+  const f = { ...base_, filters: filtersParam('events'), ...trafficParams() };
   return useInfiniteQuery({
     queryKey: ['events', pid, r.from, r.to, f, limit],
     queryFn: ({ pageParam, signal }) => api<EventsResponse>(`${base(pid)}/events`, { params: { from: r.from, to: r.to, ...f, limit, before: pageParam }, signal }),
@@ -719,10 +719,10 @@ export function useAddTile(pid: string) {
 export const useMeasureNames = (pid: string) =>
   useQuery({ queryKey: ['measures', pid], queryFn: () => api<MeasureNames>(`${base(pid)}/measures`), staleTime: 5 * 60_000 });
 /** One generic query (a dashboard tile). `filters` are the dashboard-wide events filters. */
-export const useQueryResult = (pid: string, r: Pick<TimeRange, 'from' | 'to'>, spec: QuerySpec | null, filters: string | undefined, bots: string | undefined, enabled = true) =>
+export const useQueryResult = (pid: string, r: Pick<TimeRange, 'from' | 'to'>, spec: QuerySpec | null, filters: string | undefined, traffic: { bots?: string; dev?: string } | undefined, enabled = true) =>
   useQuery({
-    queryKey: ['query', pid, r.from, r.to, spec, filters, bots],
-    queryFn: ({ signal }) => api<QueryResult>(`${base(pid)}/query`, { params: { ...rp(r), q: JSON.stringify(spec), filters, bots }, signal }),
+    queryKey: ['query', pid, r.from, r.to, spec, filters, traffic],
+    queryFn: ({ signal }) => api<QueryResult>(`${base(pid)}/query`, { params: { ...rp(r), q: JSON.stringify(spec), filters, ...traffic }, signal }),
     staleTime: STALE, placeholderData: keepPreviousData, enabled: enabled && !!spec,
   });
 

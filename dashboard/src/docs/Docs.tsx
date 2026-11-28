@@ -260,7 +260,7 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
               'Reloads of the same page count once. Each column shows its top 6 pages, the rest as (other). Choose 3 to 7 steps.',
               'Start from the entry page, or pick a page (or click one in the chart) to see where people go after it.',
               'Click a page for its most common errors and how many sessions left right after one. The table below ranks the pages sessions leave on, with the exit rate after an error next to the overall one.',
-              <>Filters choose sessions: a session is included when any of its events matches, so <C>Event type equals error</C> shows the paths of sessions that hit an error. Bots are left out. The API is <C>GET /api/projects/&#123;id&#125;/flows</C> and the MCP tool is <C>user_flows</C>.</>,
+              <>Filters choose sessions: a session is included when any of its events matches, so <C>Event type equals error</C> shows the paths of sessions that hit an error. Bots and development traffic are left out unless included in the filter bar. The API is <C>GET /api/projects/&#123;id&#125;/flows</C> and the MCP tool is <C>user_flows</C>.</>,
             ]} />
           </Section>
 
@@ -269,7 +269,7 @@ sam delete --stack-name wgo-certificate --region us-east-1   # only if a certifi
             <List items={[
               <>Retention is built each night from the previous day's visits into a small table with one row per visitor and day. It is kept for 400 days, much longer than raw events (<C>retention_days</C>), so cohorts can reach back a year.</>,
               'The first numbers show up after the first full day. The page says how far back the data goes; people first seen before that count as new on the first day.',
-              'A visitor is the user id when the browser has identified, else the anonymous id. Bots are left out. Days, weeks (starting Monday) and months are UTC.',
+              'A visitor is the user id when the browser has identified, else the anonymous id. Bots and development traffic are left out. Days, weeks (starting Monday) and months are UTC.',
               <>The page uses the time range at the top when it is 8 weeks or longer (up to 400 days), otherwise the last 12 weeks. At most 30 days, 26 weeks or 13 months of cohorts are shown. The API is <C>GET /api/projects/&#123;id&#125;/retention</C> and the MCP tool is <C>get_retention</C>.</>,
             ]} />
           </Section>

@@ -38,9 +38,19 @@ export function useFilters(scope: FilterScope): [Filter[], (next: Filter[]) => v
   return [filters, setFilters];
 }
 
+const routeFlag = (name: string): '1' | undefined =>
+  parseRoute(window.location.hash.replace(/^#/, '') || '/').params.get(name) === '1' ? '1' : undefined;
 /** Product analytics leave bot traffic out unless the URL says bots=1 (API param `bots`). */
-export const botsParam = (): '1' | undefined =>
-  parseRoute(window.location.hash.replace(/^#/, '') || '/').params.get('bots') === '1' ? '1' : undefined;
+export const botsParam = () => routeFlag('bots');
+/** …and development traffic (localhost and the project's development hosts) unless it says dev=1 (API param `dev`). */
+export const devParam = () => routeFlag('dev');
+/** Both, as API params (undefined values are left out of requests and keep query keys stable). */
+export const trafficParams = () => ({ bots: botsParam(), dev: devParam() });
+
+/** The `bot` reason of development traffic. */
+export const DEV_REASON = 'development';
+/** Whether a (live) event is shown with these switches: humans always, flagged traffic when its kind is included. */
+export const trafficShown = (e: { bot: string | null }, bots: boolean, dev: boolean) => !e.bot || (e.bot === DEV_REASON ? dev : bots);
 
 /** API param for the current filters of a scope (undefined when none, so query keys stay stable). */
 export function filtersParam(scope: FilterScope): string | undefined {

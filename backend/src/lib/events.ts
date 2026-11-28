@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { AnalyticsEvent, EventType } from '../contract';
 import { NO_GEO, type Geo } from './geo';
 import { botReason } from './bots';
+import { DEV_REASON, isDevUrl, type DevHosts } from './devTraffic';
 import { parseUserAgent } from './ua';
 
 /** SDK wire format (see sdk/README.md). */
@@ -101,8 +102,11 @@ export function fillMissingIds(batch: WireBatch, sourceId: string): void {
   });
 }
 
-/** Normalize an SDK batch into event rows. Invalid events are dropped, never the whole batch. */
-export function normalizeBatch(projectId: string, batch: WireBatch, receivedAt = Date.now(), userAgentHeader?: string, geo: Geo = NO_GEO): EventRow[] {
+/**
+ * Normalize an SDK batch into event rows. Invalid events are dropped, never the whole batch. Events from development
+ * pages (lib/devTraffic.ts: built-in hosts plus the project's `devHosts`) are flagged bot = 'development'.
+ */
+export function normalizeBatch(projectId: string, batch: WireBatch, receivedAt = Date.now(), userAgentHeader?: string, geo: Geo = NO_GEO, devHosts: DevHosts = []): EventRow[] {
   if (!batch || !Array.isArray(batch.e)) return [];
   const skew = clockSkew(batch, receivedAt);
   const ua = parseUserAgent(str(batch.ctx?.ua) ?? userAgentHeader ?? '');
@@ -137,7 +141,8 @@ export function normalizeBatch(projectId: string, batch: WireBatch, receivedAt =
       os: ua.os,
       device: ua.device,
       ...geo,
-      bot,
+      // your own testing (even automated) is development traffic first
+      bot: isDevUrl(e.url, devHosts) ? DEV_REASON : bot,
     };
     switch (e.t) {
       case 'click':

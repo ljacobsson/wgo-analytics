@@ -5,7 +5,7 @@ import { storeErrorStacks } from '../lib/errorStacks';
 import { recordReleases, seenInEvents } from '../lib/releases';
 import { dropSuppressed } from '../lib/suppressions';
 import { collectionPaused } from '../lib/budgets';
-import { dropDevTraffic } from '../lib/devTraffic';
+import { devHostsOf } from '../lib/devTraffic';
 import { geoFromHeaders, type Geo } from '../lib/geo';
 import { fanOut } from '../lib/live';
 import { projectIdForWriteKey } from '../lib/projects';
@@ -23,18 +23,16 @@ import { evaluateTriggers } from '../lib/triggers';
 async function ingestBatch(projectId: string, batch: WireBatch, receivedAt: number, userAgent: string | undefined, geo: Geo): Promise<number> {
   // a cost budget stopped collection for this project (lib/budgets.ts): drop everything, recordings included
   if (await collectionPaused(projectId)) return 0;
-  // events from development pages (localhost, the project's ignored hosts) are dropped, recordings included
-  batch = await dropDevTraffic(projectId, batch);
   // session recording chunks (their own table; only for sessions holding a recording slot, see lib/recordings.ts)
   const replays = await replayRows(projectId, batch, receivedAt);
   await storeReplays(replays);
   // errors matching the project's suppression rules are dropped here: never stored, counted, sent live or alerted on
-  const rows = await dropSuppressed(projectId, normalizeBatch(projectId, batch, receivedAt, userAgent, geo));
+  const rows = await dropSuppressed(projectId, normalizeBatch(projectId, batch, receivedAt, userAgent, geo, await devHostsOf(projectId)));
   if (!rows.length) return replays.length;
 
   // Live fan-out runs alongside the write: the dashboard should see a click as soon as we do.
   // A fan-out failure must never fail the batch (a retry would duplicate stored events).
-  // bots are stored (flagged) but never light up live watches or fire triggers
+  // bots and development traffic are stored (flagged) but never light up live watches or fire triggers
   const apiEvents = rows.filter((r) => !r.bot).map(toApiEvent);
   const live = fanOut(projectId, apiEvents).catch((err) => console.warn('fan-out failed', err));
   // stacks are stored once per error group (before the events, so a visible error always has one)

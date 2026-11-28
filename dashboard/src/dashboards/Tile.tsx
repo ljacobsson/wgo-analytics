@@ -8,7 +8,7 @@ import type { ChartViz } from '../sql/chart';
 import { BarList } from '../charts/BarList';
 import { Sparkline } from '../charts/Sparkline';
 import { TimeChart, type ChartSeries } from '../charts/TimeChart';
-import { botsParam, fieldLabel } from '../lib/filters';
+import { fieldLabel, trafficParams } from '../lib/filters';
 import { cn, delta } from '../lib/format';
 import { resolveRange, type TimeRange } from '../lib/time';
 import { CountUp, EmptyState, ErrorState, Skeleton } from '../ui/kit';
@@ -57,7 +57,7 @@ export function useTileData(pid: string, tile: DashboardTile, dash: TimeRange, f
   const range = tileRange(tile, dash);
   const spec = useMemo(() => tileSpec(tile), [tile]);
   const events = tile.measures.some((m) => m.source === 'events');
-  const q = useQueryResult(pid, range, spec, events ? filters : undefined, events ? botsParam() : undefined);
+  const q = useQueryResult(pid, range, spec, events ? filters : undefined, events ? trafficParams() : undefined);
   const saved = dashboardId && isKiosk() ? { dashboardId, tileId: tile.id } : null;
   const s = useSqlTile(pid, range, tile.sql?.query ?? null, saved);
   if (tile.sql) return { tile, range, result: undefined, sql: s.data, pending: s.isPending, error: s.error, retry: () => void s.refetch() };

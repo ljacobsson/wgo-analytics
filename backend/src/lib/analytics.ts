@@ -10,7 +10,8 @@ import { attachFixes } from './fixes';
 import { markSuppressed, suppressedSql } from './suppressions';
 import { symbolicateEvents, symbolicateGroups } from './sourcemaps';
 import { toApiEvent, type EventRow } from './events';
-import { COLUMNS, fieldExpression, filtersFrom, includeBots, jsonPath, parseFilters, type QueryScope } from './filters';
+import { COLUMNS, fieldExpression, filtersFrom, includeBots, includeDev, includesFlagged, jsonPath, parseFilters, type QueryScope } from './filters';
+import { DEV_REASON } from './bots';
 import { Hll } from './hll';
 import { HttpError } from './http';
 import { projectRetention } from './retention';
@@ -69,7 +70,7 @@ const ROLLUP_MIN_RANGE_MS = 3 * DAY_MS;
  * per-event fields), and either a long range or one reaching back past the project's raw retention.
  */
 async function rollupPlan(pid: string, r: Range, p: Params): Promise<Plan | null> {
-  if (parseFilters(p.filters).length || includeBots(p)) return null; // rollups hold human traffic only
+  if (parseFilters(p.filters).length || includesFlagged(p)) return null; // rollups hold human traffic only
   if (r.to.getTime() - r.from.getTime() < ROLLUP_MIN_RANGE_MS) {
     const days = await projectRetention(pid);
     if (r.from.getTime() >= Date.now() - days * DAY_MS) return null;
@@ -133,24 +134,35 @@ export async function totalsFor(pid: string, p: Params): Promise<Totals> {
 type SeriesPoint = StatsResponse['series'][number];
 const emptyPoint = (t: number): SeriesPoint => ({ t: new Date(t).toISOString(), pageview: 0, click: 0, error: 0, http_error: 0, custom: 0 });
 
-const rawBotSessions = async (pid: string, span: Window): Promise<number> =>
-  (await rawQuery<{ n: number }>(pid, span,
-    `SELECT count(DISTINCT session_id)::int AS n FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NOT NULL`,
+interface Hidden { bots: number; dev: number }
+
+const rawHiddenSessions = async (pid: string, span: Window): Promise<Hidden> => {
+  const [row] = await rawQuery<Hidden>(pid, span,
+    `SELECT count(DISTINCT session_id) FILTER (WHERE bot <> '${DEV_REASON}')::int AS bots,
+            count(DISTINCT session_id) FILTER (WHERE bot = '${DEV_REASON}')::int AS dev
+       FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NOT NULL`,
     [pid, span.from, span.to],
-  ))[0]?.n ?? 0;
+  );
+  return { bots: Number(row?.bots ?? 0), dev: Number(row?.dev ?? 0) };
+};
 
 /**
- * Sessions left out as bots in a range, so the dashboard can say how much it's hiding. Long ranges read the
- * rollups' 'bot' rows (hourly distinct counts summed, so a bot session spanning hours counts once per hour).
+ * Sessions left out as bots and as development traffic in a range, so the dashboard can say how much it's hiding.
+ * Long ranges read the rollups' 'bot' rows, keyed by reason (hourly distinct counts summed, so a session spanning
+ * hours counts once per hour). Only the kinds the request leaves out are counted.
  */
-async function botSessions(pid: string, r: Range, p: Params, plan: Plan | null): Promise<number | undefined> {
-  if (includeBots(p)) return undefined;
-  if (!plan) return rawBotSessions(pid, r);
-  const [rolled, tail] = await Promise.all([
-    rolledDim(pid, 'bot', plan.roll, 'sessions', 50),
-    plan.raw ? rawBotSessions(pid, plan.raw) : Promise.resolve(0),
-  ]);
-  return rolled.reduce((a, b) => a + b.sessions, tail);
+async function hiddenSessions(pid: string, r: Range, p: Params, plan: Plan | null): Promise<{ botSessions?: number; devSessions?: number }> {
+  if (includeBots(p) && includeDev(p)) return {};
+  let hidden: Hidden;
+  if (!plan) hidden = await rawHiddenSessions(pid, r);
+  else {
+    const [rolled, tail] = await Promise.all([
+      rolledDim(pid, 'bot', plan.roll, 'sessions', 50),
+      plan.raw ? rawHiddenSessions(pid, plan.raw) : Promise.resolve({ bots: 0, dev: 0 }),
+    ]);
+    hidden = rolled.reduce((a, b) => (b.key === DEV_REASON ? { ...a, dev: a.dev + b.sessions } : { ...a, bots: a.bots + b.sessions }), tail);
+  }
+  return { ...(includeBots(p) ? {} : { botSessions: hidden.bots }), ...(includeDev(p) ? {} : { devSessions: hidden.dev }) };
 }
 
 /** `compare=0` skips the previous window (the dashboard asks for it separately via /totals). */
@@ -160,8 +172,8 @@ export async function stats(pid: string, p: Params): Promise<StatsResponse> {
   const prevRange = { from: new Date(r.from.getTime() - span), to: r.from };
   const compare = p.compare !== '0' && p.compare !== 'false';
   const plan = await rollupPlan(pid, r, p);
-  const hiddenBots = botSessions(pid, r, p, plan);
-  hiddenBots.catch(() => undefined); // awaited below; if another query fails first, this must not be an unhandled rejection
+  const hidden = hiddenSessions(pid, r, p, plan);
+  hidden.catch(() => undefined); // awaited below; if another query fails first, this must not be an unhandled rejection
   // rollups are hourly: their buckets are at least an hour
   const bucket = plan ? Math.max(pickBucket(r), 3600) : pickBucket(r);
   const byT = new Map<number, SeriesPoint>();
@@ -178,7 +190,7 @@ export async function stats(pid: string, p: Params): Promise<StatsResponse> {
       hourlyTypes(pid, plan),
     ]);
     for (const h of hours) add(Math.floor(h.hour / 1000 / bucket) * bucket * 1000, h.type, h.n);
-    return { bucketSeconds: bucket, totals: current, previous, series: [...byT.values()], botSessions: await hiddenBots };
+    return { bucketSeconds: bucket, totals: current, previous, series: [...byT.values()], ...(await hidden) };
   }
 
   const seriesParams: unknown[] = [pid, r.from, r.to, bucket];
@@ -194,7 +206,7 @@ export async function stats(pid: string, p: Params): Promise<StatsResponse> {
     ),
   ]);
   for (const row of rows) add(row.t.getTime(), row.type, row.n);
-  return { bucketSeconds: bucket, totals: current, previous, series: [...byT.values()], botSessions: await hiddenBots };
+  return { bucketSeconds: bucket, totals: current, previous, series: [...byT.values()], ...(await hidden) };
 }
 
 /** Hour of the day (0-23) in `tz` for each epoch ms; one formatter for the whole batch. */

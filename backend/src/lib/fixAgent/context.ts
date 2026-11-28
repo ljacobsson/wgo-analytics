@@ -15,7 +15,7 @@ const cut = (s: string | null | undefined, n: number) => (s == null ? '' : s.len
 const fpFilter = (fingerprint: string) => JSON.stringify([{ field: 'fingerprint', op: 'eq', value: fingerprint }]);
 
 export async function errorGroup(pid: string, fingerprint: string, now = Date.now()): Promise<ErrorGroup | null> {
-  const groups = await A.errors(pid, { from: new Date(now - LOOKBACK_MS).toISOString(), to: new Date(now).toISOString(), filters: fpFilter(fingerprint), limit: '1', bots: '1' });
+  const groups = await A.errors(pid, { from: new Date(now - LOOKBACK_MS).toISOString(), to: new Date(now).toISOString(), filters: fpFilter(fingerprint), limit: '1', bots: '1', dev: '1' });
   return groups.find((g) => g.fingerprint === fingerprint) ?? null;
 }
 

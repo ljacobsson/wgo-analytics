@@ -3,18 +3,18 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { MapCallout } from '../charts/MapCallout';
 import { cellKey, type CalloutGroup, type CalloutMode } from '../charts/geoTypes';
-import { MousePointerClick, Bug, Globe, Eye, Users, Layers, Download, MapPin, Target } from 'lucide-react';
+import { MousePointerClick, Bug, Globe, Eye, EyeOff, Users, Layers, Download, MapPin, Target } from 'lucide-react';
 import { useBreakdown, useClicks, useConversions, useGeo, useHours, usePages, usePreviousConversions, usePreviousTotals, useReleaseMarkers, useStats, useVitals } from '../api/hooks';
 import { markerLabel } from './Releases';
 import { conversionRate, fmtRate, goalEventsHref, previousRate } from './Goals';
 import { countryName, flag } from '../lib/geo';
 import { clickLabel, eventTitle, userLabel } from '../lib/events';
 import { LiveCtx, useFirehose, type FeedItem } from '../live/store';
-import { botsParam, currentFilters, filtersParam } from '../lib/filters';
+import { botsParam, currentFilters, devParam, filtersParam, trafficShown } from '../lib/filters';
 
 const GeoMap = lazy(() => import('../charts/GeoMap'));
 import { useProject } from '../lib/project';
-import { navigate, pageHref, useRoute } from '../lib/router';
+import { navigate, pageHref, useRoute, useSetParams } from '../lib/router';
 import { useTime } from '../lib/time';
 import { Card, CardHeader, CountUp, Delta, EmptyState, ErrorState, Segmented, Skeleton, TYPE_COLOR, TypeBadge, Button } from '../ui/kit';
 import { Sparkline } from '../charts/Sparkline';
@@ -276,11 +276,11 @@ function useLiveFill(on: boolean, range: TimeRange): AnalyticsEvent[] {
   const store = useContext(LiveCtx);
   useFirehose(on);
   const recent = useSyncExternalStore(store.subscribe, () => (on ? store.recent : NO_ITEMS));
-  const bots = botsParam() === '1';
+  const bots = botsParam() === '1', dev = devParam() === '1';
   return useMemo(() => {
     const from = Date.parse(range.from);
-    return recent.map((it) => it.ev).filter((e) => Date.parse(e.ts) >= from && (bots || !e.bot));
-  }, [recent, range.from, bots]);
+    return recent.map((it) => it.ev).filter((e) => Date.parse(e.ts) >= from && trafficShown(e, bots, dev));
+  }, [recent, range.from, bots, dev]);
 }
 
 function liveTotals(evs: AnalyticsEvent[]): Totals {
@@ -318,7 +318,7 @@ function LiveLatest({ events }: { events: AnalyticsEvent[] }) {
 }
 
 export function Overview() {
-  const { project } = useProject(); const { range, refresh } = useTime(); const route = useRoute();
+  const { project } = useProject(); const { range, refresh } = useTime(); const route = useRoute(); const setParams = useSetParams();
   const stats = useStats(project.id, range);
   const prev = usePreviousTotals(project.id, range);
   const pages = usePages(project.id, range);
@@ -358,7 +358,7 @@ export function Overview() {
       <FilterBar scope="events" />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <Kpi label="Pageviews" icon={<Eye size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('pageview'), label: 'Pageviews' })} cur={T('pageviews')} prev={P('pageviews')} spark={sp('pageview')} color="var(--s1)" />
-        <Kpi label="Sessions" icon={<Layers size={14} />} onWhy={() => setWhy({ metric: 'sessions', label: 'Sessions' })} cur={T('sessions')} prev={P('sessions')} color="var(--s7)" note={totals && totals.sessions ? `${(totals.pageviews / totals.sessions).toFixed(1)} pages / session${s?.botSessions ? ` · ${fmtNum(s.botSessions)} bot sessions hidden` : ''}` : s?.botSessions ? `${fmtNum(s.botSessions)} bot sessions hidden` : ''} />
+        <Kpi label="Sessions" icon={<Layers size={14} />} onWhy={() => setWhy({ metric: 'sessions', label: 'Sessions' })} cur={T('sessions')} prev={P('sessions')} color="var(--s7)" note={[totals && totals.sessions ? `${(totals.pageviews / totals.sessions).toFixed(1)} pages / session` : '', s?.botSessions ? `${fmtNum(s.botSessions)} bot sessions hidden` : '', s?.devSessions ? `${fmtNum(s.devSessions)} dev sessions hidden` : ''].filter(Boolean).join(' · ')} />
         <Kpi label="Users" icon={<Users size={14} />} cur={T('users')} prev={P('users')} color="var(--s7)" note={totals && totals.users ? `${(totals.sessions / totals.users).toFixed(2)} sessions / user` : ''} />
         <Kpi label="Clicks" icon={<MousePointerClick size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('click'), label: 'Clicks' })} cur={T('clicks')} prev={P('clicks')} spark={sp('click')} color="var(--s3)" />
         <Kpi label="Errors" icon={<Bug size={14} />} onWhy={() => setWhy({ metric: 'events', where: type('error'), label: 'Errors' })} cur={T('errors')} prev={P('errors')} spark={sp('error')} color="var(--s8)" invert />
@@ -371,7 +371,12 @@ export function Overview() {
       <Card className="xl:col-span-2">
         <CardHeader title="Events over time" sub={`${range.label} · ${s ? Math.round(s.bucketSeconds / 60) || 1 : '…'} min buckets`} right={<div className="flex items-center gap-3">{totals && <span className="tnum text-[12px] text-muted">{fmtNum(totals.events)} events</span>}<AddToDashboard label={false} tile={() => ({ viz: 'bars', measures: [withFilters({ source: 'events', agg: 'count', label: 'Events', unit: 'count' }, currentFilters('events'))], groupBy: 'type', limit: 5 })} /></div>} />
         <div className="px-3 pb-3">
-          {!chart ? <Skeleton className="h-[280px]" /> : live ? <LiveLatest events={liveEvents} /> : empty ? (
+          {!chart ? <Skeleton className="h-[280px]" /> : live ? <LiveLatest events={liveEvents} /> : empty && s?.devSessions ? (
+            // e.g. the snippet tried on localhost first: say where the events went
+            <EmptyState icon={<EyeOff size={22} />} title="Only development traffic in this range" action={<Button variant="primary" onClick={() => setParams({ dev: '1' })}>Include development traffic</Button>}>
+              {fmtNum(s.devSessions)} {s.devSessions === 1 ? 'session' : 'sessions'} from localhost, private addresses or your development hosts {s.devSessions === 1 ? 'is' : 'are'} left out of the numbers.
+            </EmptyState>
+          ) : empty ? (
             <EmptyState icon={<Download size={22} />} title="No events in this range" action={<Button variant="primary" onClick={() => navigate(pageHref(project.id, 'settings', route.params))}>Install the snippet</Button>}>Add the snippet to your site and events will show up here within seconds.</EmptyState>
           ) : <TimeChart times={chart.times} series={chart.series} mode="bars" height={280} markers={markers} bucketMs={s!.bucketSeconds * 1000} />}
         </div>
