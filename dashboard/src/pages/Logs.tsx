@@ -18,6 +18,7 @@ import type { Filter } from '../api/contract';
 import { RowActions } from '../ui/RowActions';
 import { logConditions } from '../lib/rowFilters';
 import { AttributeTable } from './EventAttributes';
+import { Linkified } from '../ui/ExternalUrl';
 const SEV = [
   { label: 'All', min: 0 }, { label: 'Debug+', min: 5 }, { label: 'Info+', min: 9 }, { label: 'Warn+', min: 13 }, { label: 'Error+', min: 17 },
 ];
@@ -40,7 +41,7 @@ function LogRow({ l, open, toggle, traceHref }: { l: LogRecord; open: boolean; t
         <span className="w-[60px] shrink-0 font-mono text-[11.5px] text-faint tnum md:w-[84px]">{fmtTime(l.ts)}</span>
         <span className="w-[50px] shrink-0 font-mono text-[11px] font-semibold" style={{ color: s.color }}>{s.name}</span>
         <span className="min-w-0 flex-1 truncate text-[12px] text-muted md:w-[110px] md:flex-none md:shrink-0">{l.service}</span>
-        <span className={cn('order-last min-w-0 basis-full pl-[22px] font-mono text-[12px] leading-[1.5] md:order-none md:basis-auto md:flex-1 md:pl-0', open ? 'whitespace-pre-wrap break-words' : 'truncate')}>{l.body}</span>
+        <span className={cn('order-last min-w-0 basis-full pl-[22px] font-mono text-[12px] leading-[1.5] md:order-none md:basis-auto md:flex-1 md:pl-0', open ? 'whitespace-pre-wrap break-words' : 'truncate')}><Linkified text={l.body} /></span>
         {l.traceId && <button onClick={(e) => { e.stopPropagation(); traceHref(l.traceId!, l.ts); }} className="hidden shrink-0 font-mono text-[11px] text-faint hover:text-accent cursor-pointer sm:block" title="Open trace">{l.traceId.slice(0, 8)}</button>}
         <RowActions scope="logs" conditions={conditions} className="-my-0.5" />
       </div>

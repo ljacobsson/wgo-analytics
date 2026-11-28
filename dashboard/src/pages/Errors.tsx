@@ -20,6 +20,7 @@ import { BUILTIN } from '../dashboards/measures';
 import { RowActions } from '../ui/RowActions';
 import { errorGroupConditions } from '../lib/rowFilters';
 import { SourcemapsMissing } from './SourcemapsMissing';
+import { httpUrl } from '../ui/ExternalUrl';
 import { FixIcon, FixSection } from './FixAgent';
 const COLS = 'grid-cols-[minmax(260px,3fr)_90px_70px_80px_130px_110px_110px]';
 
@@ -98,7 +99,7 @@ function ErrorDrawer({ g, onClose, onSuppress }: { g: ErrorGroup | null; onClose
           <FixSection key={g.fingerprint} g={g} />
           <StackSection g={g} />
           <div className="flex justify-end"><AddToDashboard tile={() => errorsTile(currentFilters('events'), g)} /></div>
-          <Dl rows={[['Sample URL', g.sampleUrl && <a className="inline-flex items-center gap-1 font-mono text-[12px] text-accent hover:underline" href={g.sampleUrl} target="_blank" rel="noreferrer">{g.sampleUrl}<ExternalLink size={11} /></a>], ['Source', g.source && <Mono>{g.source}</Mono>]]} />
+          <Dl rows={[['Sample URL', g.sampleUrl && (httpUrl(g.sampleUrl) ? <a className="inline-flex items-center gap-1 font-mono text-[12px] text-accent hover:underline" href={httpUrl(g.sampleUrl)!} target="_blank" rel="noopener noreferrer">{g.sampleUrl}<ExternalLink size={11} /></a> : <Mono>{g.sampleUrl}</Mono>)], ['Source', g.source && <Mono>{g.source}</Mono>]]} />
           <div><h4 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-faint">Recent occurrences</h4>
             {occ.isPending ? <div className="space-y-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-9" />)}</div> : (
               <div className="divide-y divide-line/60 rounded-xl border border-line">{events.map((e) => (

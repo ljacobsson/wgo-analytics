@@ -6,6 +6,7 @@ import { cn, shortId } from '../lib/format';
 import { flag } from '../lib/geo';
 import { Popover } from './Popover';
 import { Button } from './kit';
+import { httpUrl, NewTabLink } from './ExternalUrl';
 
 /** Optional columns of the event lists (Events page, Live firehose). Time, type and the event title always show. */
 export type EventColumn = 'user' | 'path' | 'selector' | 'browser' | 'os' | 'device' | 'location' | 'session';
@@ -104,7 +105,14 @@ export function EventCell({ col, e, onUser, onSession }: {
   const base = 'min-w-[48px] shrink grow-0 truncate'; // shrinks before the event title does
   switch (col) {
     case 'user': return <UserCell key={col} e={e} onClick={onUser} className={cn(base, 'basis-[132px]')} />;
-    case 'path': return <span key={col} title={e.path ?? undefined} className={cn(base, 'basis-[180px] font-mono text-[11.5px] text-faint')}>{e.type !== 'pageview' ? e.path ?? '' : ''}</span>;
+    case 'path': {
+      const cls = cn(base, 'basis-[180px] font-mono text-[11.5px] text-faint');
+      const shown = e.type !== 'pageview' ? e.path ?? '' : '';
+      const href = shown ? httpUrl(e.url) : null;
+      return href
+        ? <NewTabLink key={col} href={href} title={`Open ${e.url} in a new tab`} className={cls}>{shown}</NewTabLink>
+        : <span key={col} title={e.path ?? undefined} className={cls}>{shown}</span>;
+    }
     case 'selector': return <span key={col} title={e.selector ?? undefined} className={cn(base, 'basis-[200px] font-mono text-[11.5px] text-muted')}>{e.selector ?? ''}</span>;
     case 'browser': return <span key={col} className={cn(base, 'basis-16 text-faint')}>{e.browser ?? ''}</span>;
     case 'os': return <span key={col} className={cn(base, 'basis-16 text-faint')}>{e.os ?? ''}</span>;

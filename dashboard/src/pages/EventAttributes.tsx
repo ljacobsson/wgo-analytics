@@ -3,6 +3,7 @@ import { ListFilter } from 'lucide-react';
 import type { AnalyticsEvent, FilterScope } from '../api/contract';
 import { fieldLabel } from '../lib/filters';
 import { useAddFilter } from '../ui/FilterBar';
+import { MaybeUrl } from '../ui/ExternalUrl';
 
 /** Built-in event fields shown when expanding a row (the order is the reading order). */
 const FIELDS: Array<keyof AnalyticsEvent> = [
@@ -29,7 +30,7 @@ export function AttributeTable({ rows, scope, extra }: { rows: Array<[field: str
       {rows.map(([field, value]) => (
         <div key={field} className="group contents">
           <div className="truncate py-1 text-faint" title={field}>{fieldLabel(field) !== field ? fieldLabel(field) : <span className="font-mono">{field}</span>}</div>
-          <div className="min-w-0 break-words py-1 font-mono text-[11.5px]">{extra?.[field] ?? value}</div>
+          <div className="min-w-0 break-words py-1 font-mono text-[11.5px]">{extra?.[field] ?? <MaybeUrl value={value} />}</div>
           <button onClick={() => addFilter({ field, op: 'eq', value })} title={`Filter: ${field} = ${value}`}
             className="rounded p-1 text-faint opacity-0 transition-opacity hover:bg-[var(--hl)] hover:text-accent group-hover:opacity-100 cursor-pointer"><ListFilter size={13} /></button>
         </div>))}

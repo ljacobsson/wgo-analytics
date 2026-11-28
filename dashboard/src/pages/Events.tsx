@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { ArrowUp, BellPlus, ChevronRight, ListTree, Search, Target, X } from 'lucide-react';
+import { ArrowUp, BellPlus, ChevronRight, ExternalLink, ListTree, Search, Target, X } from 'lucide-react';
 import { eventConditions } from '../lib/rowFilters';
 import { newGoalHref, newTriggerHref, RowActions } from '../ui/RowActions';
 import { useClickAliases, useEvents } from '../api/hooks';
@@ -17,6 +17,7 @@ import { currentFilters, filtersParam, mergeFilters, trafficShown, useFilters } 
 import { matches, matchesEventSearch } from '../lib/filterMatch';
 import { FEED_CAP, LiveCtx, useFirehose } from '../live/store';
 import { RowsSkeleton } from './common';
+import { httpUrl, NewTabLink } from '../ui/ExternalUrl';
 import { Stack } from './Errors';
 import { SourcemapsMissing } from './SourcemapsMissing';
 import { eventTitle } from '../lib/events';
@@ -33,12 +34,14 @@ export const triggerFiltersFor = (e: AnalyticsEvent): Filter[] => eventCondition
 function EventDetails({ e, onSession }: { e: AnalyticsEvent; onSession: (s: string) => void }) {
   const rows = eventAttributeRows(e);
   const { project } = useProject(); const route = useRoute();
+  const pageUrl = httpUrl(e.url);
   return (
     <div className="sticky left-0 w-[100cqw] space-y-4 border-b border-line/60 bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-4 py-4 sm:px-5" onClick={(x) => x.stopPropagation()}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-faint">
         <span className="tnum">{fmtDateTime(e.ts)}</span><Mono>{e.id}</Mono>
         {e.sessionId && <button className="text-accent hover:underline cursor-pointer" onClick={() => onSession(e.sessionId!)}>Session timeline →</button>}
         {e.sessionId && <a className="text-accent hover:underline" href={'#' + pageHref(project.id, `recordings/${encodeURIComponent(e.sessionId)}`, route.params)}>Watch recording →</a>}
+        {pageUrl && <NewTabLink href={pageUrl} className="inline-flex items-center gap-1 text-accent">Open page<ExternalLink size={11} /></NewTabLink>}
         <span>{rows.length} attributes · hover a row to filter by it</span>
         <button className="ml-auto inline-flex items-center gap-1 text-accent hover:underline cursor-pointer"
           onClick={() => navigate(newTriggerHref(project.id, route.params, 'events', triggerFiltersFor(e)))}>
@@ -50,7 +53,7 @@ function EventDetails({ e, onSession }: { e: AnalyticsEvent; onSession: (s: stri
         </button>
       </div>
       {e.errorStack && <div className="space-y-2"><Stack stack={e.errorStack} />{e.missingSourcemaps && <SourcemapsMissing missing={e.missingSourcemaps} />}</div>}
-      <AttributeTable rows={rows} scope="events" />
+      <AttributeTable rows={rows} scope="events" extra={pageUrl && e.path ? { path: <NewTabLink href={pageUrl} className="text-accent">{e.path}</NewTabLink> } : undefined} />
     </div>
   );
 }
