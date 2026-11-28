@@ -39,14 +39,15 @@ const newKey = () => 'ak_' + hex(28, Date.now(), Math.floor(Math.random() * 1e9)
 function load(email: string): Db {
   try {
     const d = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Db | null;
-    if (d) { for (const p of d.projects) p.retention ??= { ...RETENTION }; return d; }
+    if (d) { for (const p of d.projects) { p.retention ??= { ...RETENTION }; p.devTraffic ??= { ...DEV_TRAFFIC }; } return d; }
   } catch { /* fall through */ }
   const empty = new URLSearchParams(location.search).has('mock_empty');
-  const db: Db = { projects: empty ? [] : [{ id: 'prj_demo', name: 'Acme Storefront', writeKey: 'ak_live_9f2c41d07be3a6584c10e7', role: 'owner', createdAt: new Date(Date.now() - 40 * 86400e3).toISOString(), retention: { ...RETENTION } }], members: {} };
+  const db: Db = { projects: empty ? [] : [{ id: 'prj_demo', name: 'Acme Storefront', writeKey: 'ak_live_9f2c41d07be3a6584c10e7', role: 'owner', createdAt: new Date(Date.now() - 40 * 86400e3).toISOString(), retention: { ...RETENTION }, devTraffic: { ...DEV_TRAFFIC } }], members: {} };
   if (!empty) db.members.prj_demo = [{ email, role: 'owner', createdAt: db.projects[0].createdAt }, { email: 'sam@acme.dev', role: 'member', createdAt: new Date(Date.now() - 9 * 86400e3).toISOString() }];
   return db;
 }
 const RETENTION = { days: 90, defaultDays: 90, maxDays: 400 };
+const DEV_TRAFFIC = { ignore: false, hosts: [] as string[] };
 const save = (db: Db) => localStorage.setItem(KEY, JSON.stringify(db));
 
 export class MockHttpError extends Error { constructor(public status: number, m: string) { super(m); } }
@@ -179,7 +180,7 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
   }
   if (parts[0] !== 'projects') throw new MockHttpError(404, 'Not found');
   if (parts.length === 1 && method === 'POST') {
-    const p: Project = { id: 'prj_' + hex(8, Date.now()), name: String((body as { name: string }).name), writeKey: newKey(), role: 'owner', createdAt: new Date().toISOString(), retention: { ...RETENTION } };
+    const p: Project = { id: 'prj_' + hex(8, Date.now()), name: String((body as { name: string }).name), writeKey: newKey(), role: 'owner', createdAt: new Date().toISOString(), retention: { ...RETENTION }, devTraffic: { ...DEV_TRAFFIC } };
     db.projects.push(p); db.members[p.id] = [{ email, role: 'owner', createdAt: p.createdAt }]; save(db); return p;
   }
   const pid = parts[1];
@@ -195,11 +196,17 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
       return { ok: true };
     }
     if (method === 'PATCH') {
-      const b = body as { name?: string; retentionDays?: number };
+      const b = body as { name?: string; retentionDays?: number; devTraffic?: { ignore?: boolean; hosts?: string[] } };
       if (b.name !== undefined) project.name = String(b.name);
       if (b.retentionDays !== undefined) {
         if (!Number.isInteger(b.retentionDays) || b.retentionDays < 1 || b.retentionDays > project.retention.maxDays) throw new MockHttpError(400, `Retention must be a whole number of days between 1 and ${project.retention.maxDays}`);
         project.retention = { ...project.retention, days: b.retentionDays };
+      }
+      if (b.devTraffic !== undefined) {
+        const hosts = [...new Set((b.devTraffic.hosts ?? []).map((h) => h.trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/[/?#].*$/, '').replace(/:\d+$/, '')).filter(Boolean))];
+        const bad = hosts.find((h) => !/^[a-z0-9*.\-_[\]:]+$/.test(h) || /^\*+$/.test(h));
+        if (bad) throw new MockHttpError(400, `"${bad}" is not a host name or pattern`);
+        project.devTraffic = { ignore: b.devTraffic.ignore === true, hosts };
       }
       save(db);
     }

@@ -604,4 +604,7 @@ export const SCHEMA_STATEMENTS: string[] = [
      PRIMARY KEY (project_id, survey_id, id)
    )`,
   `CREATE INDEX ASYNC IF NOT EXISTS survey_responses_time_idx ON survey_responses (project_id, survey_id, created_at)`,
+
+  // development traffic dropped at ingest: DevTrafficSettings JSON, NULL = keep everything (see lib/devTraffic.ts)
+  `ALTER TABLE projects ADD COLUMN IF NOT EXISTS dev_traffic jsonb`,
 ];

@@ -6,6 +6,7 @@ import type {
 } from '../contract';
 import { parseRange } from './analytics';
 import { execute, query } from './db';
+import { isDevOrigin } from './devTraffic';
 import { parseFilters } from './filters';
 import { HttpError } from './http';
 import { isUuid, projectIdForWriteKey } from './projects';
@@ -360,10 +361,12 @@ const cut = (v: unknown, max: number) => (typeof v === 'string' && v ? v.slice(0
  * POST /surveys/respond {k, id, r, a, s, u, path, ans}: one submitted response. `r` is the response id the SDK made
  * up, so a retried request doesn't count twice. Paused surveys still take answers from visitors who had it open.
  */
-export async function respond(body: unknown): Promise<{ ok: boolean }> {
+export async function respond(body: unknown, origin?: string): Promise<{ ok: boolean }> {
   const b = obj(body);
   const pid = await projectIdForWriteKey(typeof b.k === 'string' ? b.k : undefined);
   if (!pid) return { ok: false };
+  // sent from a development page (lib/devTraffic.ts): accepted, so the SDK doesn't retry, but not stored
+  if (await isDevOrigin(pid, origin)) return { ok: true };
   const id = typeof b.id === 'string' ? b.id : '';
   const rid = typeof b.r === 'string' && isUuid(b.r) ? b.r : '';
   if (!isUuid(id) || !rid) bad('Survey and response ids are required');

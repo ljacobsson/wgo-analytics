@@ -9,7 +9,7 @@ import { SCHEMA_STATEMENTS } from '../src/lib/schema';
  * both are updated together: bump SchemaHash in template.yaml, then record it here with the digest it prints.
  */
 const RECORDED: Record<string, string> = {
-  '2026-11-28-1': '139db734f4a18268',
+  '2026-11-28-2': '7ed443b12695120b',
 };
 
 describe('schema migration', () => {

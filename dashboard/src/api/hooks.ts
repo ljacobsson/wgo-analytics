@@ -13,6 +13,7 @@ import type {
 } from './contract';
 import type { SqlExport, SqlExportRequest, SqlRequest, SqlResult, SqlSchema } from './contract';
 import type { Survey, SurveyInput, SurveyResponse, SurveyResponsesPage, SurveyResults } from './contract';
+import type { DevTrafficSettings } from './contract';
 import { previousWindow, type TimeRange } from '../lib/time';
 import { botsParam, filtersParam, type FieldScope } from '../lib/filters';
 
@@ -166,6 +167,13 @@ export function useSetRetention(pid: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (retentionDays: number) => api<Project>(`/api/projects/${pid}`, { method: 'PATCH', body: { retentionDays } }),
+    onSuccess: (p) => qc.setQueryData<Me>(keys.me, (m) => m && { ...m, projects: m.projects.map((x) => (x.id === pid ? p : x)) }),
+  });
+}
+export function useSetDevTraffic(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (devTraffic: DevTrafficSettings) => api<Project>(`/api/projects/${pid}`, { method: 'PATCH', body: { devTraffic } }),
     onSuccess: (p) => qc.setQueryData<Me>(keys.me, (m) => m && { ...m, projects: m.projects.map((x) => (x.id === pid ? p : x)) }),
   });
 }

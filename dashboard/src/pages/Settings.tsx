@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Database, Eye, EyeOff, KeyRound, RotateCw, Trash2, UserPlus } from 'lucide-react';
-import { useDeleteProject, useInviteMember, useMembers, useRemoveMember, useRenameProject, useRotateKey, useRotateUploadKey, useSetRetention, useUploadKey } from '../api/hooks';
+import { useDeleteProject, useInviteMember, useMembers, useRemoveMember, useRenameProject, useRotateKey, useRotateUploadKey, useSetDevTraffic, useSetRetention, useUploadKey } from '../api/hooks';
 import type { Project } from '../api/contract';
 import { useProject } from '../lib/project';
-import { Badge, Button, Card, CardHeader, CopyButton, Dialog, Skeleton, useToast } from '../ui/kit';
+import { Badge, Button, Card, CardHeader, CopyButton, Dialog, Skeleton, Switch, useToast } from '../ui/kit';
 import { Install } from './Install';
 import { relTime } from '../lib/format';
 
@@ -33,6 +33,8 @@ export function SettingsPage() {
       </Card>
 
       <RetentionCard project={project} owner={owner} />
+
+      <DevTrafficCard project={project} owner={owner} />
 
       <Card>
         <CardHeader title="Write key" sub="Public key used by the SDK and OpenTelemetry exporters. Safe to ship in client code." />
@@ -101,6 +103,43 @@ function RetentionCard({ project, owner }: { project: Project; owner: boolean })
           <p><span className="font-medium text-fg">Raw data is stored as compressed Parquet files in S3, in your AWS account.</span> What you store grows with your traffic times this setting, but at S3 prices a long retention stays cheap; queries read only the days they cover. Your deployment allows up to {maxDays} days (the stack's <code className="font-mono text-[11.5px]">MaxRetentionDays</code> parameter).</p>
         </div>
       </div>
+    </Card>
+  );
+}
+
+const hostLines = (text: string) => text.split(/[\n,]/).map((h) => h.trim()).filter(Boolean);
+
+function DevTrafficCard({ project, owner }: { project: Project; owner: boolean }) {
+  const toast = useToast();
+  const save = useSetDevTraffic(project.id);
+  const saved = project.devTraffic;
+  const [ignore, setIgnore] = useState(saved.ignore);
+  const [hosts, setHosts] = useState(saved.hosts.join('\n'));
+  const changed = ignore !== saved.ignore || hostLines(hosts).join('\n') !== saved.hosts.join('\n');
+  const submit = () => save.mutate({ ignore, hosts: hostLines(hosts) }, {
+    // show the hosts as stored (pasted URLs reduced to host names), unless they were edited while saving
+    onSuccess: (p) => { setHosts((cur) => (cur === hosts ? p.devTraffic.hosts.join('\n') : cur)); toast({ title: 'Development traffic settings saved', body: 'New events follow them within a minute.', tone: 'good' }); },
+    onError: (er) => toast({ title: 'Could not save', body: (er as Error).message, tone: 'bad' }),
+  });
+  return (
+    <Card>
+      <CardHeader title="Development traffic" sub="Leave out events from your own machine and test deployments while you build and test" />
+      <form className="space-y-4 px-4 pb-4" onSubmit={(e) => { e.preventDefault(); if (owner && changed) submit(); }}>
+        <div className={owner ? '' : 'pointer-events-none opacity-60'}>
+          <Switch checked={ignore} onChange={(b) => owner && setIgnore(b)} label={<span className="text-[13px] text-fg">Ignore localhost and private addresses</span>} />
+          <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">Covers <span className="font-mono text-[11.5px]">localhost</span>, <span className="font-mono text-[11.5px]">127.0.0.1</span> and other loopback, private-network and link-local addresses, names without a dot, local-only domains such as <span className="font-mono text-[11.5px]">.local</span>, <span className="font-mono text-[11.5px]">.test</span> and <span className="font-mono text-[11.5px]">.internal</span>, and pages opened from disk.</p>
+        </div>
+        <label className="block space-y-1.5">
+          <span className="text-[13px] text-fg">Also ignore these hosts</span>
+          <textarea className="field min-h-[84px] font-mono text-[12.5px]" disabled={!owner} value={hosts} onChange={(e) => setHosts(e.target.value)}
+            placeholder={'*.vercel.app\nstaging.example.com'} spellCheck={false} aria-label="Hosts to ignore" />
+          <span className="block text-[12px] text-faint">One per line. Use * as a wildcard, e.g. for preview deployments.</span>
+        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="primary" disabled={!owner || !changed || save.isPending}>Save</Button>
+          <p className="min-w-[240px] flex-1 text-[12px] leading-relaxed text-faint">Matching page views, clicks, errors, recordings and survey responses are dropped when they arrive: they're never stored, counted, shown live or alerted on. Events already stored stay. Mobile app events are never affected.</p>
+        </div>
+      </form>
     </Card>
   );
 }

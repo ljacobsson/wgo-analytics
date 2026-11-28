@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Member, Project, Role, UploadKey } from '../contract';
 import { allowlistMessage, emailAllowed } from './allowlist';
+import { devTrafficOf, forgetDevTraffic, parseDevTraffic } from './devTraffic';
 import { HttpError } from './http';
 import { query } from './db';
 import { DEFAULT_RETENTION_DAYS, effectiveRetention, forgetRetention, maxRetentionDays } from './retention';
@@ -77,6 +78,7 @@ interface ProjectRow {
   role: Role;
   created_at: Date;
   retention_days: number | null;
+  dev_traffic: unknown;
 }
 
 const toProject = (r: ProjectRow): Project => ({
@@ -86,11 +88,12 @@ const toProject = (r: ProjectRow): Project => ({
   role: r.role,
   createdAt: r.created_at.toISOString(),
   retention: { days: effectiveRetention(r.retention_days), defaultDays: DEFAULT_RETENTION_DAYS, maxDays: maxRetentionDays() },
+  devTraffic: devTrafficOf(r.dev_traffic),
 });
 
 export async function listProjects(email: string): Promise<Project[]> {
   const rows = await query<ProjectRow>(
-    `SELECT p.id, p.name, p.write_key, m.role, p.created_at, p.retention_days
+    `SELECT p.id, p.name, p.write_key, m.role, p.created_at, p.retention_days, p.dev_traffic
        FROM project_members m JOIN projects p ON p.id = m.project_id
       WHERE m.email = $1 ORDER BY p.created_at`,
     [email],
@@ -101,7 +104,7 @@ export async function listProjects(email: string): Promise<Project[]> {
 export async function getProject(email: string, projectId: string): Promise<Project> {
   if (!isUuid(projectId)) throw new HttpError(404, 'Project not found');
   const rows = await query<ProjectRow>(
-    `SELECT p.id, p.name, p.write_key, m.role, p.created_at, p.retention_days
+    `SELECT p.id, p.name, p.write_key, m.role, p.created_at, p.retention_days, p.dev_traffic
        FROM project_members m JOIN projects p ON p.id = m.project_id
       WHERE m.email = $1 AND m.project_id = $2`,
     [email, projectId],
@@ -139,6 +142,16 @@ export async function setRetention(email: string, projectId: string, days: unkno
   }
   await query('UPDATE projects SET retention_days = $2 WHERE id = $1', [projectId, days]);
   forgetRetention(projectId);
+  return getProject(email, projectId);
+}
+
+/** Which development traffic to drop at ingest (owners only). */
+export async function setDevTraffic(email: string, projectId: string, body: unknown): Promise<Project> {
+  await requireOwner(email, projectId);
+  const settings = parseDevTraffic(body);
+  const stored = settings.ignore || settings.hosts.length ? JSON.stringify(settings) : null;
+  await query('UPDATE projects SET dev_traffic = $2::jsonb WHERE id = $1', [projectId, stored]);
+  forgetDevTraffic(projectId);
   return getProject(email, projectId);
 }
 

@@ -118,9 +118,11 @@ async function route(method: string, parts: string[], q: Q, email: string, event
   if (!sub) {
     if (method === 'GET') return P.getProject(email, pid);
     if (method === 'PATCH') {
-      const body = jsonBody<{ name?: unknown; retentionDays?: unknown }>(event);
+      const body = jsonBody<{ name?: unknown; retentionDays?: unknown; devTraffic?: unknown }>(event);
       if (body.retentionDays !== undefined) await P.setRetention(email, pid, body.retentionDays);
-      if (body.name !== undefined || body.retentionDays === undefined) return P.renameProject(email, pid, projectName(body));
+      if (body.devTraffic !== undefined) await P.setDevTraffic(email, pid, body.devTraffic);
+      const settingsOnly = body.retentionDays !== undefined || body.devTraffic !== undefined;
+      if (body.name !== undefined || !settingsOnly) return P.renameProject(email, pid, projectName(body));
       return P.getProject(email, pid);
     }
     if (method === 'DELETE') {

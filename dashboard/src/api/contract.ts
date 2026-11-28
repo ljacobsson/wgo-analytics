@@ -46,6 +46,18 @@ export interface Project {
   // raw events, logs, spans and metric points (Parquet files in S3) older than `days` are deleted daily, a whole
   // day at a time; hourly Overview rollups are kept 400 days. maxDays is the stack's MaxRetentionDays.
   retention: { days: number; defaultDays: number; maxDays: number };
+  // browser events and recordings from development pages are dropped at ingest (never stored, counted or alerted on)
+  devTraffic: DevTrafficSettings;
+}
+
+// PATCH /api/projects/{pid} {devTraffic} (owners only). Takes effect within a minute.
+//   ignore: localhost, loopback/private/link-local addresses, single-label names and local-only domains (.localhost,
+//           .local, .test, .internal, …), and pages opened from disk (file:)
+//   hosts:  wildcard patterns on the page's hostname, e.g. "*.vercel.app" or "staging.acme.com" (case-insensitive,
+//           `*` = anything; at most 50), applied whether or not `ignore` is on. Mobile SDK events are never dropped.
+export interface DevTrafficSettings {
+  ignore: boolean;
+  hosts: string[];
 }
 
 // GET /api/projects/{pid}/upload-key and POST /api/projects/{pid}/rotate-upload-key (owners only; 403 otherwise)

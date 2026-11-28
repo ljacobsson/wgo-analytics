@@ -5,6 +5,7 @@ import { storeErrorStacks } from '../lib/errorStacks';
 import { recordReleases, seenInEvents } from '../lib/releases';
 import { dropSuppressed } from '../lib/suppressions';
 import { collectionPaused } from '../lib/budgets';
+import { dropDevTraffic } from '../lib/devTraffic';
 import { geoFromHeaders, type Geo } from '../lib/geo';
 import { fanOut } from '../lib/live';
 import { projectIdForWriteKey } from '../lib/projects';
@@ -22,6 +23,8 @@ import { evaluateTriggers } from '../lib/triggers';
 async function ingestBatch(projectId: string, batch: WireBatch, receivedAt: number, userAgent: string | undefined, geo: Geo): Promise<number> {
   // a cost budget stopped collection for this project (lib/budgets.ts): drop everything, recordings included
   if (await collectionPaused(projectId)) return 0;
+  // events from development pages (localhost, the project's ignored hosts) are dropped, recordings included
+  batch = await dropDevTraffic(projectId, batch);
   // session recording chunks (their own table; only for sessions holding a recording slot, see lib/recordings.ts)
   const replays = await replayRows(projectId, batch, receivedAt);
   await storeReplays(replays);

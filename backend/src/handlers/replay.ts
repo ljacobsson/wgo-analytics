@@ -1,5 +1,5 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
-import { handleError, HttpError, json, jsonBody } from '../lib/http';
+import { handleError, header, HttpError, json, jsonBody } from '../lib/http';
 import { publicConfig, startRecording } from '../lib/recordings';
 
 /**
@@ -18,7 +18,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return json(200, await publicConfig(event.queryStringParameters?.k), { 'cache-control': 'public, max-age=60' });
     }
     if (event.rawPath === '/replay/start' && method === 'POST') {
-      return json(200, await startRecording(jsonBody(event)), { 'cache-control': 'no-store' });
+      return json(200, await startRecording(jsonBody(event), Date.now(), header(event, 'origin')), { 'cache-control': 'no-store' });
     }
     throw new HttpError(404, 'Not found');
   } catch (err) {

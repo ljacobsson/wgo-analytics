@@ -227,7 +227,7 @@ export function CountUp({ value, format }: { value: number; format: (n: number) 
 
 export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (b: boolean) => void; label?: ReactNode }) {
   return (
-    <button role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-[12px] text-muted hover:text-fg cursor-pointer">
+    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-[12px] text-muted hover:text-fg cursor-pointer">
       <span className={cn('relative h-[18px] w-8 shrink-0 rounded-full transition-colors duration-200', checked ? 'grad-bg' : 'bg-[var(--line-strong)]')}>
         <span className={cn('absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-all duration-200', checked ? 'left-[16px]' : 'left-[2px]')} />
       </span>{label}
