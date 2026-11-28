@@ -138,6 +138,16 @@ d('MCP dashboard tools (PostgreSQL)', async () => {
     expect(dash.config).toMatchObject({ range: '7d', tiles: [{ viz: 'number', layout: { x: 0, y: 0, w: 6, h: 2 } }] });
   });
 
+  it('keeps SQL tiles through get_dashboard and update_dashboard', async () => {
+    const sqlTile = { id: 'sq', viz: 'line', sql: { query: "SELECT date_trunc('hour', ts) AS h, count(*) AS n FROM events GROUP BY 1", x: 'h', y: ['n'], unit: 'count' } };
+    const added = JSON.parse((await callTool('add_dashboard_tile', { projectId: pid, dashboardId: dashId, tile: sqlTile })).text);
+    expect(added.config.tiles.find((t: { id: string }) => t.id === 'sq').sql).toEqual(sqlTile.sql);
+    const got = JSON.parse((await callTool('get_dashboard', { projectId: pid, dashboardId: dashId })).text);
+    const res = await callTool('update_dashboard', { projectId: pid, dashboardId: dashId, config: got.config });
+    expect(res.isError).toBe(false);
+    expect((await getDashboard(pid, dashId)).config.tiles.find((t) => t.id === 'sq')?.sql).toEqual(sqlTile.sql);
+  });
+
   it('only answers for project members', async () => {
     expect(await callTool('list_dashboards', { projectId: pid }, 'stranger@example.com')).toEqual({ isError: true, text: 'Project not found' });
     expect(await callTool('delete_dashboard', { projectId: pid, dashboardId: dashId }, 'stranger@example.com')).toEqual({ isError: true, text: 'Project not found' });

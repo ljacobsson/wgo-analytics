@@ -8,6 +8,7 @@ import { resolveRange, TimeCtx, type TimeRange } from '../lib/time';
 import { prefetchPage, useCollection, useMe } from '../api/hooks';
 import { CollectionPausedBanner } from '../pages/Budgets';
 import { PageIcon } from './icons';
+import { PullRequestCount } from '../pages/PullRequests';
 import { TimePicker } from './TimePicker';
 import { CommandPalette } from './CommandPalette';
 import { UpdateNotice } from './UpdateNotice';
@@ -120,9 +121,10 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, [project.id, paramsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const title = page === 'settings' ? 'Settings' : page === 'widget' ? 'Mobile widget' : page === 'kiosks' ? 'Kiosks' : page === 'costs' ? 'Costs' : page === 'fix-agent' ? 'GitHub Agent' : page === 'mcp' ? 'AI assistants (MCP)' : PAGES.find((p) => p.id === page)?.label ?? '';
+  const title = page === 'settings' ? 'Settings' : page === 'widget' ? 'Mobile widget' : page === 'kiosks' ? 'Kiosks' : page === 'costs' ? 'Costs' : page === 'fix-agent' ? 'GitHub Agent' : page === 'pull-requests' ? 'Pull requests' : page === 'mcp' ? 'AI assistants (MCP)' : PAGES.find((p) => p.id === page)?.label ?? '';
   // Pages outside PAGES that sit in the "Connect" section, after Triggers.
   const connectExtras: [string, string][] = [
+    ...(me.data?.features?.fixAgent ? [['pull-requests', 'Pull requests'] as [string, string]] : []),
     ...((me.data?.features?.fixAgent || me.data?.admin) ? [['fix-agent', 'GitHub Agent'] as [string, string]] : []),
     ['mcp', 'AI assistants (MCP)'], ['kiosks', 'Kiosks'], ['widget', 'Mobile widget'],
   ];
@@ -139,6 +141,7 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
       <span className={page === id ? 'text-accent' : 'text-faint group-hover:text-muted'}><PageIcon id={id} /></span>
       {!collapsed && <span>{label}</span>}
       {!collapsed && id === 'live' && <LiveDot />}
+      {id === 'pull-requests' && <PullRequestCount collapsed={collapsed} />}
     </a>
   );
 

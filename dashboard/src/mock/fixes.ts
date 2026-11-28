@@ -101,6 +101,7 @@ export function fixApi(pid: string, owner: boolean, email: string, method: strin
   if (sub === 'fixes') {
     const [id, action] = [parts[3], parts[4]];
     if (!id && method === 'GET') {
+      if (qp('pr') === '1') return [...st.runs.filter((r) => r.prNumber), ...demoPullRequests(s0(pid, st, email))].slice(0, Number(qp('limit') ?? 50));
       const fp = qp('fingerprint');
       return st.runs.filter((r) => !fp || r.fingerprint === fp).slice(0, Number(qp('limit') ?? 50));
     }
@@ -225,4 +226,25 @@ export function installApi(method: string, sub: string | undefined, body: unknow
     slack: { clientId: i.slackClientId, secretSet: !!i.slackClientId, fromEnv: false, redirectUrl: 'https://abc123.execute-api.eu-west-1.amazonaws.com/slack/callback', createAppUrl: 'https://api.slack.com/apps?new_app=1' },
     mcpUrl: `${location.origin}/mcp`,
   };
+}
+
+const s0 = (pid: string, st: State, email: string) => settingsOf(pid, st, email);
+
+/** A few pull requests from earlier days, so the Pull requests page has something to show. */
+function demoPullRequests(s: FixSettings): FixRun[] {
+  if (!s.repos.length) return [];
+  const repo = s.repos[0].fullName;
+  const day = 86400e3, now = Date.now();
+  const pr = (n: number, ago: number, state: 'open' | 'merged' | 'closed', title: string, cause: string, msg: string, trigger: 'manual' | 'auto' = 'manual'): FixRun => ({
+    runId: `demo-${n}`, status: 'pr_opened', prUrl: `https://github.com/${repo}/pull/${n}`, prNumber: n, prState: state, kind: 'browser',
+    target: { kind: 'browser', fingerprint: `demo${n}` }, fingerprint: `demo${n}`, message: msg, trigger, requestedBy: trigger === 'auto' ? null : 'demo@wgo.dev', repo,
+    branch: `wgo-fix/demo${n}`, steps: [], error: null, modelId: 'global.anthropic.claude-opus-5-5', inputTokens: 120_000, outputTokens: 3_000, costUsd: 0.27,
+    result: { outcome: 'fixed', rootCause: cause, summary: '', confidence: 'high', testsAdded: true, files: [], prTitle: title },
+    createdAt: new Date(now - ago).toISOString(), startedAt: new Date(now - ago).toISOString(), finishedAt: new Date(now - ago + 240_000).toISOString(),
+  });
+  return [
+    pr(41, 2 * day, 'merged', 'Fix TypeError when a cart line’s product was removed', 'computeTotal read product.price on cart lines whose product had been removed from the catalog.', 'TypeError: Cannot read properties of undefined (reading \'price\')'),
+    pr(38, 4 * day, 'open', 'Retry dynamic imports after a deploy', 'Old tabs requested chunk files that the new deploy no longer serves.', 'TypeError: Failed to fetch dynamically imported module', 'auto'),
+    pr(33, 9 * day, 'closed', 'Guard against a missing gtag', 'An ad blocker removed the analytics script, so gtag was never defined.', 'ReferenceError: gtag is not defined'),
+  ];
 }

@@ -744,6 +744,13 @@ export const useFixRuns = (pid: string, fingerprint: string | undefined, enabled
     enabled, staleTime: 5_000,
     refetchInterval: (q) => runsPoll(q.state.data),
   });
+/** The pull requests the GitHub Agent opened in a project, newest first (Pull requests page and its menu count). */
+export const usePullRequests = (pid: string, enabled = true) =>
+  useQuery({
+    queryKey: ['fix-runs', pid, 'prs'] as const,
+    queryFn: () => api<FixRun[]>(`${base(pid)}/fixes`, { params: { pr: 1, limit: 100 } }),
+    enabled, staleTime: 30_000, refetchInterval: 60_000, refetchOnMount: 'always',
+  });
 export function useStartFix(pid: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -800,3 +807,15 @@ export const useSqlSchema = (pid: string) =>
   useQuery({ queryKey: ['sql-schema', pid], queryFn: ({ signal }) => api<SqlSchema>(`${base(pid)}/sql/schema`, { signal }), staleTime: Infinity });
 export const runSql = (pid: string, req: SqlRequest, signal?: AbortSignal) => api<SqlResult>(`${base(pid)}/sql`, { method: 'POST', body: req, signal });
 export const exportSql = (pid: string, req: SqlExportRequest, signal?: AbortSignal) => api<SqlExport>(`${base(pid)}/sql/export`, { method: 'POST', body: req, signal });
+/**
+ * Data of a SQL tile. Members run its query (so an edit shows before it's saved); a kiosk asks for the saved tile's
+ * data by id (`saved`), as kiosks can't run SQL of their own.
+ */
+export const useSqlTile = (pid: string, r: Pick<TimeRange, 'from' | 'to'>, query: string | null, saved: { dashboardId: string; tileId: string } | null) =>
+  useQuery({
+    queryKey: ['sql-tile', pid, r.from, r.to, query, saved?.dashboardId, saved?.tileId],
+    queryFn: ({ signal }) => saved
+      ? api<SqlResult>(`${base(pid)}/dashboards/${saved.dashboardId}/tiles/${saved.tileId}/data`, { params: rp(r), signal })
+      : runSql(pid, { sql: query!, from: r.from, to: r.to, limit: 5000 }, signal),
+    staleTime: STALE, placeholderData: keepPreviousData, enabled: !!query, retry: false,
+  });

@@ -3,7 +3,7 @@ import { EditorView } from '@codemirror/view';
 import type { EditorState, Extension, StateEffect } from '@codemirror/state';
 import { setDiagnostics } from '@codemirror/lint';
 import {
-  AlertTriangle, BookOpen, ChevronRight, Clock, Copy, Database, Download, History, Loader2, Play, Search, Square, Table2, Trash2,
+  AlertTriangle, BarChart3, BookOpen, ChevronRight, Clock, Copy, Database, Download, History, Loader2, Play, Search, Square, Table2, Trash2,
 } from 'lucide-react';
 import type { SqlResult, SqlSchema } from '../api/contract';
 import { exportSql, runSql, useFields, useSqlSchema } from '../api/hooks';
@@ -16,6 +16,11 @@ import { editorExtensions, editorState, runnable, type CompletionData } from '..
 import { TabBar, type TabInfo } from '../sql/TabBar';
 import { ResultsGrid, cellText } from '../sql/ResultsGrid';
 import { errorRange, isBlank } from '../sql/statements';
+import { resolveChart, suggestChart, tileSql, type ChartSpec } from '../sql/chart';
+import { ChartConfig } from '../sql/ChartConfig';
+import { takeHandoff } from '../sql/handoff';
+import { SqlChart } from '../sql/SqlChart';
+import { AddToDashboard } from '../dashboards/AddToDashboard';
 
 // ---------------------------------------------------------------- saved state (per project, in this browser)
 
@@ -99,7 +104,11 @@ type RunState =
   | { status: 'error'; sql: string; message: string };
 const IDLE: RunState = { status: 'idle' };
 
-interface SavedTab { id: string; name: string; doc: string; cursor?: number }
+/** How a tab shows its results: the rows, or a chart (`chart`: the columns chosen; the rest is picked from the result). */
+interface TabView { view: 'table' | 'chart'; chart?: ChartSpec; chartFor?: string }
+/** The result columns a chart was chosen for: a query with other columns gets a suggested chart again. */
+const columnsKey = (r: SqlResult) => r.columns.map((c) => c.name).join('\u0000');
+interface SavedTab extends Partial<TabView> { id: string; name: string; doc: string; cursor?: number }
 interface SavedTabs { active: string; tabs: SavedTab[] }
 
 /** The project's tabs as this browser saved them; the first visit gets one tab with the starter queries. */
@@ -139,6 +148,9 @@ export default function SqlPage() {
   const [tabs, setTabs] = useState<TabInfo[]>(() => initial.tabs.map(({ id, name }) => ({ id, name })));
   const [active, setActive] = useState(initial.active);
   const [runs, setRuns] = useState<Record<string, RunState>>({});
+  const [views, setViews] = useState<Record<string, TabView>>(() => Object.fromEntries(initial.tabs.map((t) => [t.id, { view: t.view === 'chart' ? 'chart' : 'table', chart: t.chart, chartFor: t.chartFor }])));
+  const viewsRef = useRef(views);
+  viewsRef.current = views;
   const [closing, setClosing] = useState<TabInfo | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(() => store.get(historyKey, []));
   const [limit, setLimit] = useState<number>(() => store.get('wgo.sql.limit', 1000));
@@ -211,12 +223,12 @@ export default function SqlPage() {
   };
 
   const save = useCallback(() => {
-    store.set(tabsKey, { active: activeRef.current, tabs: tabsRef.current.map((t) => ({ id: t.id, name: t.name, ...textOf(t.id) })) } satisfies SavedTabs);
+    store.set(tabsKey, { active: activeRef.current, tabs: tabsRef.current.map((t) => ({ id: t.id, name: t.name, ...textOf(t.id), ...viewsRef.current[t.id] })) } satisfies SavedTabs);
     try { localStorage.removeItem(`wgo.sql.doc.${pid}`); } catch { /* disabled */ } // the single editor before tabs
   }, [tabsKey, pid]); // eslint-disable-line react-hooks/exhaustive-deps
   const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const saveSoon = useCallback(() => { clearTimeout(saveTimer.current); saveTimer.current = setTimeout(save, 300); }, [save]);
-  useEffect(() => { save(); }, [tabs, active, save]);
+  useEffect(() => { save(); }, [tabs, active, views, save]);
 
   const switchTo = useCallback((id: string) => {
     const v = view.current;
@@ -244,6 +256,9 @@ export default function SqlPage() {
     switchTo(id);
   }, [switchTo]);
 
+  const newTabRef = useRef(newTab);
+  newTabRef.current = newTab;
+
   const closeTab = useCallback((id: string, confirmed = false) => {
     const ts = tabsRef.current;
     const tab = ts.find((t) => t.id === id);
@@ -262,6 +277,7 @@ export default function SqlPage() {
     for (const m of [states.current, unopened.current, scrolls.current]) m.delete(id);
     marked.current.delete(id);
     setRuns((m) => { const n = { ...m }; delete n[id]; return n; });
+    setViews((m) => { const n = { ...m }; delete n[id]; return n; });
     setTabs(rest);
   }, [switchTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -351,6 +367,9 @@ export default function SqlPage() {
     ed.dispatch({ effects: EditorView.scrollIntoView(ed.state.selection.main.head, { y: 'center' }) });
     view.current = ed;
     ed.focus();
+    // a query sent here from a dashboard tile opens in a tab of its own
+    const handoff = takeHandoff(pid);
+    if (handoff) newTabRef.current(handoff.query.trimEnd() + '\n', handoff.name);
     return () => {
       clearTimeout(saveTimer.current);
       save();
@@ -417,6 +436,18 @@ export default function SqlPage() {
   };
 
   const result = run.status === 'done' ? run.result : null;
+  const tabView = views[active] ?? { view: 'table' };
+  const setView = (p: Partial<TabView>) => setViews((m) => ({ ...m, [active]: { ...(m[active] ?? { view: 'table' }), ...p } }));
+  const pinned = result && tabView.chart && tabView.chartFor === columnsKey(result) ? tabView.chart : undefined;
+  const resolved = useMemo(() => (result ? resolveChart(result, pinned ?? suggestChart(result)) : null), [result, pinned]);
+  /** The tile "Add to dashboard" saves: this query, shown as the chart (or as a table from the table view). */
+  const dashboardTile = () => {
+    const sql = run.status === 'done' ? run.sql : '';
+    const tab = tabs.find((t) => t.id === active);
+    const title = tab && !/^Query \d+$/.test(tab.name) ? tab.name : undefined;
+    const spec: ChartSpec = tabView.view === 'chart' && resolved ? resolved : { viz: 'table' };
+    return { viz: spec.viz, measures: [], ...(title ? { title } : {}), sql: tileSql(sql, spec) };
+  };
   const row = result && selected !== null ? result.rows[selected] : null;
 
   return (
@@ -466,9 +497,15 @@ export default function SqlPage() {
 
         <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-h-[42px] flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-1.5">
+            {result && result.columns.length > 0 && result.rows.length > 0 && (
+              <Segmented value={tabView.view} onChange={(v) => setView({ view: v })} options={[
+                { value: 'table', label: <span className="inline-flex items-center gap-1.5"><Table2 size={13} />Table</span> },
+                { value: 'chart', label: <span className="inline-flex items-center gap-1.5"><BarChart3 size={13} />Chart</span> },
+              ]} />)}
             <ResultStatus run={run} />
             {result && result.columns.length > 0 && (
               <div className="ml-auto flex items-center gap-1.5">
+                <AddToDashboard label tile={() => dashboardTile()} />
                 <Button size="sm" variant="ghost" onClick={copyTsv} title="Copy the rows shown, tab-separated"><Copy size={13} />Copy</Button>
                 <Button size="sm" onClick={() => void doExport('csv')} disabled={!!exporting} title="Download every row of this query as CSV">
                   {exporting === 'csv' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}CSV
@@ -491,7 +528,13 @@ export default function SqlPage() {
               ? <EmptyState icon={<Table2 size={22} />} title="Done">The statement ran and returned no columns.</EmptyState>
               : result.rows.length === 0
                 ? <EmptyState icon={<Table2 size={22} />} title="No rows">The query returned no rows for {range.label.toLowerCase()}. Try a longer time range.</EmptyState>
-                : <ResultsGrid columns={result.columns} rows={result.rows} selected={selected} onSelect={setSelected} />
+                : tabView.view === 'chart' && resolved
+                  ? (
+                    <>
+                      <div className="border-b border-line"><ChartConfig columns={result.columns} spec={pinned ?? resolved} resolved={resolved} onChange={(chart) => setView({ chart, chartFor: columnsKey(result) })} /></div>
+                      <Measured>{(h) => <SqlChart result={result} spec={resolved} height={h} />}</Measured>
+                    </>)
+                  : <ResultsGrid columns={result.columns} rows={result.rows} selected={selected} onSelect={setSelected} />
           ) : run.status === 'running' ? (
             <div className="grid flex-1 place-items-center text-[12.5px] text-muted"><span className="flex items-center gap-2"><Loader2 size={15} className="animate-spin text-accent" />Running…</span></div>
           ) : (
@@ -657,4 +700,18 @@ function ExamplesMenu({ onPick }: { onPick: (example: (typeof EXAMPLES)[number])
 
 function MenuItem({ children, onClick }: { children: ReactNode; onClick: () => void }) {
   return <button onClick={onClick} className="block w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-[var(--hl)] cursor-pointer">{children}</button>;
+}
+
+/** Gives its child the pixel height it has. */
+function Measured({ children }: { children: (height: number) => ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return <div ref={ref} className="min-h-0 flex-1 overflow-hidden pt-3">{h > 0 && children(h - 12)}</div>;
 }

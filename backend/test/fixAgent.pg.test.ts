@@ -249,6 +249,10 @@ d('GitHub Agent (PostgreSQL)', async () => {
     expect(rec.prs[0]).toMatchObject({ title: 'Fix TypeError when the cart is null', base: 'main', head: rec.commits[0].branch });
     expect(rec.prs[0].body).toContain('Treat a missing cart as empty.');
     expect(rec.prs[0].body).toContain(`https://wgo.example.com/#/p/${pid}/errors?fp=`);
+    // the Pull requests page: only runs with a pull request, with its title
+    const prs = (await call('GET', `/api/projects/${pid}/fixes`, undefined, { pr: '1' })).body;
+    expect(prs.map((x: { runId: string }) => x.runId)).toEqual([runId]);
+    expect(prs[0]).toMatchObject({ prNumber: 7, result: { prTitle: 'Fix TypeError when the cart is null' } });
 
     const run = (await call('GET', `/api/projects/${pid}/fixes/${runId}`)).body;
     expect(run).toMatchObject({ status: 'pr_opened', prNumber: 7, prUrl: 'https://github.com/acme/shop/pull/7', prState: 'open', branch: rec.commits[0].branch,

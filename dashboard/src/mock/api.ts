@@ -528,6 +528,11 @@ export function handleApi(method: string, url: URL, body: unknown, email: string
         const n: Dashboard = { ...structuredClone(d), id: crypto.randomUUID(), name: `${d.name} (copy)`, createdBy: email, createdAt: at, updatedAt: at };
         list.push(n); save(db); return n;
       }
+      if (action === 'tiles' && parts[5] && parts[6] === 'data' && method === 'GET') {
+        const t = d.config.tiles.find((x) => x.id === parts[5]);
+        if (!t?.sql) throw new MockHttpError(404, 'No SQL tile with that id on this dashboard');
+        try { return SQLM.sqlRun({ sql: t.sql.query, from: qp('from'), to: qp('to'), limit: 5000 }); } catch (e) { if (e instanceof SQLM.SqlMockError) throw new MockHttpError(400, e.message); throw e; }
+      }
       if (action === 'tiles' && method === 'POST') {
         const t = body as Partial<DashboardTile>;
         const bottom = d.config.tiles.reduce((m, x) => Math.max(m, x.layout.y + x.layout.h), 0);

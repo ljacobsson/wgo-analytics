@@ -52,6 +52,7 @@ export const bottom = (items: Placed[]) => items.reduce((m, t) => Math.max(m, t.
 
 const SIZES: Record<TileViz, { w: number; h: number }> = {
   number: { w: 3, h: 2 }, line: { w: 6, h: 4 }, area: { w: 6, h: 4 }, bars: { w: 6, h: 4 }, top: { w: 4, h: 4 }, table: { w: 6, h: 4 }, text: { w: 6, h: 2 },
+  columns: { w: 6, h: 4 }, pie: { w: 4, h: 4 }, scatter: { w: 6, h: 4 },
 };
 /** The size a new tile of a chart type starts at. */
 export const defaultSize = (viz: TileViz) => SIZES[viz];

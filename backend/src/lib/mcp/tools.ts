@@ -191,7 +191,7 @@ const measureQuery = z.object({
 const tileRange = z.enum(['15m', '1h', '24h', '7d', '30d']);
 const tileInput = z.object({
   id: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).optional().describe('1-40 letters, digits, - or _ (default: generated)'),
-  viz: z.enum(['number', 'line', 'area', 'bars', 'top', 'table', 'text']).describe('number: one big total; line/area/bars: over time; top: biggest values of groupBy; table: one row per groupBy value, a column per measure; text: a note'),
+  viz: z.enum(['number', 'line', 'area', 'bars', 'top', 'table', 'text', 'columns', 'pie', 'scatter']).describe('number: one big total; line/area/bars: over time; top: biggest values of groupBy; table: one row per groupBy value, a column per measure; text: a note. SQL tiles only: columns (bars per category), pie (shares, up to 6 slices), scatter (a numeric column against another)'),
   measures: z.array(measureQuery.extend({
     label: z.string().max(80).optional().describe('Legend / column name'),
     unit: z.enum(['count', 'ms', 's', 'bytes', 'percent', 'score', 'none']).optional().describe('How values are shown; percent expects a 0..1 share'),
@@ -202,6 +202,13 @@ const tileInput = z.object({
   title: z.string().max(120).optional(),
   range: tileRange.optional().describe('The tile\'s own range; otherwise the dashboard\'s'),
   text: z.string().max(2000).optional().describe('Content of a text tile'),
+  sql: z.object({
+    query: z.string().max(20000).describe('One DuckDB statement over the tables events, logs, spans, metric_points, checks, visitor_days, identities; they hold the rows of the tile\'s range'),
+    x: z.string().max(128).optional().describe('line/area/bars: the TIMESTAMP or DATE column; top: the label column (default: picked from the result)'),
+    y: z.array(z.string().max(128)).max(8).optional().describe('Numeric columns to show (default: all numeric columns)'),
+    series: z.string().max(128).optional().describe('line/area/bars with one y column: the column whose values become the series'),
+    unit: z.enum(['count', 'ms', 's', 'bytes', 'percent', 'score', 'none']).optional(),
+  }).optional().describe('A SQL tile (viz number, line, area, bars, top or table; no measures). Keep it when you update a dashboard'),
   layout: z.object({
     x: z.number().int().min(0).max(11), y: z.number().int().min(0), w: z.number().int().min(1).max(12), h: z.number().int().min(1).max(12),
   }).optional().describe('Position on a 12-column grid; omitted: stacked below the others (6 wide, 4 high; 2 for number)'),

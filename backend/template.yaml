@@ -699,6 +699,10 @@ Resources:
       MemorySize: 2048
       Layers: [!Ref DuckDbLayer]
       Timeout: 15
+      Environment:
+        Variables:
+          # SQL tiles (lib/dashboards.ts tileData) stop in time to answer with a message
+          SQL_TIMEOUT_MS: '12000'
       Policies:
         - S3ReadPolicy: { BucketName: !Ref DataBucket }
         - Statement:

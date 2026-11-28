@@ -314,11 +314,14 @@ export async function sweepPrStates(now = Date.now()): Promise<{ checked: number
   return { checked: rows.length };
 }
 
-export async function listRuns(pid: string, q: { fingerprint?: string; limit?: string }): Promise<FixRun[]> {
+/** `pr=1`: only runs that opened a pull request, newest pull request first (the Pull requests page). */
+export async function listRuns(pid: string, q: { fingerprint?: string; limit?: string; pr?: string }): Promise<FixRun[]> {
   const limit = Math.min(Math.max(Number(q.limit) || 50, 1), 200);
-  const rows = q.fingerprint
-    ? await query<RunRow>('SELECT * FROM fix_runs WHERE project_id = $1 AND fingerprint = $2 ORDER BY created_at DESC LIMIT $3', [pid, q.fingerprint, limit])
-    : await query<RunRow>('SELECT * FROM fix_runs WHERE project_id = $1 ORDER BY created_at DESC LIMIT $2', [pid, limit]);
+  const rows = q.pr === '1' || q.pr === 'true'
+    ? await query<RunRow>('SELECT * FROM fix_runs WHERE project_id = $1 AND pr_number IS NOT NULL ORDER BY COALESCE(finished_at, created_at) DESC LIMIT $2', [pid, limit])
+    : q.fingerprint
+      ? await query<RunRow>('SELECT * FROM fix_runs WHERE project_id = $1 AND fingerprint = $2 ORDER BY created_at DESC LIMIT $3', [pid, q.fingerprint, limit])
+      : await query<RunRow>('SELECT * FROM fix_runs WHERE project_id = $1 ORDER BY created_at DESC LIMIT $2', [pid, limit]);
   await failStale(rows);
   await refreshPrStates(pid, rows);
   return rows.map(toRun);

@@ -12,6 +12,7 @@ const LIST = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' });
 export function tileTitle(t: DashboardTile): string {
   if (t.title) return t.title;
   if (t.viz === 'text') return 'Note';
+  if (t.sql) return t.sql.y?.length ? `${LIST.format(t.sql.y)}${t.sql.x ? ` by ${t.sql.x}` : ''}` : 'SQL query';
   if (!t.measures.length) return 'New tile';
   const names = t.measures.map(measureLabel);
   // two lines on one chart compare; a row of numbers or a table lists
@@ -34,7 +35,8 @@ export function TileFrame({ data, height, editing, readOnly, filtered, onEdit, o
   const text = tile.viz === 'text';
   const notes: string[] = [];
   if (tile.range && data.range.preset !== 'custom') notes.push(`Last ${tile.range}`);
-  if (filtered && !text && tile.measures.length && !tile.measures.some((m) => m.source === 'events')) notes.push('Dashboard filters don’t apply');
+  if (filtered && tile.sql) notes.push('Dashboard filters don’t apply to SQL');
+  else if (filtered && !text && tile.measures.length && !tile.measures.some((m) => m.source === 'events')) notes.push('Dashboard filters don’t apply');
   else if (filtered && tile.measures.some((m) => m.source !== 'events') && tile.measures.some((m) => m.source === 'events')) notes.push('Filters apply to web measures only');
   const btn = 'grid h-7 w-7 place-items-center rounded-md text-faint hover:bg-[var(--hl)] hover:text-fg cursor-pointer';
   return (

@@ -97,7 +97,7 @@ d('custom dashboards (PostgreSQL)', async () => {
       expect(r.status).toBe(400);
       expect(JSON.stringify(r.body)).toMatch(match);
     };
-    await bad([tile({ viz: 'pie' as never })], /Tile 1: viz/);
+    await bad([tile({ viz: 'radar' as never })], /Tile 1: viz/);
     await bad([tile({ layout: { x: 10, y: 0, w: 4, h: 2 } })], /Tile 1: x/);
     await bad([tile(), tile()], /unique/);
     await bad([tile({ measures: [{ source: 'events', agg: 'avg', field: 'nope' }] })], /Tile 1, measure 1: Unknown field/);

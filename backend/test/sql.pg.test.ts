@@ -127,6 +127,26 @@ d('SQL editor (PostgreSQL)', async () => {
     expect(await location().list('exports/')).toEqual([]);
   });
 
+  it('runs the saved query of a SQL tile, and validates SQL tiles', async () => {
+    const DB = await import('../src/lib/dashboards');
+    const tile = (sql: object, viz = 'bars', id = 't1') => ({ id, viz, measures: [], sql, layout: { x: 0, y: 0, w: 6, h: 4 } });
+    const dash = await DB.createDashboard(pid, 'a@x.com', { name: 'SQL', config: { tiles: [tile({ query: "SELECT path, count(*) AS n FROM events WHERE type = 'pageview' GROUP BY 1 ORDER BY 2 DESC, 1", x: 'path', y: ['n'], unit: 'count', extra: 1 }, 'top')] } as never });
+    expect(dash.config.tiles[0]).toMatchObject({ viz: 'top', measures: [], sql: { x: 'path', y: ['n'], unit: 'count' } });
+    expect(dash.config.tiles[0].sql).not.toHaveProperty('extra');
+    const data = await DB.tileData(pid, dash.id, 't1', range);
+    expect(data.rows).toEqual([['/', 1], ['/pricing', 1]]);
+    await expect(DB.tileData(pid, dash.id, 'nope', range)).rejects.toThrow(/No SQL tile/);
+    const bad = (sql: object, viz?: string) => DB.updateDashboard(pid, dash.id, { config: { tiles: [tile(sql, viz)] } as never });
+    await expect(bad({ query: '  ' })).rejects.toThrow(/query is empty/);
+    await expect(bad({ query: 'SELECT 1', y: Array.from({ length: 9 }, (_, i) => `c${i}`) })).rejects.toThrow(/at most 8/);
+    await expect(bad({ query: 'SELECT 1' }, 'text')).rejects.toThrow(/text must be/);
+    await expect(bad({ query: 'SELECT 1', unit: 'parsecs' })).rejects.toThrow(/unit must be/);
+    await expect(DB.updateDashboard(pid, dash.id, { config: { tiles: [{ id: 'm', viz: 'pie', measures: [{ source: 'events', agg: 'count' }], layout: { x: 0, y: 0, w: 4, h: 4 } }] } as never })).rejects.toThrow(/pie charts are for SQL tiles/);
+    expect((await bad({ query: 'SELECT 1 AS a, 2 AS b', x: 'a', y: ['b'] }, 'scatter')).config.tiles[0].viz).toBe('scatter');
+    // a member's other dashboards can't be read through another project
+    await expect(DB.tileData(other, dash.id, 't1', range)).rejects.toThrow(/not found/);
+  });
+
   it('lists tables, columns and functions for autocomplete', async () => {
     const s = await SQL.schema();
     const events = s.tables.find((t) => t.name === 'events')!;

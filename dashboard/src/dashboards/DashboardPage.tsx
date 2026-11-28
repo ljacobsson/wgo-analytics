@@ -127,7 +127,7 @@ export function DashboardPage({ id, readOnly = isKiosk(), pollMs }: { id: string
           <Grid tiles={tiles} editing={editing && !readOnly} onChange={(next) => change({ ...config, tiles: next })}
             render={(t, h) => (
               <div id={`tile-${t.id}`} className="h-full">
-                <LiveTile tile={t} height={h} editing={editing} readOnly={readOnly} filters={filtersKey}
+                <LiveTile tile={t} dashboardId={id} height={h} editing={editing} readOnly={readOnly} filters={filtersKey}
                   onEdit={() => setEditor({ tile: t })}
                   onDuplicate={() => { const c = { ...t, id: newId() }; change({ ...config, tiles: [...tiles, place(c)] }); }}
                   onRemove={() => change({ ...config, tiles: tiles.filter((x) => x.id !== t.id) })} />
@@ -139,16 +139,16 @@ export function DashboardPage({ id, readOnly = isKiosk(), pollMs }: { id: string
           </button>)}
       </div>
       <Drawer open={!!editor} onClose={() => setEditor(null)} width={720} title={editor?.tile ? 'Edit tile' : 'Add a tile'}>
-        {editor && <TileEditor initial={editor.tile} range={range} filters={filtersKey} onSave={saveTile} onClose={() => setEditor(null)} />}
+        {editor && <TileEditor key={editor.tile?.id ?? 'new'} initial={editor.tile} range={range} filters={filtersKey} onSave={saveTile} onClose={() => setEditor(null)} />}
       </Drawer>
     </>
   );
 }
 
-function LiveTile({ tile, height, filters, ...rest }: { tile: DashboardTile; height: number; filters: string | undefined; editing: boolean; readOnly: boolean; onEdit: () => void; onDuplicate: () => void; onRemove: () => void }) {
+function LiveTile({ tile, height, filters, dashboardId, ...rest }: { tile: DashboardTile; height: number; filters: string | undefined; dashboardId: string; editing: boolean; readOnly: boolean; onEdit: () => void; onDuplicate: () => void; onRemove: () => void }) {
   const { project } = useProject();
   const { range } = useTime();
-  const data = useTileData(project.id, tile, range, filters);
+  const data = useTileData(project.id, tile, range, filters, dashboardId);
   return <TileFrame data={data} height={height} filtered={!!filters} {...rest} />;
 }
 

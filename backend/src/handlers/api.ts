@@ -187,6 +187,7 @@ async function route(method: string, parts: string[], q: Q, email: string, event
     if (id && !action && method === 'DELETE') { await DB.deleteDashboard(pid, id); return { ok: true }; }
     if (id && action === 'duplicate' && method === 'POST') return DB.duplicateDashboard(pid, id, email);
     if (id && action === 'tiles' && method === 'POST') return DB.addTile(pid, id, jsonBody(event));
+    if (id && action === 'tiles' && rest[2] && rest[3] === 'data' && method === 'GET') return DB.tileData(pid, id, rest[2], q);
     throw new HttpError(405, 'Method not allowed');
   }
 

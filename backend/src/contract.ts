@@ -1554,8 +1554,11 @@ export interface SqlSchema {
 // PATCH  /api/projects/{pid}/dashboards/{id}  Partial<DashboardInput> -> Dashboard
 // POST   /api/projects/{pid}/dashboards/{id}/duplicate  -> Dashboard
 // POST   /api/projects/{pid}/dashboards/{id}/tiles  DashboardTile (id and layout optional: added below the others) -> Dashboard
+// GET    /api/projects/{pid}/dashboards/{id}/tiles/{tileId}/data?from&to  -> SqlResult of a SQL tile's saved query
+//        (also GET /kiosk/v1/dashboards/{id}/tiles/{tileId}/data: kiosks run a tile's query, never SQL of their own)
 // DELETE /api/projects/{pid}/dashboards/{id}            -> 204
-export type TileViz = 'number' | 'line' | 'area' | 'bars' | 'top' | 'table' | 'text';
+export type TileViz = 'number' | 'line' | 'area' | 'bars' | 'top' | 'table' | 'text'
+  | 'columns' | 'pie' | 'scatter'; // SQL tiles only: bars per category, a donut of shares, numbers against numbers
 export type TileUnit = 'count' | 'ms' | 's' | 'bytes' | 'percent' | 'score' | 'none';
 export interface TileMeasure extends MeasureQuery {
   label?: string; // legend / column name
@@ -1572,7 +1575,18 @@ export interface DashboardTile {
   limit?: number;
   range?: string; // the tile's own range ('15m', '1h', '24h', '7d', '30d'); otherwise the dashboard's
   text?: string; // viz text: up to 2000 characters
+  sql?: SqlTileQuery; // a SQL tile: any viz but text, and no measures
   layout: TileLayout;
+}
+// A tile that shows the result of a SQL query (see the SQL editor) over the tile's range. Columns left out are picked
+// from the result: x the first time column (line/area/bars) or text column (top), y the numeric columns.
+export interface SqlTileQuery {
+  query: string; // one DuckDB statement, up to 20000 characters
+  x?: string; // line/area/bars: a TIMESTAMP or DATE column; top/columns/pie: the label column; scatter: a numeric column
+  y?: string[]; // 1-8 numeric columns; number, top, pie and scatter use the first
+  series?: string; // line/area/bars/columns with one y column: a column whose values become the series (long format);
+  //                  scatter: the column that colors the dots
+  unit?: TileUnit;
 }
 export interface DashboardConfig {
   tiles: DashboardTile[]; // at most 40
@@ -1671,6 +1685,7 @@ export interface FixResult {
   confidence: 'high' | 'medium' | 'low';
   testsAdded: boolean;
   files: string[]; // changed files
+  prTitle?: string; // the pull request's title, when it opened one
 }
 export interface FixSummary {
   runId: string;
@@ -1700,7 +1715,7 @@ export interface FixTargetInfo {
   runs: FixRun[]; // newest first, of every occurrence of this error
 }
 
-// GET /api/projects/{pid}/fixes?fingerprint&limit=50, GET .../fixes/{id}, POST .../fixes {fingerprint} | FixTarget,
+// GET /api/projects/{pid}/fixes?fingerprint&pr=1&limit=50 (pr=1: only runs with a pull request), GET .../fixes/{id}, POST .../fixes {fingerprint} | FixTarget,
 // POST .../fixes/{id}/cancel
 export interface FixRun extends FixSummary {
   kind: FixKind;

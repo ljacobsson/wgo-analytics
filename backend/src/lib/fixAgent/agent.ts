@@ -238,7 +238,7 @@ export async function runFixAgent(pid: string, runId: string, deps: Deps = DEFAU
       body: prBody(r, { message: subject.message, detail: subject.detail, link, runId, modelId: run.model_id }),
     });
     step('pull_request', `#${pr.number}`);
-    await finish(pid, runId, { status: 'pr_opened', steps, result: fixResult, branch: head, pr_number: pr.number, pr_url: pr.url, pr_state: 'open', ...costFields() });
+    await finish(pid, runId, { status: 'pr_opened', steps, result: { ...fixResult, prTitle: title }, branch: head, pr_number: pr.number, pr_url: pr.url, pr_state: 'open', ...costFields() });
   } catch (err) {
     console.error(JSON.stringify({ msg: 'GitHub Agent run failed', run: runId, error: String(err), stack: (err as Error)?.stack }));
     const message = err instanceof HttpError ? err.message : `The run failed: ${String((err as Error)?.message ?? err).slice(0, 300)}`;

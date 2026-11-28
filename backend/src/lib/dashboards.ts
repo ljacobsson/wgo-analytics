@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { Dashboard, DashboardConfig, DashboardInput, DashboardSummary, DashboardTile, QuerySpec, TileMeasure, TileUnit, TileViz } from '../contract';
+import type { Dashboard, DashboardConfig, DashboardInput, DashboardSummary, DashboardTile, QuerySpec, SqlResult, SqlTileQuery, TileMeasure, TileUnit, TileViz } from '../contract';
 import { query } from './db';
 import { filterSql, parseFilters } from './filters';
 import { HttpError } from './http';
 import { isUuid } from './projects';
 import { validateMeasure, validateSpec } from './query';
+import * as SQL from './sql';
 
 /**
  * Custom dashboards: named grids of tiles, each one a generic query (lib/query.ts) and a way to show it. A dashboard
@@ -17,9 +18,15 @@ const MAX_CONFIG_BYTES = 200_000;
 export const COLS = 12;
 const MAX_ROWS = 12;
 const MAX_Y = 1000;
-export const TILE_VIZ: readonly TileViz[] = ['number', 'line', 'area', 'bars', 'top', 'table', 'text'];
+export const TILE_VIZ: readonly TileViz[] = ['number', 'line', 'area', 'bars', 'top', 'table', 'text', 'columns', 'pie', 'scatter'];
+/** Chart types that only SQL tiles have */
+const SQL_ONLY_VIZ: readonly TileViz[] = ['columns', 'pie', 'scatter'];
 const UNITS: readonly TileUnit[] = ['count', 'ms', 's', 'bytes', 'percent', 'score', 'none'];
 export const TILE_RANGES = ['15m', '1h', '24h', '7d', '30d'] as const;
+const SQL_VIZ: readonly TileViz[] = ['number', 'line', 'area', 'bars', 'top', 'table', 'columns', 'pie', 'scatter'];
+const MAX_TILE_SQL = 20_000;
+/** Rows a SQL tile's chart gets */
+const SQL_TILE_ROWS = 5000;
 
 interface Row { project_id: string; id: string; name: string; config: DashboardConfig; created_by: string; created_at: Date; updated_at: Date }
 
@@ -75,6 +82,30 @@ function sanitizeMeasure(raw: unknown, where: string): TileMeasure {
   return m;
 }
 
+const column = (v: unknown, what: string) => {
+  if (typeof v !== 'string' || !v || v.length > 128) throw new HttpError(400, `${what} must be a column name of up to 128 characters`);
+  return v;
+};
+
+function sanitizeSqlTile(raw: unknown, where: string): SqlTileQuery {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  if (typeof o.query !== 'string' || !o.query.trim()) throw new HttpError(400, `${where}: the SQL query is empty`);
+  if (o.query.length > MAX_TILE_SQL) throw new HttpError(400, `${where}: the SQL query must be at most ${MAX_TILE_SQL} characters`);
+  const out: SqlTileQuery = { query: o.query };
+  if (o.x !== undefined && o.x !== null && o.x !== '') out.x = column(o.x, `${where}: x`);
+  if (o.y !== undefined && o.y !== null) {
+    if (!Array.isArray(o.y) || o.y.length > 8) throw new HttpError(400, `${where}: y must be a list of at most 8 columns`);
+    const y = o.y.map((c, k) => column(c, `${where}: y ${k + 1}`));
+    if (y.length) out.y = y;
+  }
+  if (o.series !== undefined && o.series !== null && o.series !== '') out.series = column(o.series, `${where}: series`);
+  if (o.unit !== undefined && o.unit !== null) {
+    if (!UNITS.includes(o.unit as TileUnit)) throw new HttpError(400, `${where}: unit must be one of ${UNITS.join(', ')}`);
+    out.unit = o.unit as TileUnit;
+  }
+  return out;
+}
+
 export function sanitizeTile(raw: unknown, i: number): DashboardTile {
   const o = (raw ?? {}) as Record<string, unknown>;
   const where = `Tile ${i + 1}`;
@@ -96,6 +127,12 @@ export function sanitizeTile(raw: unknown, i: number): DashboardTile {
     tile.text = o.text;
     return tile;
   }
+  if (o.sql !== undefined && o.sql !== null) {
+    if (!SQL_VIZ.includes(viz)) throw new HttpError(400, `${where}: a SQL tile shows as ${SQL_VIZ.join(', ')}`);
+    tile.sql = sanitizeSqlTile(o.sql, where);
+    return tile;
+  }
+  if (SQL_ONLY_VIZ.includes(viz)) throw new HttpError(400, `${where}: ${viz} charts are for SQL tiles`);
   if (!Array.isArray(o.measures)) throw new HttpError(400, `${where}: measures must be a list`);
   tile.measures = o.measures.map((m, k) => sanitizeMeasure(m, `${where}, measure ${k + 1}`));
   if (typeof o.groupBy === 'string' && o.groupBy) tile.groupBy = o.groupBy;
@@ -180,4 +217,14 @@ export async function addTile(pid: string, id: string, raw: Partial<DashboardTil
   const w = Number.isInteger(raw.layout?.w) ? raw.layout!.w : 6;
   const tile = { ...raw, id: raw.id ?? randomUUID().slice(0, 8), layout: { x: 0, y: bottom, w, h: raw.layout?.h ?? (raw.viz === 'number' ? 2 : 4) } };
   return updateDashboard(pid, id, { config: { ...cur.config, tiles: [...cur.config.tiles, tile as DashboardTile] } });
+}
+
+/**
+ * The result of a SQL tile's saved query over [from, to). Kiosks get their SQL tiles' data this way: they can run
+ * the queries members saved on the dashboard, never SQL of their own.
+ */
+export async function tileData(pid: string, id: string, tileId: string, q: Record<string, string | undefined>): Promise<SqlResult> {
+  const tile = (await getRow(pid, id)).config.tiles.find((t) => t.id === tileId);
+  if (!tile?.sql) throw new HttpError(404, 'No SQL tile with that id on this dashboard');
+  return SQL.run(pid, { sql: tile.sql.query, from: q.from, to: q.to, limit: SQL_TILE_ROWS });
 }

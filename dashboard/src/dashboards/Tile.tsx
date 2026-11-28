@@ -1,7 +1,10 @@
 import { useMemo, type ReactNode } from 'react';
 import { BarChart3 } from 'lucide-react';
-import type { DashboardTile, QueryMeasureResult, QueryResult, QuerySpec, TileMeasure } from '../api/contract';
-import { useQueryResult } from '../api/hooks';
+import type { DashboardTile, QueryMeasureResult, QueryResult, QuerySpec, SqlResult, TileMeasure } from '../api/contract';
+import { useQueryResult, useSqlTile } from '../api/hooks';
+import { isKiosk } from '../lib/kiosk';
+import { SqlChart } from '../sql/SqlChart';
+import type { ChartViz } from '../sql/chart';
 import { BarList } from '../charts/BarList';
 import { Sparkline } from '../charts/Sparkline';
 import { TimeChart, type ChartSeries } from '../charts/TimeChart';
@@ -22,7 +25,7 @@ const color = (i: number) => `var(--s${(i % 8) + 1})`;
 
 /** The query a tile runs for its chart type (the backend validates the same shapes: lib/dashboards.ts tileShape). */
 export function tileSpec(t: DashboardTile): QuerySpec | null {
-  if (t.viz === 'text' || !t.measures.length) return null;
+  if (t.viz === 'text' || t.sql || !t.measures.length) return null;
   const measures = t.measures.map(({ source, agg, field, metric, filters }) => ({ source, agg, ...(field ? { field } : {}), ...(metric ? { metric } : {}), ...(filters?.length ? { filters } : {}) }));
   const groupBy = measures.length === 1 && t.groupBy ? t.groupBy : undefined;
   switch (t.viz) {
@@ -44,14 +47,20 @@ export function tileRange(t: DashboardTile, dash: TimeRange): TimeRange {
 /** How a group shows: the API's label for ids (uptime checks), otherwise its value. */
 const keyLabel = (g: { key: string; label?: string }) => g.label ?? (g.key === '(none)' ? '(not set)' : g.key);
 
-export interface TileData { tile: DashboardTile; range: TimeRange; result: QueryResult | undefined; pending: boolean; error: unknown; retry: () => void }
+export interface TileData { tile: DashboardTile; range: TimeRange; result: QueryResult | undefined; sql?: SqlResult; pending: boolean; error: unknown; retry: () => void }
 
-/** Runs a tile's query. `filters` are the dashboard's events filters (URL `f`). */
-export function useTileData(pid: string, tile: DashboardTile, dash: TimeRange, filters: string | undefined): TileData {
+/**
+ * Runs a tile's query. `filters` are the dashboard's events filters (URL `f`); they don't apply to SQL tiles.
+ * `dashboardId`: the dashboard the tile is saved on (a kiosk gets SQL tiles' data through it).
+ */
+export function useTileData(pid: string, tile: DashboardTile, dash: TimeRange, filters: string | undefined, dashboardId?: string): TileData {
   const range = tileRange(tile, dash);
   const spec = useMemo(() => tileSpec(tile), [tile]);
   const events = tile.measures.some((m) => m.source === 'events');
   const q = useQueryResult(pid, range, spec, events ? filters : undefined, events ? botsParam() : undefined);
+  const saved = dashboardId && isKiosk() ? { dashboardId, tileId: tile.id } : null;
+  const s = useSqlTile(pid, range, tile.sql?.query ?? null, saved);
+  if (tile.sql) return { tile, range, result: undefined, sql: s.data, pending: s.isPending, error: s.error, retry: () => void s.refetch() };
   return { tile, range, result: q.data, pending: q.isPending && !!spec, error: q.error, retry: () => void q.refetch() };
 }
 
@@ -59,6 +68,11 @@ export function useTileData(pid: string, tile: DashboardTile, dash: TimeRange, f
 export function TileBody({ data, height }: { data: TileData; height: number }) {
   const { tile, result, pending, error } = data;
   if (tile.viz === 'text') return <div className="h-full overflow-y-auto whitespace-pre-wrap px-4 pb-3 text-[13px] leading-relaxed text-muted">{tile.text}</div>;
+  if (tile.sql) {
+    if (error && !data.sql) return <div className="grid h-full place-items-center overflow-hidden px-4"><SqlError error={error} retry={data.retry} /></div>;
+    if (pending || !data.sql) return <div className="h-full px-4 pb-4"><Skeleton className="h-full" /></div>;
+    return <div className="h-full pb-1"><SqlChart result={data.sql} spec={{ ...tile.sql, viz: tile.viz as ChartViz }} height={height - 4} /></div>;
+  }
   if (!tile.measures.length) return <div className="grid h-full place-items-center text-[12.5px] text-faint">Pick a measure</div>;
   if (!tileSpec(tile)) return <div className="grid h-full place-items-center px-4 text-center text-[12.5px] text-faint">Pick a field to split by to list its top values</div>;
   if (error && !result) return <div className="grid h-full place-items-center"><ErrorState error={error} retry={data.retry} /></div>;
@@ -205,4 +219,16 @@ function TableBody({ tile, result }: { tile: DashboardTile; result: QueryResult 
 
 function Empty(): ReactNode {
   return <div className="grid h-full place-items-center"><EmptyState icon={<BarChart3 size={20} />} title="No data in this range" /></div>;
+}
+
+/** A SQL tile whose query failed: DuckDB's message, which says what to fix. */
+function SqlError({ error, retry }: { error: unknown; retry: () => void }) {
+  const msg = (error as Error)?.message ?? 'The query failed';
+  return (
+    <div className="max-w-full text-center">
+      <p className="text-[12.5px] font-medium text-bad">The query failed</p>
+      <p className="mt-1 line-clamp-3 font-mono text-[11.5px] text-muted" title={msg}>{msg.split('\n')[0]}</p>
+      <button onClick={retry} className="mt-2 text-[12px] text-accent hover:underline cursor-pointer">Retry</button>
+    </div>
+  );
 }

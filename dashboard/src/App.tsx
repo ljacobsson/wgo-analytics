@@ -34,6 +34,7 @@ import { KiosksPage } from './pages/Kiosks';
 import { UptimePage } from './pages/Uptime';
 import { CostsPage } from './pages/Costs';
 import { GithubAgentPage } from './pages/FixAgentAdmin';
+import { PullRequestsPage } from './pages/PullRequests';
 import { McpPage } from './pages/Mcp';
 import { OtelDocs } from './docs/OtelDocs';
 import { Docs } from './docs/Docs';
@@ -92,6 +93,7 @@ function Authed({ email }: { email: string }) {
       case 'sql': return <Suspense fallback={<Skeleton className="h-[70vh]" />}><SqlPage /></Suspense>;
       case 'costs': return <CostsPage />;
       case 'fix-agent': return <GithubAgentPage />;
+      case 'pull-requests': return <PullRequestsPage />;
       case 'mcp': return <McpPage />;
       default: return <Overview />;
     }

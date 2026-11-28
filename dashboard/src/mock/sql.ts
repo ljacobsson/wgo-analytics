@@ -99,7 +99,22 @@ export function sqlRun(body: Body): SqlResult {
   const sqlLimit = Number(/\blimit\s+(\d+)/i.exec(text)?.[1] ?? Infinity);
   const limit = Math.min(body.limit ?? 1000, sqlLimit);
   let columns: SqlColumn[], rows: unknown[][];
-  if (/\bgroup\s+by\b/i.test(text)) {
+  const fmt = (t: number) => new Date(t).toISOString().replace('T', ' ').slice(0, 19);
+  if (/\b(date_trunc|time_bucket)\b/i.test(text)) {
+    // over time, per hour (per day past 3 days); split by type when the query selects it
+    const from = Date.parse(body.from ?? '') || now - 86400e3, to = Date.parse(body.to ?? '') || now;
+    const step = to - from > 3 * 86400e3 ? 86400e3 : 3600e3;
+    const byType = /\bselect\b[\s\S]*\btype\b[\s\S]*\bfrom\b/i.test(text);
+    const buckets = new Map<string, number>();
+    for (const e of evs) {
+      const b = Math.floor(Date.parse(e.ts) / step) * step;
+      const k = byType ? `${b}|${e.type}` : `${b}`;
+      buckets.set(k, (buckets.get(k) ?? 0) + 1);
+    }
+    columns = [{ name: step === 3600e3 ? 'hour' : 'day', type: 'TIMESTAMP' }, ...(byType ? [{ name: 'type', type: 'VARCHAR' }] : []), { name: 'events', type: 'BIGINT' }];
+    rows = [...buckets].map(([k, n]) => { const [b, ty] = k.split('|'); return byType ? [fmt(Number(b)), ty, n] : [fmt(Number(b)), n]; })
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  } else if (/\bgroup\s+by\b/i.test(text)) {
     const by = new Map<string, { n: number; visitors: Set<string> }>();
     for (const e of evs) {
       const k = e.path ?? '/';

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlignLeft, AreaChart, BarChart3, ChevronDown, Hash, LineChart, ListOrdered, Plus, Search, SlidersHorizontal, Table2, Type, X } from 'lucide-react';
+import { AlignLeft, AreaChart, BarChart3, ChevronDown, Code2, Hash, LineChart, ListOrdered, Plus, Search, SlidersHorizontal, Table2, Type, X } from 'lucide-react';
 import type { DashboardTile, QueryAgg, QuerySource, TileMeasure, TileUnit, TileViz } from '../api/contract';
 import { useFields, useMeasureNames } from '../api/hooks';
 import { fieldLabel } from '../lib/filters';
@@ -12,6 +12,7 @@ import { aggsFor, AGG_LABEL, CATEGORIES, DEFAULT_SPLITS, findDef, measureLabel, 
 import { defaultSize } from './layout';
 import { tileHeight, useTileData } from './Tile';
 import { TileFrame, tileTitle } from './TileFrame';
+import { SqlTileEditor } from './SqlTileEditor';
 
 const VIZ: Array<{ value: TileViz; label: string; icon: React.ReactNode; hint: string }> = [
   { value: 'number', label: 'Number', icon: <Hash size={16} />, hint: 'One big number with its change' },
@@ -27,14 +28,22 @@ const UNITS: Array<{ value: TileUnit; label: string }> = [
   { value: 'bytes', label: 'Bytes' }, { value: 'percent', label: 'Share (0–1 as %)' }, { value: 'score', label: 'Score' }, { value: 'none', label: 'Plain' },
 ];
 
-/** Add or edit one tile. Every change shows in the preview right away. */
-export function TileEditor({ initial, range, filters, onSave, onClose }: {
+interface EditorProps {
   initial: DashboardTile | null; // null: a new tile
   range: TimeRange;
   filters: string | undefined;
   onSave: (t: DashboardTile) => void;
   onClose: () => void;
-}) {
+}
+
+/** Add or edit one tile: a measure, or a SQL query (a new tile can be either). Every change shows in the preview right away. */
+export function TileEditor(props: EditorProps) {
+  const [sql, setSql] = useState(!!props.initial?.sql);
+  if (sql) return <SqlTileEditor initial={props.initial} range={props.range} onSave={props.onSave} onClose={props.onClose} onBack={props.initial ? undefined : () => setSql(false)} />;
+  return <MeasureTileEditor {...props} onUseSql={props.initial ? undefined : () => setSql(true)} />;
+}
+
+function MeasureTileEditor({ initial, range, filters, onSave, onClose, onUseSql }: EditorProps & { onUseSql?: () => void }) {
   const { project } = useProject();
   const catalog = useMeasureCatalog(project.id, range);
   const isNew = !initial;
@@ -162,6 +171,7 @@ export function TileEditor({ initial, range, filters, onSave, onClose }: {
 
       <div className="sticky bottom-0 flex items-center justify-end gap-2 border-t border-line bg-[var(--raised)] px-5 py-3">
         {draft.viz === 'top' && !draft.groupBy && <span className="mr-auto text-[12px] text-faint">Pick a field to split by</span>}
+        {onUseSql && <Button variant="ghost" className="mr-auto" onClick={onUseSql} title="Chart the result of a DuckDB SQL query"><Code2 size={13} />Write a SQL query instead</Button>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={!valid} onClick={() => onSave(clean(draft))}>{isNew ? 'Add tile' : 'Save tile'}</Button>
       </div>
