@@ -1,5 +1,5 @@
 import type { Filter, FilterOp, FilterScope } from '../contract';
-import { DEV_REASON } from './bots';
+import { DEV_SQL, HUMAN_SQL } from './bots';
 import { HttpError } from './http';
 
 /**
@@ -177,7 +177,7 @@ export const includesFlagged = (p: Record<string, string | undefined>) => includ
 export function flaggedSql(p: Record<string, string | undefined>): string {
   const bots = includeBots(p), dev = includeDev(p);
   if (bots && dev) return '';
-  if (bots) return ` AND (bot IS NULL OR bot <> '${DEV_REASON}')`;
-  if (dev) return ` AND (bot IS NULL OR bot = '${DEV_REASON}')`;
-  return ' AND bot IS NULL';
+  if (bots) return ` AND NOT ${DEV_SQL}`;
+  if (dev) return ` AND (${HUMAN_SQL} OR ${DEV_SQL})`;
+  return ` AND ${HUMAN_SQL}`;
 }

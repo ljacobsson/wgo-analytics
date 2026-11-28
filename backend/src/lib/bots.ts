@@ -15,6 +15,23 @@ import { COUNTRY_ZONES } from './countryZones';
 /** The `bot` reason of development traffic (lib/devTraffic.ts): your own pages, left out like bots. */
 export const DEV_REASON = 'development';
 
+/**
+ * Whether an event's page URL is on a built-in development host (lib/devTraffic.ts isDevUrl, as DuckDB SQL): file:
+ * pages, localhost and *.localhost/.local/.internal/.lan/.home/.corp, single-label names, private, loopback,
+ * link-local and CGNAT IPv4 addresses and IPv6 literals. Checked at query time too, so events stored before they
+ * were flagged at ingest are left out as well. test/devTraffic.test.ts keeps it in step with isDevUrl.
+ */
+export const DEV_URL_PATTERN = String.raw`^(file:|https?://([^/?#@]*@)?(localhost|[^/?#:.\[]*|[^/?#:\[]*\.(localhost|local|internal|lan|home|corp)|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+|0\.\d+\.\d+\.\d+|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+|\[[^\]]*\])\.?(:\d*)?([/?#]|$))`;
+const DEV_URL = `coalesce(regexp_matches(url, '${DEV_URL_PATTERN}', 'i'), false)`;
+/** Development traffic: flagged at ingest, or on a built-in development host (events stored before flagging). */
+export const DEV_SQL = `(coalesce(bot, '') = '${DEV_REASON}' OR ${DEV_URL})`;
+/** Human traffic: neither a bot nor development traffic. */
+export const HUMAN_SQL = `(bot IS NULL AND NOT ${DEV_URL})`;
+/** Bot traffic that isn't development traffic. */
+export const BOT_SQL = `(bot IS NOT NULL AND NOT ${DEV_SQL})`;
+/** Why an event is left out ('development' or the bot reason), null for humans. */
+export const REASON_SQL = `(CASE WHEN ${DEV_URL} THEN '${DEV_REASON}' ELSE bot END)`;
+
 const formatters = new Map<string, Intl.DateTimeFormat | null>();
 const offsets = new Map<string, number | null>();
 

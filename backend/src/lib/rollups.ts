@@ -1,4 +1,5 @@
 import { buildInsert, query } from './db';
+import { HUMAN_SQL, REASON_SQL } from './bots';
 import { Hll } from './hll';
 import { getJobState, setJobState } from './jobState';
 import { rawQuery } from './store/duck';
@@ -67,12 +68,12 @@ export async function rollupHour(pid: string, hourMs: number): Promise<void> {
   const S = await suppressedSql(pid, typeParams);
   const [types, pages, sessions, bots] = await Promise.all([
     rawQuery<{ key: string; n: string }>(pid, w,
-      `SELECT type AS key, count(*) AS n FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL${S} GROUP BY 1`,
+      `SELECT type AS key, count(*) AS n FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL}${S} GROUP BY 1`,
       typeParams,
     ),
     rawQuery<{ key: string; n: string; s: string }>(pid, w,
       `SELECT path AS key, count(*) AS n, count(DISTINCT session_id) AS s
-         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL AND type = 'pageview' AND path IS NOT NULL
+         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL} AND type = 'pageview' AND path IS NOT NULL
         GROUP BY 1 ORDER BY 2 DESC LIMIT ${MAX_KEYS}`,
       [pid, hour, end],
     ),
@@ -85,14 +86,14 @@ export async function rollupHour(pid: string, hourMs: number): Promise<void> {
               max(CASE WHEN type = 'pageview' AND referrer IS NOT NULL AND split_part(referrer, '/', 3) <> split_part(url, '/', 3)
                        THEN NULLIF(split_part(referrer, '/', 3), '') END) AS referrer,
               sum(CASE WHEN type = 'pageview' THEN 1 ELSE 0 END) AS pageviews
-         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL AND session_id IS NOT NULL
+         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL} AND session_id IS NOT NULL
         GROUP BY session_id`,
       [pid, new Date(hourMs - SESSION_LOOKBACK_MS), end],
     ),
     // excluded traffic, so long ranges can say how many bot sessions they hide without scanning raw events
     rawQuery<{ key: string; s: string }>(pid, w,
-      `SELECT bot AS key, count(DISTINCT session_id) AS s FROM events
-        WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NOT NULL AND session_id IS NOT NULL GROUP BY 1`,
+      `SELECT ${REASON_SQL} AS key, count(DISTINCT session_id) AS s FROM events
+        WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND NOT ${HUMAN_SQL} AND session_id IS NOT NULL GROUP BY 1`,
       [pid, hour, end],
     ),
   ]);
@@ -129,6 +130,10 @@ export async function rollupHour(pid: string, hourMs: number): Promise<void> {
       'ON CONFLICT (project_id, dim, hour, key) DO UPDATE SET events = EXCLUDED.events, sessions = EXCLUDED.sessions');
     await query(sql, params);
   }
+  // a recount (runRerolls) can leave keys out that an earlier count had, e.g. an hour of only development traffic
+  const SEP = '\u001f';
+  const kept = rows.map((r) => `${r[1]}${SEP}${r[3]}`);
+  await query(`DELETE FROM rollups WHERE project_id = $1 AND hour = $2 AND NOT (dim || $4 || key = ANY($3::text[]))`, [pid, hour, kept, SEP]);
   await query(
     `INSERT INTO rollup_sketches (project_id, hour, sessions, users) VALUES ($1, $2, $3, $4)
      ON CONFLICT (project_id, hour) DO UPDATE SET sessions = EXCLUDED.sessions, users = EXCLUDED.users`,
@@ -268,7 +273,7 @@ export async function hourlyTypes(pid: string, plan: Plan): Promise<Array<{ hour
     plan.raw
       ? rawQuery<{ hour: Date; key: string; n: string }>(pid, plan.raw,
           `SELECT ${HOUR_SQL} AS hour, type AS key, count(*) AS n FROM events
-            WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL GROUP BY 1, 2`,
+            WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL} GROUP BY 1, 2`,
           [pid, plan.raw.from, plan.raw.to],
         )
       : Promise.resolve([]),
@@ -286,7 +291,7 @@ export async function hourlySketches(pid: string, plan: Plan): Promise<Array<{ h
     plan.raw
       ? rawQuery<{ hour: Date; session_id: string | null; anon_id: string | null }>(pid, plan.raw,
           `SELECT ${HOUR_SQL} AS hour, session_id, anon_id FROM events
-            WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL GROUP BY 1, 2, 3`,
+            WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL} GROUP BY 1, 2, 3`,
           [pid, plan.raw.from, plan.raw.to],
         )
       : Promise.resolve([]),
@@ -331,30 +336,54 @@ export function mergeKeyed<T extends { key: string; events: number; sessions: nu
 
 /** job_state names `reroll:<project id>`: that project's rollups must be recomputed (e.g. error suppression changed). */
 export const REROLL_PREFIX = 'reroll:';
+/** job_state names `reroll-dev:<project id>`: recount the project's hours holding development traffic not flagged at ingest. */
+export const REROLL_DEV_PREFIX = 'reroll-dev:';
+/** Set once every project has been marked for REROLL_DEV_PREFIX (events stored before development traffic was flagged). */
+const DEV_REROLLS_MARKED = 'dev-traffic-rerolls-marked';
+
+/** Hours a mark recounts: those with errors (suppression rules), or with unflagged development traffic. */
+const REROLL_HOURS: Array<[prefix: string, where: string]> = [
+  [REROLL_PREFIX, `type = 'error'`],
+  [REROLL_DEV_PREFIX, `bot IS NULL AND NOT ${HUMAN_SQL}`],
+];
+
+/** Once per install: mark every project, so hours rolled up before development traffic was left out are recounted. */
+async function markDevRerollsOnce(): Promise<void> {
+  if (await getJobState(DEV_REROLLS_MARKED)) return;
+  for (const { id } of await query<{ id: string }>('SELECT id FROM projects')) {
+    await query('INSERT INTO job_state (name, at) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING', [REROLL_DEV_PREFIX + id, new Date(0)]);
+  }
+  await setJobState(DEV_REROLLS_MARKED, new Date());
+}
 
 /**
- * Recomputes the rolled hours of marked projects that contain errors, still in raw retention: a new or deleted
- * error suppression rule changes what they count. `at` is the last hour done (epoch 0: not started), so a run that
- * hits its deadline continues next time. Hours older than raw retention keep their counts.
+ * Recomputes the rolled hours of marked projects that a change affects, still in raw retention: hours with errors
+ * when an error suppression rule was added or deleted, hours with development traffic stored before it was flagged.
+ * `at` is the last hour done (epoch 0: not started), so a run that hits its deadline continues next time. Hours older
+ * than raw retention keep their counts.
  */
 export async function runRerolls(deadline: number, rolledUntil: number, now = Date.now()): Promise<{ projects: number; hours: number }> {
-  const marks = await query<{ name: string; at: Date }>(`SELECT name, at FROM job_state WHERE name LIKE '${REROLL_PREFIX}%'`);
+  await markDevRerollsOnce();
+  const marks = await query<{ name: string; at: Date }>(
+    `SELECT name, at FROM job_state WHERE name LIKE '${REROLL_PREFIX}%' OR name LIKE '${REROLL_DEV_PREFIX}%' ORDER BY name`);
+  const projects = new Set(marks.map((m) => m.name.slice(m.name.indexOf(':') + 1))).size;
   let hours = 0;
   for (const m of marks) {
-    const pid = m.name.slice(REROLL_PREFIX.length);
+    const [prefix, where] = REROLL_HOURS.find(([p]) => m.name.startsWith(p))!;
+    const pid = m.name.slice(prefix.length);
     const { projectRetention } = await import('./retention');
     const from = Math.max(m.at.getTime() + HOUR, floorHour(now - (await projectRetention(pid)) * 24 * HOUR));
     let last = m.at;
     if (from < rolledUntil) {
       const todo = await rawQuery<{ h: number }>(pid, { from: new Date(from), to: new Date(rolledUntil) },
         `SELECT DISTINCT (floor(extract(epoch from ts) / 3600) * 3600000)::BIGINT AS h FROM events
-          WHERE project_id = $1 AND type = 'error' AND ts >= $2 AND ts < $3 ORDER BY 1`,
+          WHERE project_id = $1 AND ${where} AND ts >= $2 AND ts < $3 ORDER BY 1`,
         [pid, new Date(from), new Date(rolledUntil)],
       );
       for (const { h } of todo) {
         if (Date.now() > deadline) {
           await query('UPDATE job_state SET at = $2 WHERE name = $1 AND at = $3', [m.name, last, m.at]);
-          return { projects: marks.length, hours };
+          return { projects, hours };
         }
         await rollupHour(pid, Number(h));
         last = new Date(Number(h));
@@ -364,5 +393,5 @@ export async function runRerolls(deadline: number, rolledUntil: number, now = Da
     // done, unless the project was marked again meanwhile (its `at` was reset)
     await query('DELETE FROM job_state WHERE name = $1 AND at = $2', [m.name, m.at]);
   }
-  return { projects: marks.length, hours };
+  return { projects, hours };
 }

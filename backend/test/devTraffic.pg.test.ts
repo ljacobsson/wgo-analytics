@@ -24,7 +24,9 @@ d('development traffic (PostgreSQL)', async () => {
   const ingest = (await import('../src/handlers/ingest')).handler;
   const api = (await import('../src/handlers/api')).handler;
   const { fanOut } = await import('../src/lib/live');
-  const { rollupHour, floorHour } = await import('../src/lib/rollups');
+  const { rollupHour, floorHour, runRerolls } = await import('../src/lib/rollups');
+  const { normalizeBatch } = await import('../src/lib/events');
+  const { writeRows } = await import('../src/lib/store/write');
 
   const OWNER = 'dev@example.com';
   const MEMBER = 'member@example.com';
@@ -101,6 +103,30 @@ d('development traffic (PostgreSQL)', async () => {
     expect((await call('GET', `/api/projects/${pid}/stats`, undefined, long)).body).toMatchObject({ totals: { pageviews: 2 }, botSessions: 1, devSessions: 3 });
     // including development traffic reads raw events (rollups hold human traffic only)
     expect((await call('GET', `/api/projects/${pid}/stats`, undefined, { ...long, dev: '1' })).body).toMatchObject({ totals: { pageviews: 5 } });
+  });
+
+  it('leaves out development traffic stored before it was flagged, and recounts hours rolled up before', async () => {
+    const old = now - 4 * 3600_000; // its own complete hour
+    const hour = floorHour(old);
+    // stored by an older version: no flag
+    const rows = normalizeBatch(pid, { k: writeKey, a: 'anon-old', sentAt: now, e: [{ ...view('http://localhost:3001/old', 's-old'), ts: old }] } as never, now)
+      .map((r) => ({ ...r, bot: null }));
+    await writeRows('events', rows);
+    const wide = { from: new Date(now - 6 * 3600_000).toISOString(), to: new Date(now + 60_000).toISOString() };
+    expect(await urls()).not.toContain('http://localhost:3001/old');
+    expect(await urls({ dev: '1' })).toContain('http://localhost:3001/old');
+    expect((await call('GET', `/api/projects/${pid}/stats`, undefined, wide)).body).toMatchObject({ totals: { pageviews: 2 }, devSessions: 4 });
+
+    // that hour was rolled up back then, counting the pageview as human traffic
+    await query(`INSERT INTO rollups (project_id, dim, hour, key, events, sessions) VALUES ($1, 'type', $2, 'pageview', 1, 0), ($1, 'page', $2, '/old', 1, 1)`, [pid, new Date(hour)]);
+    const rolled = async () => (await query<{ dim: string; key: string }>('SELECT dim, key FROM rollups WHERE project_id = $1 AND hour = $2 ORDER BY dim', [pid, new Date(hour)]))
+      .map((r) => `${r.dim}:${r.key}`);
+    expect(await rolled()).toEqual(['page:/old', 'type:pageview']);
+    // the maintenance job marks every project once and recounts their hours with unflagged development traffic
+    expect(await runRerolls(Date.now() + 60_000, floorHour(now) + 3600_000)).toMatchObject({ projects: 1, hours: 1 });
+    expect(await rolled()).toEqual(['bot:development']);
+    expect(await query(`SELECT 1 FROM job_state WHERE name LIKE 'reroll-dev:%'`)).toHaveLength(0);
+    expect(await runRerolls(Date.now() + 60_000, floorHour(now) + 3600_000)).toMatchObject({ projects: 0, hours: 0 }); // only once
   });
 
   it('applies changed hosts to new events only', async () => {

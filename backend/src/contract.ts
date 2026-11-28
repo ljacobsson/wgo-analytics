@@ -50,12 +50,13 @@ export interface Project {
   devTraffic: DevTrafficSettings;
 }
 
-// PATCH /api/projects/{pid} {devTraffic} (owners only). Applies to events arriving within a minute; stored events keep
-// their flag. Development traffic is stored with AnalyticsEvent.bot = 'development' and left out like bots unless
-// `dev=1`. Built in: localhost, loopback/private/link-local addresses, single-label names, local-only domains
-// (.localhost, .local, .internal, .lan, …) and pages opened from disk (file:). Mobile SDK events never are.
+// PATCH /api/projects/{pid} {devTraffic} (owners only). Development traffic is stored with AnalyticsEvent.bot =
+// 'development' and left out like bots unless `dev=1`. Built in: localhost, loopback/private/link-local addresses,
+// single-label names, local-only domains (.localhost, .local, .internal, .lan, …) and pages opened from disk (file:);
+// these are also checked against the page URL at query time, so events stored before flagging count too. Mobile SDK
+// events never are.
 //   hosts: extra wildcard patterns on the page's hostname, e.g. "*.vercel.app" or "*.test" (case-insensitive,
-//          `*` = anything; at most 50)
+//          `*` = anything; at most 50). Applies to events arriving within a minute after saving.
 export interface DevTrafficSettings {
   hosts: string[];
 }

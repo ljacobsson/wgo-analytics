@@ -1,5 +1,6 @@
 import type { WidgetCatalog, WidgetOverview, WidgetRange, WidgetStat, WidgetStatOption, WidgetSummary } from '../contract';
 import { breakdown, pages } from './analytics';
+import { HUMAN_SQL } from './bots';
 import { Hll } from './hll';
 import { HttpError } from './http';
 import { projectRetention } from './retention';
@@ -210,7 +211,7 @@ const eventCounts: Loader = async (pid, w, keys) => {
               sum(CASE WHEN type = 'error' THEN 1 ELSE 0 END)::int AS error,
               sum(CASE WHEN type = 'http_error' THEN 1 ELSE 0 END)::int AS http_error,
               count(DISTINCT session_id)::int AS sessions, count(DISTINCT anon_id)::int AS users
-         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL${S} GROUP BY 1`,
+         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL}${S} GROUP BY 1`,
       params,
     ),
     // distinct counts don't add up across buckets: count each window once
@@ -220,7 +221,7 @@ const eventCounts: Loader = async (pid, w, keys) => {
                   count(DISTINCT CASE WHEN ts < $4 THEN session_id END)::int AS s_prev,
                   count(DISTINCT CASE WHEN ts >= $4 THEN anon_id END)::int AS u_cur,
                   count(DISTINCT CASE WHEN ts < $4 THEN anon_id END)::int AS u_prev
-             FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL`,
+             FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL}`,
           [pid, w.prevFrom, w.to, w.from],
         )
       : Promise.resolve([undefined]),
@@ -243,7 +244,7 @@ const visitorsNow: Loader = async (pid) => {
   const start = new Date(now - (NOW_MINUTES + window) * 60_000);
   const rows = await rawQuery<{ session_id: string; m: number }>(pid, { from: start, to: new Date(now + 60_000) },
     `SELECT DISTINCT session_id, floor(extract(epoch from (ts - $2::TIMESTAMP)) / 60)::int AS m
-       FROM events WHERE project_id = $1 AND ts >= $2 AND session_id IS NOT NULL AND bot IS NULL`,
+       FROM events WHERE project_id = $1 AND ts >= $2 AND session_id IS NOT NULL AND ${HUMAN_SQL}`,
     [pid, start],
   );
   const byMinute = new Map<number, Set<string>>();
@@ -273,12 +274,12 @@ const vitals: Loader = async (pid, w, keys) => {
   const [rows, windows] = await Promise.all([
     rawQuery<{ b: number } & Record<string, number | null>>(pid, span(w),
       `SELECT ${B('ts')} AS b, ${pct} FROM events
-        WHERE project_id = $1 AND type = 'vitals' AND ts >= $2 AND ts < $3 AND bot IS NULL GROUP BY 1`,
+        WHERE project_id = $1 AND type = 'vitals' AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL} GROUP BY 1`,
       [pid, w.prevFrom, w.to, w.step],
     ),
     rawQuery<{ cur: boolean } & Record<string, number | null>>(pid, span(w),
       `SELECT (ts >= $4) AS cur, ${pct} FROM events
-        WHERE project_id = $1 AND type = 'vitals' AND ts >= $2 AND ts < $3 AND bot IS NULL GROUP BY 1`,
+        WHERE project_id = $1 AND type = 'vitals' AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL} GROUP BY 1`,
       [pid, w.prevFrom, w.to, w.from],
     ),
   ]);
@@ -367,7 +368,7 @@ async function dynamicStat(pid: string, w: Win, key: string): Promise<Part> {
   const where = kind === 'track' ? `type = 'click' AND track_name = $5` : `type = 'custom' AND name = $5`;
   const rows = await rawQuery<{ b: number; n: number }>(pid, span(w),
     `SELECT ${B('ts')} AS b, count(*)::int AS n FROM events
-      WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL AND ${where} GROUP BY 1`,
+      WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL} AND ${where} GROUP BY 1`,
     [pid, w.prevFrom, w.to, w.step, name],
   );
   const s = split(rows, (r: { n: number }) => r.n);

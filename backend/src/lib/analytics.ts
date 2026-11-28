@@ -11,7 +11,7 @@ import { markSuppressed, suppressedSql } from './suppressions';
 import { symbolicateEvents, symbolicateGroups } from './sourcemaps';
 import { toApiEvent, type EventRow } from './events';
 import { COLUMNS, fieldExpression, filtersFrom, includeBots, includeDev, includesFlagged, jsonPath, parseFilters, type QueryScope } from './filters';
-import { DEV_REASON } from './bots';
+import { BOT_SQL, DEV_REASON, DEV_SQL, HUMAN_SQL } from './bots';
 import { Hll } from './hll';
 import { HttpError } from './http';
 import { projectRetention } from './retention';
@@ -138,9 +138,9 @@ interface Hidden { bots: number; dev: number }
 
 const rawHiddenSessions = async (pid: string, span: Window): Promise<Hidden> => {
   const [row] = await rawQuery<Hidden>(pid, span,
-    `SELECT count(DISTINCT session_id) FILTER (WHERE bot <> '${DEV_REASON}')::int AS bots,
-            count(DISTINCT session_id) FILTER (WHERE bot = '${DEV_REASON}')::int AS dev
-       FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NOT NULL`,
+    `SELECT count(DISTINCT session_id) FILTER (WHERE ${BOT_SQL})::int AS bots,
+            count(DISTINCT session_id) FILTER (WHERE ${DEV_SQL})::int AS dev
+       FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND NOT ${HUMAN_SQL}`,
     [pid, span.from, span.to],
   );
   return { bots: Number(row?.bots ?? 0), dev: Number(row?.dev ?? 0) };

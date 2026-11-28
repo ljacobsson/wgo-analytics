@@ -55,12 +55,34 @@ describe('flagging at ingest', () => {
   });
 });
 
-describe('flaggedSql', () => {
-  it('leaves out the flagged traffic a request does not include', () => {
-    expect(flaggedSql({})).toBe(' AND bot IS NULL');
-    expect(flaggedSql({ bots: '1' })).toBe(" AND (bot IS NULL OR bot <> 'development')");
-    expect(flaggedSql({ dev: '1' })).toBe(" AND (bot IS NULL OR bot = 'development')");
-    expect(flaggedSql({ bots: '1', dev: 'true' })).toBe('');
+describe('query-time conditions (DuckDB)', async () => {
+  const { DuckDBInstance } = await import('@duckdb/node-api');
+  const db = await (await DuckDBInstance.create(':memory:')).connect();
+  const URLS = ['http://localhost:3001/_next/x', 'http://LOCALHOST', 'https://app.localhost/', 'http://127.0.0.1:8080/a', 'http://10.0.0.5/',
+    'http://192.168.1.2:3000', 'http://172.16.0.1/', 'http://172.32.0.1/', 'http://169.254.1.1/', 'http://0.0.0.0:3000/', 'http://100.100.1.1/',
+    'http://100.128.1.1/', 'http://[::1]:3000/', 'http://[2001:db8::1]/', 'http://devbox:8080/', 'http://mysite.local/', 'http://api.internal/x',
+    'file:///Users/me/index.html', 'https://pingis.net/', 'https://www.acme.com/x?y', 'https://localhost.acme.com/', 'https://local.com', 'https://8.8.8.8/',
+    'https://10.com/', 'https://user:pw@localhost/', 'app:/home', 'https://shop.test/', 'http://localhost./', 'https://acme.com.', 'not a url'];
+
+  it('the SQL pattern agrees with isDevUrl', async () => {
+    const { DEV_URL_PATTERN } = await import('../src/lib/bots');
+    for (const u of [...URLS, null]) {
+      const r = await db.runAndReadAll(`SELECT coalesce(regexp_matches($1::VARCHAR, '${DEV_URL_PATTERN}', 'i'), false) AS m`, [u]);
+      expect(r.getRowObjects()[0].m, String(u)).toBe(isDevUrl(u));
+    }
+  });
+
+  it('leaves out the flagged traffic a request does not include, also when stored before flagging', async () => {
+    await db.run(`CREATE OR REPLACE TABLE events AS SELECT * FROM (VALUES
+      ('human', NULL, 'https://pingis.net/'), ('bot', 'automation', 'https://pingis.net/'), ('dev-flagged', 'development', 'https://pr-1.vercel.app/'),
+      ('dev-old', NULL, 'http://localhost:3001/'), ('dev-bot', 'automation', 'http://localhost:3001/'), ('app', NULL, 'app:/home'), ('no-url', NULL, NULL)
+    ) AS t(id, bot, url)`);
+    const ids = async (p: Record<string, string>) =>
+      (await db.runAndReadAll(`SELECT id FROM events WHERE true${flaggedSql(p)} ORDER BY id`)).getRowObjects().map((r) => r.id);
+    expect(await ids({})).toEqual(['app', 'human', 'no-url']);
+    expect(await ids({ bots: '1' })).toEqual(['app', 'bot', 'human', 'no-url']);
+    expect(await ids({ dev: '1' })).toEqual(['app', 'dev-bot', 'dev-flagged', 'dev-old', 'human', 'no-url']);
+    expect(await ids({ bots: '1', dev: '1' })).toHaveLength(7);
   });
 });
 

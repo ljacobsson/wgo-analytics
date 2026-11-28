@@ -1,4 +1,5 @@
 import { query } from './db';
+import { HUMAN_SQL } from './bots';
 import { listGoals, matchedEvents } from './goals';
 import { getJobState, setJobState } from './jobState';
 import { pool, ROLLUP_RETENTION_DAYS } from './rollups';
@@ -45,7 +46,7 @@ export async function buildVisitorDay(pid: string, day: string): Promise<number>
   const to = new Date(from.getTime() + DAY);
   const params: unknown[] = [pid, from, to];
   const g = goals.length
-    ? `, g AS (SELECT coalesce(user_id, anon_id) AS person, list(DISTINCT goal.i) AS gi ${matchedEvents(goals, params, ' AND bot IS NULL')} GROUP BY 1)`
+    ? `, g AS (SELECT coalesce(user_id, anon_id) AS person, list(DISTINCT goal.i) AS gi ${matchedEvents(goals, params, ` AND ${HUMAN_SQL}`)} GROUP BY 1)`
     : '';
   const rows = await rawQuery<DayRow>(pid, { from, to },
     `WITH ev AS (
@@ -54,7 +55,7 @@ export async function buildVisitorDay(pid: string, day: string): Promise<number>
               CASE WHEN type = 'pageview' THEN
                 CASE WHEN referrer IS NULL OR split_part(referrer, '/', 3) = split_part(url, '/', 3) THEN '' ELSE split_part(referrer, '/', 3) END
               END AS ref
-         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND bot IS NULL AND coalesce(user_id, anon_id) IS NOT NULL),
+         FROM events WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND ${HUMAN_SQL} AND coalesce(user_id, anon_id) IS NOT NULL),
      b AS (
        SELECT person, max(anon_id) AS anon_id, max(user_id) AS user_id, count(DISTINCT session_id)::int AS sessions, count(*)::int AS events,
               (array_agg(device ORDER BY ts) FILTER (WHERE device IS NOT NULL))[1] AS device,
